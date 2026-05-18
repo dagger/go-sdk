@@ -8,18 +8,6 @@ type GoSdk {
   pub skipGenerateFilename: String! = ".dagger-go-sdk-skip-generate"
 
   """
-  Run a checked-in GraphQL query through a nested Dagger client.
-
-  `name` is the query path under queries without the .graphql suffix. `varsJSON`
-  is the query variables object encoded as JSON text.
-
-  Use this only when the same Dagger API call cannot be made directly in Dang.
-  """
-  pub nestedDaggerQuery(name: String!, varsJSON: String!): NestedDaggerQuery! {
-    DaggerQueryHelpers().nestedDaggerQuery(name, varsJSON)
-  }
-
-  """
   Check the workspace fork shim that roots returned changesets for the caller.
   """
   pub workspaceForkShimCheck(ws: Workspace!): Void @check {
@@ -53,8 +41,7 @@ type GoSdk {
   Return init templates tracked by this module.
 
   Templates live under templates/<name> and are materialized into the new
-  module before generation. Passing an empty template to init uses the module
-  default.
+  module. Passing an empty template to init uses the module default.
   """
   pub templates: [Template!]! {
     if (currentModule.source.exists("templates")) {
@@ -133,13 +120,14 @@ type GoSdk {
   Pass `path` to choose a different module location. The target path must not
   already contain a Dagger module.
 
-  Pass `template` to materialize files from templates/<template> before
-  generation. The empty default uses this module's minimal template.
+  Pass `template` to materialize files from templates/<template>. The empty
+  default uses this module's minimal template.
 
-  By default, generated SDK files are checked into version control. Pass
-  `ignoreGenerated` to add generated SDK paths to .gitignore instead.
+  By default, future generated SDK files are checked into version control. Pass
+  `ignoreGenerated` to configure generation to add generated SDK paths to
+  .gitignore instead.
   """
-  pub init(ws: Workspace!, name: String!, path: String! = "", template: String! = "", generate: Boolean! = true, ignoreGenerated: Boolean! = false): Changeset! {
+  pub init(ws: Workspace!, name: String!, path: String! = "", template: String! = "", ignoreGenerated: Boolean! = false): Changeset! {
     let rawPath = if (path == "") {
       let daggerDir = ws.findUp(".dagger", ".")
       if (daggerDir == null) {
@@ -178,14 +166,7 @@ type GoSdk {
         .withDirectory(modPath, templateSource)
         .withNewFile(configPath, config)
 
-      if (generate) {
-        let sourceID = DaggerQueryHelpers().directoryAsModuleSourceID(seeded.clientDirectory, seeded.clientPath(modPath))
-        let query = DaggerQueryHelpers().moduleSourceChangeset(sourceID, ".")
-
-        fork.withDirectoryDiff(fork.cwd, directory, query.outputDir("/after")).changes
-      } else {
-        seeded.changes
-      }
+      seeded.changes
     }
   }
 

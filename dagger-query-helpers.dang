@@ -61,27 +61,6 @@ type DaggerQueryHelpers {
   }
 
   """
-  Return a ModuleSourceID backed by a Directory.
-  """
-  let directoryAsModuleSourceID(dir: Directory!, sourceRootPath: String!, name: String! = ""): String! {
-    let nameFlags = if (name == "") { [] } else { ["--name", name] }
-
-    container
-      .from("golang:1.25-alpine")
-      .withoutEntrypoint
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/helper", currentModule.source.directory("helpers/directory-as-module-source"))
-      .withWorkdir("/helper")
-      .withExec(["go", "build", "-o", "/usr/local/bin/directory-as-module-source", "."])
-      .withEnvVariable("DAGGER_TRACE_URL", cloud.traceURL)
-      .withEnvVariable("DIRECTORY_ID", toJSON(dir.id))
-      .withExec(["directory-as-module-source"] + nameFlags + [sourceRootPath], experimentalPrivilegedNesting: true)
-      .stdout
-      .trimSuffix("\n")
-  }
-
-  """
   Return the generated-context changeset for a module source.
   """
   let moduleSourceChangeset(sourceID: String!, root: String!): NestedDaggerQuery! {

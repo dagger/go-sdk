@@ -27,7 +27,6 @@ these fail during type inference:
 ```dang
 loadModuleSourceFromID(id: stdout)
 loadModuleSourceFromID(id: stdout :: ModuleSourceID!)
-loadDirectoryFromID(id: someDirectoryID)
 ```
 
 The explicit type hint changes the value type, but Dang still expects an object
@@ -37,7 +36,6 @@ Raw GraphQL does not have that confusion:
 
 ```graphql
 loadModuleSourceFromID(id: ModuleSourceID!): ModuleSource!
-loadDirectoryFromID(id: DirectoryID!): Directory!
 ```
 
 So helper-produced IDs are consumed by a nested raw GraphQL helper, not by Dang
@@ -45,14 +43,12 @@ typecasts.
 
 ### Module-Side Source Loading Loses Caller Context
 
-Two source-loading calls are unreliable from inside this module:
+One source-loading call is unreliable from inside this module:
 
 - `moduleSource(...)` cannot reliably access caller workspace files.
-- `Directory.asModuleSource(...)` can lose caller context during user-default
-  lookup and fail while searching for `.env`.
 
-Until those core/context bugs are fixed, source construction happens in helper
-processes that open nested Dagger clients.
+Until that core/context bug is fixed, source construction happens in a helper
+process that opens a nested Dagger client.
 
 ### `withDependencies` Rejects Workspace-Backed Directory Sources
 
@@ -155,26 +151,6 @@ Behavior:
 
 This helper does not mount the workspace into its container. It reads
 `dagger.json` files through the `Workspace` object.
-
-### `helpers/directory-as-module-source`
-
-CLI:
-
-```sh
-DIRECTORY_ID=... directory-as-module-source SOURCE_ROOT_PATH [--name NAME]
-```
-
-Output: exactly one `ModuleSourceID` on stdout.
-
-Behavior:
-
-1. Load `Directory` from `DIRECTORY_ID`.
-2. Call `Directory.asModuleSource(sourceRootPath: SOURCE_ROOT_PATH)`.
-3. Apply `withName` when `--name` is set.
-4. Print the source ID.
-
-This is used by `init`, where Dang first constructs a seeded directory and then
-needs that directory interpreted as a module source.
 
 ### `helpers/dagger-query`
 
@@ -316,13 +292,14 @@ Generation:
    `helpers/dagger-query`.
 3. Convert `/after` and `/before` into a changeset in Dang.
 
-Init with generation:
+Init:
 
 1. Build the seeded directory in Dang.
-2. Build a `ModuleSourceID` with `helpers/directory-as-module-source`.
-3. Run the generated-context query through `helpers/dagger-query`.
-4. Compare `/after` to an empty directory so seeded files and generated files
-   are included.
+2. Return the staged template files and `dagger.json`.
+
+Init intentionally does not generate. Generation is handled only for existing
+workspace modules, which avoids converting a not-yet-written directory into a
+module source.
 
 Dependency add:
 
@@ -357,9 +334,8 @@ The old `helpers/workspace-module-source` helper is removed. It contained the
 operation-specific commands and the `/ws` workspace mount workaround.
 
 The public `workspaceModuleSource` and `workspaceModuleSourceInclude` wrappers
-are removed too. The former could only be implemented with the broken
-module-side `Directory.asModuleSource(...)` call until Dang can rehydrate
-helper-produced `ModuleSourceID` values. The latter was debug-only
+are removed too. The former could not be implemented cleanly until Dang can
+rehydrate helper-produced `ModuleSourceID` values. The latter was debug-only
 introspection that exposed implementation details on the root API.
 
 ## Removal Path
@@ -368,8 +344,8 @@ When Dang can pass `*ID` scalar values to `load*FromID`, delete
 `helpers/dagger-query` and the query files. Dang can then do the rehydration and
 follow-up calls natively.
 
-When module-side `moduleSource(...)` and `Directory.asModuleSource(...)` preserve
-caller context correctly, delete the source-ID helpers too.
+When module-side `moduleSource(...)` preserves caller context correctly, delete
+the source-ID helper too.
 
 If core dependency mutation APIs are fixed first, prefer those APIs instead of
 the mock-workspace update workaround.
@@ -380,7 +356,6 @@ Helper builds:
 
 ```sh
 cd helpers/module-source && go test ./...
-cd helpers/directory-as-module-source && go test ./...
 cd helpers/dagger-query && go test ./...
 cd helpers/render-template && go test ./...
 ```
