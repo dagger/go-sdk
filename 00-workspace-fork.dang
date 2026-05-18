@@ -101,13 +101,6 @@ type WorkspaceFork {
   }
 
   """
-  Return the staged directory in caller-cwd coordinates.
-  """
-  let clientDirectory: Directory! {
-    after
-  }
-
-  """
   Return a workspace-root path converted to caller-cwd coordinates.
   """
   let clientPath(path: String!): String! {
