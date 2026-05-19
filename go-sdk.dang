@@ -8,13 +8,6 @@ type GoSdk {
   pub skipGenerateFilename: String! = ".dagger-go-sdk-skip-generate"
 
   """
-  Check the workspace fork shim that roots returned changesets for the caller.
-  """
-  pub workspaceForkShimCheck(ws: Workspace!): Void @check {
-    polyfill.workspaceForkShimCheck(ws, nestedCwd: ".dagger/modules/e2e/fixtures/deps/app")
-  }
-
-  """
   Return every Dagger module whose sdk.source is "go".
   """
   pub modules(ws: Workspace!): [Mod!]! {

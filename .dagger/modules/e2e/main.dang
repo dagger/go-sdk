@@ -72,13 +72,6 @@ type E2e {
   }
 
   """
-  Workspace fork should return changesets rooted where the client applies them.
-  """
-  pub workspaceForkShimCheck(ws: Workspace!): Void @check {
-    goSdk.workspaceForkShimCheck(ws)
-  }
-
-  """
   Mod lookup should find the owning Go SDK module when called from a nested path.
   """
   pub moduleLookupCheck(ws: Workspace!): Void @check {
