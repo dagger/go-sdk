@@ -3,5 +3,11 @@
   "engineVersion": "v0.20.8",
   "sdk": {
     "source": "dang"
-  }
+  },
+  "dependencies": [
+    {
+      "name": "polyfill",
+      "source": "github.com/dagger/sdk-sdk/polyfill"
+    }
+  ]
 }

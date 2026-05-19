@@ -8,64 +8,35 @@ type ModEngine {
   let path: String!
 
   """
-  Fork used to stage workspace-rooted changes.
+  Workspace containing this module.
   """
-  let fork: WorkspaceFork!
-
-  """
-  This module's dagger.json.
-  """
-  let daggerJSON: File!
+  let ws: Workspace!
 
   """
   The Dagger engine version required by this module, without a leading "v".
   """
   pub required: String! {
-    daggerJSON.asJSON.field(["engineVersion"]).asString.trimPrefix("v")
+    polyfill.workspace(ws).moduleSource(path).config.requiredEngineVersion
   }
 
   """
   Configure this module to require the given Dagger engine version.
   """
   pub require(version: String!): Changeset! {
-    let current = daggerJSON.asJSON.field(["engineVersion"]).asString
-    let required = normalizedVersion(version)
-    fork.withFile(configPath, daggerJSON.withReplaced(toJSON(current), toJSON(required))).changes
+    polyfill.workspace(ws).moduleSource(path).config.withRequiredEngineVersion(version).fork.changes
   }
 
   """
   Configure this module to require the current Dagger engine version.
   """
   pub requireCurrent: Changeset! {
-    require(version)
+    polyfill.workspace(ws).moduleSource(path).config.withCurrentEngineVersion.fork.changes
   }
 
   """
   Configure this module to require the latest stable Dagger engine version.
   """
   pub requireLatest: Changeset! {
-    require("latest")
-  }
-
-  """
-  Return this module's dagger.json path from the workspace root.
-  """
-  let configPath: String! {
-    if (path == ".") { "dagger.json" } else { path + "/dagger.json" }
-  }
-
-  """
-  Return a valid engine version string for dagger.json.
-  """
-  let normalizedVersion(version: String!): String! {
-    if (version == "") {
-      raise "version must not be empty"
-    } else if (version == "latest") {
-      version
-    } else if (version.trimPrefix("v") != version) {
-      version
-    } else {
-      "v" + version
-    }
+    polyfill.workspace(ws).moduleSource(path).config.withLatestEngineVersion.fork.changes
   }
 }

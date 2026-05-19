@@ -8,34 +8,29 @@ type ModDeps {
   let path: String!
 
   """
-  Fork used to stage workspace-rooted changes.
+  Workspace containing this module.
   """
-  let fork: WorkspaceFork!
-
-  """
-  This module's dagger.json.
-  """
-  let daggerJSON: File!
+  let ws: Workspace!
 
   """
   Return dependency names when present, otherwise dependency sources.
   """
   pub list: [String!]! {
-    ModuleConfig(file: daggerJSON).dependencies
+    polyfill.workspace(ws).moduleSource(path).config.dependencies
   }
 
   """
   Add a Dagger dependency to dagger.json.
   """
   pub add(ws: Workspace!, source: String!, name: String! = ""): Changeset! {
-    changesetWithConfig(ModuleConfig(file: daggerJSON).withDependency(source, name))
+    polyfill.workspace(ws).moduleSource(path).config.withDependency(source, name).fork.changes
   }
 
   """
   Remove a Dagger dependency from dagger.json by name or source.
   """
   pub remove(ws: Workspace!, name: String!): Changeset! {
-    changesetWithConfig(ModuleConfig(file: daggerJSON).withoutDependency(name))
+    polyfill.workspace(ws).moduleSource(path).config.withoutDependency(name).fork.changes
   }
 
   """
@@ -43,20 +38,6 @@ type ModDeps {
   dagger.json.
   """
   pub update(ws: Workspace!, name: String! = ""): Changeset! {
-    changesetWithConfig(ModuleConfig(file: daggerJSON).withUpdatedDependencies(ws, path, name))
-  }
-
-  """
-  Return a changeset containing only the edited dagger.json file.
-  """
-  let changesetWithConfig(config: File!): Changeset! {
-    fork.withFile(configPath, config).changes
-  }
-
-  """
-  Return this module's dagger.json path from the workspace root.
-  """
-  let configPath: String! {
-    if (path == ".") { "dagger.json" } else { path + "/dagger.json" }
+    polyfill.workspace(ws).moduleSource(path).config.withUpdatedDependencies(ws, name).fork.changes
   }
 }

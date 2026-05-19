@@ -11,7 +11,7 @@ type GoSdk {
   Check the workspace fork shim that roots returned changesets for the caller.
   """
   pub workspaceForkShimCheck(ws: Workspace!): Void @check {
-    WorkspaceForkChecks().run(ws)
+    polyfill.workspaceForkShimCheck(ws, nestedCwd: ".dagger/modules/e2e/fixtures/deps/app")
   }
 
   """
@@ -98,13 +98,9 @@ type GoSdk {
       path.trimPrefix("/")
     }
 
-    let configPath = if (modPath == ".") { "dagger.json" } else { modPath + "/dagger.json" }
-    let fork = WorkspaceForks().fork(ws)
-
     Mod(
       path: modPath,
-      fork: fork,
-      daggerJSON: ws.directory("/", include: [configPath]).file(configPath),
+      ws: ws,
       skipGenerateFilename: skipGenerateFilename,
     )
   }
@@ -149,7 +145,7 @@ type GoSdk {
 
     let configPath = if (modPath == ".") { "dagger.json" } else { modPath + "/dagger.json" }
     let selectedTemplate = if (template == "") { "minimal" } else { template }
-    let fork = WorkspaceForks().fork(ws)
+    let fork = polyfill.workspace(ws).fork
 
     if (ws.directory("/", include: [configPath]).exists(configPath)) {
       raise "module already exists: " + modPath
@@ -192,10 +188,12 @@ type GoSdk {
   Modules with the generate skip marker are skipped.
   """
   pub generateAll(ws: Workspace!): Changeset! @generate {
+    let pws = polyfill.workspace(ws)
+
     modules(ws)
       .filter { mod => mod.skipGenerate(ws) == false }
-      .reduce(WorkspaceForks().fork(ws)) { fork, mod =>
-        fork.merge(mod.generateFork(ws))
+      .reduce(pws.fork) { fork, mod =>
+        fork.merge(pws.moduleSource(mod.path).generate)
       }
       .changes
   }

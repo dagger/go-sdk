@@ -8,14 +8,9 @@ type Mod {
   pub path: String!
 
   """
-  Fork used to stage workspace-rooted changes.
+  Workspace containing this module.
   """
-  let fork: WorkspaceFork!
-
-  """
-  This module's dagger.json.
-  """
-  let daggerJSON: File!
+  let ws: Workspace!
 
   """
   Marker filename that skips generate when found at or above this module root.
@@ -35,8 +30,7 @@ type Mod {
   pub deps: ModDeps! {
     ModDeps(
       path: path,
-      fork: fork,
-      daggerJSON: daggerJSON,
+      ws: ws,
     )
   }
 
@@ -46,8 +40,7 @@ type Mod {
   pub engine: ModEngine! {
     ModEngine(
       path: path,
-      fork: fork,
-      daggerJSON: daggerJSON,
+      ws: ws,
     )
   }
 
@@ -64,21 +57,10 @@ type Mod {
   If the generate skip marker is present, the changeset is empty.
   """
   pub generate(ws: Workspace!): Changeset! {
-    generateFork(ws).changes
-  }
-
-  """
-  Generate this module into a workspace fork.
-  If the generate skip marker is present, the fork is empty.
-  """
-  let generateFork(ws: Workspace!): WorkspaceFork! {
     if (skipGenerate(ws)) {
-      fork
+      polyfill.workspace(ws).fork.changes
     } else {
-      let sourceID = DaggerQueryHelpers().moduleSourceID(ws, path, cwd: ".", local: true)
-      let query = DaggerQueryHelpers().moduleSourceChangeset(sourceID, fork.cwd)
-
-      fork.withDirectoryDiff(fork.cwd, query.outputDir("/before"), query.outputDir("/after"))
+      polyfill.workspace(ws).moduleSource(path).generate.changes
     }
   }
 }
