@@ -22,14 +22,14 @@ type ModDeps {
   """
   Add a Dagger dependency to dagger.json.
   """
-  pub add(ws: Workspace!, source: String!, name: String! = ""): Changeset! {
+  pub add(source: String!, name: String! = ""): Changeset! {
     polyfill.workspace(ws).moduleSource(path).config.withDependency(source, name).fork.changes
   }
 
   """
   Remove a Dagger dependency from dagger.json by name or source.
   """
-  pub remove(ws: Workspace!, name: String!): Changeset! {
+  pub remove(name: String!): Changeset! {
     polyfill.workspace(ws).moduleSource(path).config.withoutDependency(name).fork.changes
   }
 
@@ -37,7 +37,7 @@ type ModDeps {
   Update one dependency by name or source, or update all remote dependencies in
   dagger.json.
   """
-  pub update(ws: Workspace!, name: String! = ""): Changeset! {
-    polyfill.workspace(ws).moduleSource(path).config.withUpdatedDependencies(ws, name).fork.changes
+  pub update(name: String! = ""): Changeset! {
+    polyfill.workspace(ws).moduleSource(path).config.withUpdatedDependencies(name).fork.changes
   }
 }
