@@ -155,7 +155,16 @@ type GoSdk {
         .withDirectory(modPath, templateSource)
         .withNewFile(configPath, config)
 
-      seeded.changes
+      # Generate the new module and install it into the workspace so a single
+      # `init` call leaves a ready-to-run module: no follow-up generate/install.
+      let generated = seeded.withGeneratedModule(modPath)
+      let installed = if (modPath == ".") {
+        generated
+      } else {
+        generated.withInstalledModule(modPath, name)
+      }
+
+      installed.changes
     }
   }
 
