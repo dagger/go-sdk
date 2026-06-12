@@ -274,29 +274,10 @@ Function surface:
 dagger functions --progress=plain
 ```
 
-Init generation smoke, from a git-initialized empty repo:
+Init generation smoke, from a git-initialized empty repo using a Dagger CLI
+with positional SDK init:
 
 ```sh
-dagger -m /path/to/go-sdk call init --name foo added-paths
-dagger -m /path/to/go-sdk call init --name foo --path ./foo/bar added-paths
-```
-
-Local dependency add/remove smoke:
-
-```sh
-dagger -m /path/to/go-sdk call mod --path app deps add --source ../lib --name lib modified-paths
-dagger -m /path/to/go-sdk call mod --path app deps remove --name lib modified-paths
-```
-
-Dependency update smoke:
-
-```sh
-dagger -m /path/to/go-sdk call mod --path app deps update modified-paths
-```
-
-Named local dependency update should still fail with core's unsupported-local
-message:
-
-```sh
-dagger -m /path/to/go-sdk call mod --path app deps update --name lib modified-paths
+dagger sdk install /path/to/go-sdk --name go
+dagger module init go foo --auto-apply
 ```
