@@ -8,7 +8,12 @@ type GoSdk {
   pub skipGenerateFilename: String! = ".dagger-go-sdk-skip-generate"
 
   """
-  Return every Dagger module whose sdk.source is "go".
+  Runtime source to write into modules created by this SDK.
+  """
+  pub targetRuntime: String! { "go" }
+
+  """
+  Return every legacy dagger.json Dagger module whose sdk.source is "go".
   """
   pub modules(ws: Workspace!): [Mod!]! {
     ws
@@ -99,35 +104,13 @@ type GoSdk {
   }
 
   """
-  Create a new Go SDK Dagger module and return the files to write.
-
-  By default, the new module is created under the nearest `.dagger` directory
-  visible from the current workspace path:
-
-    <nearest .dagger>/modules/<name>
-
-  Pass `path` to choose a different module location. The target path must not
-  already contain a Dagger module.
+  Initialize Go-owned files for a new Dagger module.
 
   Pass `template` to materialize files from templates/<template>. The empty
   default uses this module's minimal template.
-
-  By default, future generated SDK files are checked into version control. Pass
-  `ignoreGenerated` to configure generation to add generated SDK paths to
-  .gitignore instead.
   """
-  pub init(ws: Workspace!, name: String!, path: String! = "", template: String! = "", ignoreGenerated: Boolean! = false): Changeset! {
-    let rawPath = if (path == "") {
-      let daggerDir = ws.findUp(".dagger", ".")
-      if (daggerDir == null) {
-        ".dagger/modules/" + name
-      } else {
-        daggerDir.trimPrefix("/") + "/modules/" + name
-      }
-    } else {
-      path.trimPrefix("./").trimPrefix("/")
-    }
-
+  pub initModule(ws: Workspace!, name: String!, path: String!, template: String! = ""): Changeset! {
+    let rawPath = path.trimPrefix("./").trimPrefix("/")
     let modPath = if (rawPath == "" or rawPath == ".") {
       "."
     } else if (rawPath == ".." or rawPath.trimPrefix("../") != rawPath) {
@@ -136,26 +119,18 @@ type GoSdk {
       rawPath.trimSuffix("/")
     }
 
-    let configPath = if (modPath == ".") { "dagger.json" } else { modPath + "/dagger.json" }
     let selectedTemplate = if (template == "") { "minimal" } else { template }
     let fork = polyfill.workspace(ws).fork
 
-    if (ws.directory("/", include: [configPath]).exists(configPath)) {
-      raise "module already exists: " + modPath
-    } else if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
+    if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
       raise "unknown init template: " + template
     } else {
-      let config = "{\n  \"name\": " + toJSON(name) + ",\n  \"engineVersion\": \"latest\",\n  \"sdk\": {\n    \"source\": \"go\"\n  },\n  \"codegen\": {\n    \"automaticGitignore\": " + toJSON(ignoreGenerated) + "\n  }\n}\n"
       let templateSource = if (selectedTemplate == "legacy") {
         renderedLegacyTemplate(name)
       } else {
         currentModule.source.directory("templates/" + selectedTemplate)
       }
-      let seeded = fork
-        .withDirectory(modPath, templateSource)
-        .withNewFile(configPath, config)
-
-      seeded.changes
+      fork.withDirectory(modPath, templateSource).changes
     }
   }
 
@@ -177,7 +152,11 @@ type GoSdk {
   }
 
   """
-  Generate all discovered Go SDK modules.
+  Generate all discovered legacy dagger.json Go SDK modules.
+
+  This discovery path is obsolete for workspace-managed modules; the engine
+  owns the modules.<sdk>.as-sdk.modules source of truth.
+
   Modules with the generate skip marker are skipped.
   """
   pub generateAll(ws: Workspace!): Changeset! @generate {
