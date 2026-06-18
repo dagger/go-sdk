@@ -99,6 +99,18 @@ type E2e {
   }
 
   """
+  initClient should not materialize files itself. The engine records the client
+  and owns the generated context changeset.
+  """
+  pub initClientCheck(ws: Workspace!): Void @check {
+    let changes = goSdk.initClient(ws, path: outputRoot + "/client", module: generateModulePath, dev: true)
+
+    assert(changes.isEmpty, "initClient should return an empty SDK changeset")
+
+    null
+  }
+
+  """
   Generating an existing module should produce generated files rooted at that
   module without touching unrelated paths.
   """
