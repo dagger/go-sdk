@@ -10,7 +10,7 @@ type GoSdk {
   """
   Runtime source to write into modules created by this SDK.
   """
-  pub targetRuntime: String! = "go"
+  pub targetRuntime: String! { "go" }
 
   """
   Return every legacy dagger.json Dagger module whose sdk.source is "go".
