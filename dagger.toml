@@ -8,3 +8,22 @@
 
 [modules.e2e]
 source = ".dagger/modules/e2e"
+
+[modules.go-sdk]
+source = "."
+check.skip = ["*"]
+
+[modules.go-sdk.as-sdk]
+name = "go"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/generate/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/lookup/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/deps/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/skip/app"
