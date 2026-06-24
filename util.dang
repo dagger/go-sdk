@@ -1,0 +1,27 @@
+let ToCamel(s: String!): String! {
+  s.trimSpace.split("").reduce({{out: "", capNext: true, prevIsCap: false}}) { st, ch =>
+    let isCap = ch.containsMatch(`[A-Z]`)
+    let isLow = ch.containsMatch(`[a-z]`)
+    let isNum = ch.containsMatch(`[0-9]`)
+    let isWord = isCap or isLow or isNum
+
+    let outCh = case {
+      st.capNext and isLow => ch.toUpper
+      st.prevIsCap and isCap => ch.toLower
+      else => ch
+    }
+
+    {{
+      out: st.out + (if (isWord) outCh else ""),
+      capNext: if (isCap or isLow) {
+        false
+      } else if (isNum) {
+        true
+      } else {
+        ch == "_" or ch == " " or ch == "-" or ch == "."
+      },
+
+      prevIsCap: isCap
+    }}
+  }.out
+}
