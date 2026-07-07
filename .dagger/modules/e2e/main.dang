@@ -85,7 +85,7 @@ type E2e {
     let legacyPath = outputRoot + "/init-legacy"
 
     let defaultChanges = goSdk.initModule(ws, name: "init-default", path: defaultPath)
-    let legacyChanges = goSdk.initModule(ws, name: "init-legacy", path: legacyPath, template: "legacy")
+    let legacyChanges = goSdk.initModule(ws, name: "init-legacy", path: legacyPath, legacyTemplate: true)
 
     assert(contains(defaultChanges.addedPaths, defaultPath + "/dagger.json") == false, "initModule should not write dagger.json; the engine owns it")
     assertAdded(defaultChanges, defaultPath + "/main.go")
