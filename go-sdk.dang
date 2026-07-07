@@ -106,10 +106,10 @@ type GoSdk {
   """
   Initialize Go-owned files for a new Dagger module.
 
-  Pass `template` to materialize files from templates/<template>. The empty
-  default uses this module's minimal template.
+  When `legacyTemplate` is true, materialize the legacy template. Otherwise
+  materialize this module's minimal template.
   """
-  pub initModule(ws: Workspace!, name: String!, path: String!, template: String! = "minimal"): Changeset! {
+  pub initModule(ws: Workspace!, name: String!, path: String!, legacyTemplate: Boolean! = false): Changeset! {
     let rawPath = path.trimPrefix("./").trimPrefix("/")
     let modPath = if (rawPath == "" or rawPath == ".") {
       "."
@@ -121,27 +121,21 @@ type GoSdk {
 
     let fork = polyfill.workspace(ws).fork
 
-    if (currentModule.source.exists("templates/" + template) == false) {
-      raise "unknown init template: " + template
+    let templateSource = if (legacyTemplate) {
+      renderedLegacyTemplate(name)
+    # TODO: We need interpolation in `templates/*` files
+    # For now i'm leveraging dang's string interpolation to avoid
+    # pulling a golang container just for this.
     } else {
-      let templateSource = if (template == "legacy") {
-        renderedLegacyTemplate(name)
-      # TODO: We need interpolation in `templates/*` files
-      # For now i'm leveraging dang's string interpolation to avoid
-      # pulling a golang container just for this.
-      } else if (template == "minimal") {
-        let goName = ToCamel(name)
-        directory().withNewFile("main.go",
+      let goName = ToCamel(name)
+      directory().withNewFile("main.go",
 	```
 	package main
 
 	type ${goName} struct{}
 	``` + "\n")
-      } else {
-        currentModule.source.directory("templates/" + template)
-      }
-      fork.withDirectory(modPath, templateSource).changes
     }
+    fork.withDirectory(modPath, templateSource).changes
   }
 
   """
