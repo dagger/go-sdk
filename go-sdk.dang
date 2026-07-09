@@ -166,10 +166,10 @@ type GoSdk {
   }
 
   """
-  Generate all discovered legacy dagger.json Go SDK modules.
+  Generate every workspace module managed by this Go SDK.
 
-  This discovery path is obsolete for workspace-managed modules; the engine
-  owns the modules.<sdk>.as-sdk.modules source of truth.
+  The workspace's [[modules.<sdk>.as-sdk.modules]] entries are the source of
+  truth for SDK-managed modules.
 
   Modules with the generate skip marker are skipped.
   """
