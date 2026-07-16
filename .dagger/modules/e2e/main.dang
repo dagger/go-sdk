@@ -8,6 +8,13 @@ type E2e {
   let lookupModulePath: String! = fixtureRoot + "/lookup/app"
   let lookupNestedPath: String! = lookupModulePath + "/nested"
   let nonGoModulePath: String! = fixtureRoot + "/lookup/not-go"
+  let tomlModulePath: String! = fixtureRoot + "/lookup-toml/app"
+  let tomlNestedPath: String! = tomlModulePath + "/nested"
+  let nonGoTomlModulePath: String! = fixtureRoot + "/lookup-toml/not-go"
+  let commentedTomlModulePath: String! = fixtureRoot + "/lookup-toml/commented"
+  let singleQuotedTomlModulePath: String! = fixtureRoot + "/lookup-toml/single-quoted"
+  let partialLegacyPath: String! = fixtureRoot + "/partial/legacy/app"
+  let partialLegacyNestedPath: String! = partialLegacyPath + "/nested"
   let skipModulePath: String! = fixtureRoot + "/skip/app"
   let generateModulePath: String! = fixtureRoot + "/generate/app"
   let depsModulePath: String! = fixtureRoot + "/deps/app"
@@ -63,6 +70,82 @@ type E2e {
 
     assert(nested.path == lookupModulePath, "find-up lookup returned the wrong module path")
     assert(exact.path == lookupModulePath, "exact lookup returned the wrong module path")
+
+    null
+  }
+
+  """
+  Return the error message raised while resolving a module, or its resolved
+  path when the lookup unexpectedly succeeds.
+  """
+  let lookupFailure(ws: Workspace!, path: String!): String! {
+    try {
+      goSdk.mod(ws, path: path).path
+    } catch {
+      err => err.message
+    }
+  }
+
+  """
+  Mod lookup should find the owning module through a dagger-module.toml.
+  """
+  pub moduleLookupTomlCheck(ws: Workspace!): Void @check {
+    let nested = goSdk.mod(ws, path: tomlNestedPath)
+    let exact = goSdk.mod(ws, path: tomlModulePath)
+
+    assert(nested.path == tomlModulePath, "find-up lookup returned the wrong dagger-module.toml module path")
+    assert(exact.path == tomlModulePath, "exact lookup returned the wrong dagger-module.toml module path")
+
+    null
+  }
+
+  """
+  A dagger-module.toml module owned by another runtime should be rejected with
+  a message naming that runtime.
+  """
+  pub moduleLookupNonGoTomlCheck(ws: Workspace!): Void @check {
+    let message = lookupFailure(ws, nonGoTomlModulePath)
+
+    assertContains(message, "does not use the Go SDK", "non-Go runtime was not rejected: " + message)
+    assertContains(message, "dang", "rejection did not name the owning runtime: " + message)
+
+    null
+  }
+
+  """
+  A commented-out source must not be read as the module's runtime. The
+  effective declaration below it owns the module, so lookup must be rejected
+  and name that runtime.
+  """
+  pub moduleLookupCommentedTomlCheck(ws: Workspace!): Void @check {
+    let message = lookupFailure(ws, commentedTomlModulePath)
+
+    assertContains(message, "does not use the Go SDK", "commented-out source was read as the runtime: " + message)
+    assertContains(message, "dang", "rejection did not name the effective runtime: " + message)
+
+    null
+  }
+
+  """
+  A single-quoted source is valid TOML and should resolve like a double-quoted
+  one.
+  """
+  pub moduleLookupSingleQuotedTomlCheck(ws: Workspace!): Void @check {
+    let mod = goSdk.mod(ws, path: singleQuotedTomlModulePath)
+
+    assert(mod.path == singleQuotedTomlModulePath, "single-quoted source did not resolve; got " + mod.path)
+
+    null
+  }
+
+  """
+  In a partially migrated workspace the closest config wins: a deeper legacy
+  dagger.json module must beat an ancestor's dagger-module.toml.
+  """
+  pub moduleLookupPartialMigrationCheck(ws: Workspace!): Void @check {
+    let nested = goSdk.mod(ws, path: partialLegacyNestedPath)
+
+    assert(nested.path == partialLegacyPath, "closest config did not win; resolved to " + nested.path)
 
     null
   }

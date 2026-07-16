@@ -1,0 +1,6 @@
+name = "lookup-toml-commented"
+engineVersion = "v1.0.0-0"
+
+[runtime]
+# source = "go"
+  source = "dang" # the commented line above must not win
