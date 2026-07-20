@@ -13,26 +13,49 @@ type GoSdk {
   pub targetRuntime: String! { "go" }
 
   """
-  Return every legacy dagger.json Dagger module whose sdk.source is "go".
+  Config filenames that mark a Dagger module root: the CLI 1.0
+  `dagger-module.toml` (workspace-managed modules) and the legacy `dagger.json`.
+  A managed module is discovered by whichever it uses.
+  """
+  let moduleConfigFilenames: [String!]! = ["dagger-module.toml", "dagger.json"]
+
+  """
+  Return every Go SDK module this workspace manages that is visible from the
+  client's current location.
+
+  Discovery is anchored at the client's cwd, not the workspace root: the
+  nearest enclosing module plus every managed module at or below the cwd.
+  Running from a subdirectory acts on the project you're in — and the projects
+  beneath it — not the whole workspace.
   """
   pub modules(ws: Workspace!): [Mod!]! {
-    ws
-      .directory("/", include: ["**/dagger.json"])
-      .search(
-        pattern: "\"sdk\"\\s*:\\s*\\{[^}]*\"source\"\\s*:\\s*\"go\"",
-        globs: ["**/dagger.json"],
-        filesOnly: true,
-        multiline: true,
-        dotall: true,
-      )
-      .{{filePath}}
-      .map { configPath =>
-        mod(
-          ws,
-          if (configPath.filePath == "dagger.json") { "." } else { configPath.filePath.trimSuffix("/dagger.json") },
-          findUp: false,
-        )
+    let managed = currentModule.asSDK.modules.{{path}}
+    let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
+    polyfill.workspace(ws)
+      .findConfigDirs(moduleConfigFilenames, exclude: ["**/vendor/**"])
+      .map { dir => moduleRelPath(cwd, dir) }
+      .uniq
+      .filter { path => managed.filter { m => m.path == path }.length > 0 }
+      .map { path => Mod(rootPath: path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
+  }
+
+  """
+  Resolve a cwd-relative path — at or below the cwd ("." , "sub/dir") or a
+  strict ancestor (".." , "../..") — against the cwd into a
+  workspace-root-relative path.
+  """
+  let moduleRelPath(cwd: String!, dir: String!): String! {
+    let base = if (cwd == "" or cwd == ".") { [] } else { cwd.split("/") }
+    let segs = dir.split("/").reduce(base) { acc, seg =>
+      if (seg == "..") {
+        acc.dropLast(1)
+      } else if (seg == "." or seg == "") {
+        acc
+      } else {
+        acc + [seg]
       }
+    }
+    if (segs.length == 0) { "." } else { segs.join("/") }
   }
 
   """
@@ -147,7 +170,7 @@ type GoSdk {
     }
 
     Mod(
-      path: modPath,
+      rootPath: modPath,
       ws: ws,
       skipGenerateFilename: skipGenerateFilename,
     )
@@ -295,22 +318,19 @@ type GoSdk {
   }
 
   """
-  Generate every workspace module managed by this Go SDK.
-
-  The workspace's [[modules.<sdk>.as-sdk.modules]] entries are the source of
-  truth for SDK-managed modules.
+  Generate every managed Go SDK module visible from the client's current
+  location: running from a subdirectory generates only the project you're in
+  and the projects beneath it.
 
   Modules with the generate skip marker are skipped.
   """
   pub generateAll(ws: Workspace!): Changeset! @generate {
     let pws = polyfill.workspace(ws)
 
-    currentModule.asSDK.modules
-      .{{path}}
-      .map { m => Mod(path: m.path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
+    modules(ws)
       .filter { mod => mod.skipGenerate(ws) == false }
       .reduce(pws.fork) { fork, mod =>
-        fork.merge(pws.moduleSource("/" + mod.path).generate)
+        fork.merge(pws.moduleSource("/" + mod.rootPath).generate)
       }
       .changes
   }

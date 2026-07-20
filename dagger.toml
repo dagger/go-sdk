@@ -13,6 +13,16 @@ source = ".dagger/modules/e2e"
 source = "."
 check.skip = ["*"]
 
+[modules.dang-sdk]
+source = "https://github.com/dagger/dang-sdk"
+# Marker filename that skips generate when found at or above a Dang SDK module root.
+# settings.skipGenerateFilename = ""
+
+[modules.dang-sdk.as-sdk]
+
+[[modules.dang-sdk.as-sdk.modules]]
+path = "."
+
 [modules.go-sdk.as-sdk]
 name = "go"
 
@@ -27,3 +37,6 @@ path = ".dagger/modules/e2e/fixtures/deps/app"
 
 [[modules.go-sdk.as-sdk.modules]]
 path = ".dagger/modules/e2e/fixtures/skip/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/managed-toml/app"
