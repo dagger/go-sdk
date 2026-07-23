@@ -5,12 +5,12 @@ type GoSdk {
   """
   Marker filename that skips generate when found at or above a Go SDK module root.
   """
-  pub skipGenerateFilename: String! = ".dagger-go-sdk-skip-generate"
+  skipGenerateFilename: String! = ".dagger-go-sdk-skip-generate"
 
   """
   Runtime source to write into modules created by this SDK.
   """
-  pub targetRuntime: String! { "go" }
+  targetRuntime: String! { "go" }
 
   """
   Config filenames that mark a Dagger module root: the CLI 1.0
@@ -28,10 +28,11 @@ type GoSdk {
   Running from a subdirectory acts on the project you're in — and the projects
   beneath it — not the whole workspace.
   """
-  pub modules(ws: Workspace!): [Mod!]! {
+  modules(ws: Workspace!): [Mod!]! {
     let managed = currentModule.asSDK.modules.{{path}}
     let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
-    polyfill.workspace(ws)
+    polyfill
+      .workspace(ws)
       .findConfigDirs(moduleConfigFilenames, exclude: ["**/vendor/**"])
       .map { dir => moduleRelPath(cwd, dir) }
       .uniq
@@ -64,7 +65,7 @@ type GoSdk {
   Templates live under templates/<name> and are materialized into the new
   module. Passing an empty template to init uses the module default.
   """
-  pub templates: [Template!]! {
+  templates: [Template!]! {
     if (currentModule.source.exists("templates")) {
       let root = currentModule.source.directory("templates")
       root.entries.map { name =>
@@ -112,11 +113,7 @@ type GoSdk {
     # workspace, which is the normal case for a legacy dagger.json-only repo.
     # The `.{{path}}` selection is what executes the query, so it must sit
     # inside the guard.
-    let managed = try {
-      currentModule.asSDK.modules.{{path}}
-    } catch {
-      err => []
-    }
+    let managed = currentModule.asSDK.modules.{{path}} rescue []
 
     managed
       .map { m => normalizePath(m.path) }
@@ -137,15 +134,25 @@ type GoSdk {
 
   When `findUp` is true, `path` may point inside the module.
   """
-  pub mod(ws: Workspace!, path: String! = ".", findUp: Boolean! = true): Mod! {
+  mod(ws: Workspace!, path: String! = ".", findUp: Boolean! = true): Mod! {
     let modPath = if (findUp) {
       let needle = normalizePath(path)
 
       let asSdkBase = managedBase(needle)
       let foundToml = ws.findUp("dagger-module.toml", path)
       let foundJson = ws.findUp("dagger.json", path)
-      let tomlBase = if (foundToml == null) { null } else { configDir(foundToml, "dagger-module.toml") }
-      let jsonBase = if (foundJson == null) { null } else { configDir(foundJson, "dagger.json") }
+      let tomlBase = if (foundToml == null) { null } else {
+        configDir(
+          foundToml,
+          "dagger-module.toml",
+        )
+      }
+      let jsonBase = if (foundJson == null) { null } else {
+        configDir(
+          foundJson,
+          "dagger.json",
+        )
+      }
 
       # Every candidate is an ancestor of `path`, so they lie on one chain and
       # the deepest is the owning module. Resolving each source separately and
@@ -197,19 +204,16 @@ type GoSdk {
 
   let resolveJsonBase(ws: Workspace!, base: String!, path: String!): String! {
     let configPath = if (base == ".") { "dagger.json" } else { base + "/dagger.json" }
-    if (
-      ws
-        .directory("/", include: [configPath])
-        .file(configPath)
-        .search(
-          pattern: "\"sdk\"\\s*:\\s*\\{[^}]*\"source\"\\s*:\\s*\"go\"",
-          multiline: true,
-          dotall: true,
-          limit: 1,
-        )
-        .{{id}}
-        .length == 0
-    ) {
+    if (ws
+      .directory("/", include: [configPath])
+      .file(configPath)
+      .search(
+        pattern: "\"sdk\"\\s*:\\s*\\{[^}]*\"source\"\\s*:\\s*\"go\"",
+        multiline: true,
+        dotall: true,
+        limit: 1,
+      ).{{id}}
+      .length == 0) {
       raise "Dagger module does not use the Go SDK: " + path
     } else {
       base
@@ -233,8 +237,7 @@ type GoSdk {
         pattern: "^[ \\t]*\\[runtime\\][^\\[]*?^[ \\t]*source[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*')",
         multiline: true,
         limit: 1,
-      )
-      .{{matchedLines}}
+      ).{{matchedLines}}
 
     matches
       .map { m => runtimeSourceValue(m.matchedLines) }
@@ -261,7 +264,12 @@ type GoSdk {
   When `legacyTemplate` is true, materialize the legacy template. Otherwise
   materialize this module's minimal template.
   """
-  pub initModule(ws: Workspace!, name: String!, path: String!, legacyTemplate: Boolean! = false): Changeset! {
+  initModule(
+    ws: Workspace!,
+    name: String!,
+    path: String!,
+    legacyTemplate: Boolean! = false,
+  ): Changeset! {
     let rawPath = path.trimPrefix("./").trimPrefix("/")
     let modPath = if (rawPath == "" or rawPath == ".") {
       "."
@@ -275,17 +283,19 @@ type GoSdk {
 
     let templateSource = if (legacyTemplate) {
       renderedLegacyTemplate(name)
-    # TODO: We need interpolation in `templates/*` files
-    # For now i'm leveraging dang's string interpolation to avoid
-    # pulling a golang container just for this.
+      # TODO: We need interpolation in `templates/*` files
+      # For now i'm leveraging dang's string interpolation to avoid
+      # pulling a golang container just for this.
     } else {
       let goName = ToCamel(name)
-      directory().withNewFile("main.go",
-	```
-	package main
+      directory.withNewFile(
+        "main.go",
+        ```
+        package main
 
-	type ${goName} struct{}
-	``` + "\n")
+        type ${goName} struct{}
+        ``` + "\n",
+      )
     }
     fork.withDirectory(modPath, templateSource).changes
   }
@@ -296,7 +306,12 @@ type GoSdk {
   The engine records the managed client in workspace config before calling
   this function. The engine owns materializing the generated client files.
   """
-  pub initClient(ws: Workspace!, path: String!, module: String!, dev: Boolean! = false): Changeset! {
+  initClient(
+    ws: Workspace!,
+    path: String!,
+    module: String!,
+    dev: Boolean! = false,
+  ): Changeset! {
     polyfill.workspace(ws).fork.changes
   }
 
@@ -324,14 +339,16 @@ type GoSdk {
 
   Modules with the generate skip marker are skipped.
   """
-  pub generateAll(ws: Workspace!): Changeset! @generate {
+  generateAll(ws: Workspace!): Changeset! @generate {
     let pws = polyfill.workspace(ws)
 
-    modules(ws)
-      .filter { mod => mod.skipGenerate(ws) == false }
-      .reduce(pws.fork) { fork, mod =>
-        fork.merge(pws.moduleSource("/" + mod.rootPath).generate)
-      }
-      .changes
+    let changes = modules(ws)
+      .filter { !_.skipGenerate(ws) }
+      .map { mod => pws.moduleSource("/" + mod.rootPath).generate.changes }
+
+    # force them to evaluate in parallel by asking each if they have changes
+    changes.{{isEmpty}}
+
+    ws.changes.withChangesets(changes.reject { _.isEmpty })
   }
 }
