@@ -8,7 +8,7 @@
     {
       "name": "polyfill",
       "source": "github.com/dagger/polyfill@fix/module-generate-scope-to-path",
-      "pin": "c2a932275f0c14cab5542053250b2fddbad29c12"
+      "pin": "4357bc1ccd2a4621c20a2e4c037c4835632003a6"
     }
   ]
 }
