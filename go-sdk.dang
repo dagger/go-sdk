@@ -29,7 +29,7 @@ type GoSdk {
   beneath it — not the whole workspace.
   """
   modules(ws: Workspace!): [Mod!]! {
-    let managed = currentModule.asSDK.modules.{{path}}
+    let managed = currentModule.asSDK(workspace: ws).modules.{{path}}
     let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
     polyfill
       .workspace(ws)
@@ -108,12 +108,12 @@ type GoSdk {
   The workspace's [[modules.<sdk>.as-sdk.modules]] entries are the source of
   truth for SDK-managed modules, so membership needs no config sniffing.
   """
-  let managedBase(path: String!): String {
+  let managedBase(ws: Workspace!, path: String!): String {
     # asSDK raises when this module is not installed as an SDK in the active
     # workspace, which is the normal case for a legacy dagger.json-only repo.
     # The `.{{path}}` selection is what executes the query, so it must sit
     # inside the guard.
-    let managed = currentModule.asSDK.modules.{{path}} rescue []
+    let managed = currentModule.asSDK(workspace: ws).modules.{{path}} rescue []
 
     managed
       .map { m => normalizePath(m.path) }
@@ -138,7 +138,7 @@ type GoSdk {
     let modPath = if (findUp) {
       let needle = normalizePath(path)
 
-      let asSdkBase = managedBase(needle)
+      let asSdkBase = managedBase(ws, needle)
       let foundToml = ws.findUp("dagger-module.toml", path)
       let foundJson = ws.findUp("dagger.json", path)
       let tomlBase = if (foundToml == null) { null } else {
