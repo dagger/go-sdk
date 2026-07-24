@@ -57,7 +57,7 @@ type E2e {
   """
   The helper should expose the generate skip marker used by callers.
   """
-  pub skipGenerateFilenameCheck: Void @check {
+  skipGenerateFilenameCheck: Void @check {
     assert(goSdk.skipGenerateFilename == ".dagger-go-sdk-skip-generate", "skip marker filename changed")
 
     null
@@ -66,7 +66,7 @@ type E2e {
   """
   Mod lookup should find the owning Go SDK module when called from a nested path.
   """
-  pub moduleLookupCheck(ws: Workspace!): Void @check {
+  moduleLookupCheck(ws: Workspace!): Void @check {
     let nested = goSdk.mod(ws, path: lookupNestedPath)
     let exact = goSdk.mod(ws, path: lookupModulePath, findUp: false)
 
@@ -81,17 +81,15 @@ type E2e {
   path when the lookup unexpectedly succeeds.
   """
   let lookupFailure(ws: Workspace!, path: String!): String! {
-    try {
-      goSdk.mod(ws, path: path).rootPath
-    } catch {
-      err => err.message
+    goSdk.mod(ws, path: path).rootPath rescue {
+      err: Error => err.message
     }
   }
 
   """
   Mod lookup should find the owning module through a dagger-module.toml.
   """
-  pub moduleLookupTomlCheck(ws: Workspace!): Void @check {
+  moduleLookupTomlCheck(ws: Workspace!): Void @check {
     let nested = goSdk.mod(ws, path: tomlNestedPath)
     let exact = goSdk.mod(ws, path: tomlModulePath)
 
@@ -105,7 +103,7 @@ type E2e {
   A dagger-module.toml module owned by another runtime should be rejected with
   a message naming that runtime.
   """
-  pub moduleLookupNonGoTomlCheck(ws: Workspace!): Void @check {
+  moduleLookupNonGoTomlCheck(ws: Workspace!): Void @check {
     let message = lookupFailure(ws, nonGoTomlModulePath)
 
     assertContains(message, "does not use the Go SDK", "non-Go runtime was not rejected: " + message)
@@ -119,7 +117,7 @@ type E2e {
   effective declaration below it owns the module, so lookup must be rejected
   and name that runtime.
   """
-  pub moduleLookupCommentedTomlCheck(ws: Workspace!): Void @check {
+  moduleLookupCommentedTomlCheck(ws: Workspace!): Void @check {
     let message = lookupFailure(ws, commentedTomlModulePath)
 
     assertContains(message, "does not use the Go SDK", "commented-out source was read as the runtime: " + message)
@@ -132,7 +130,7 @@ type E2e {
   A single-quoted source is valid TOML and should resolve like a double-quoted
   one.
   """
-  pub moduleLookupSingleQuotedTomlCheck(ws: Workspace!): Void @check {
+  moduleLookupSingleQuotedTomlCheck(ws: Workspace!): Void @check {
     let mod = goSdk.mod(ws, path: singleQuotedTomlModulePath)
 
     assert(mod.rootPath == singleQuotedTomlModulePath, "single-quoted source did not resolve; got " + mod.rootPath)
@@ -144,7 +142,7 @@ type E2e {
   In a partially migrated workspace the closest config wins: a deeper legacy
   dagger.json module must beat an ancestor's dagger-module.toml.
   """
-  pub moduleLookupPartialMigrationCheck(ws: Workspace!): Void @check {
+  moduleLookupPartialMigrationCheck(ws: Workspace!): Void @check {
     let nested = goSdk.mod(ws, path: partialLegacyNestedPath)
 
     assert(nested.rootPath == partialLegacyPath, "closest config did not win; resolved to " + nested.rootPath)
@@ -155,7 +153,7 @@ type E2e {
   """
   The SDK should report the builtin runtime it targets.
   """
-  pub targetRuntimeCheck: Void @check {
+  targetRuntimeCheck: Void @check {
     assert(goSdk.targetRuntime == "go", "targetRuntime should be go")
 
     null
@@ -165,20 +163,35 @@ type E2e {
   initModule should produce only the SDK-owned seed files. The engine owns the
   module's dagger.json, so it must not appear in the changeset.
   """
-  pub initCheck(ws: Workspace!): Void @check {
+  initCheck(ws: Workspace!): Void @check {
     let defaultPath = outputRoot + "/init-default"
     let legacyPath = outputRoot + "/init-legacy"
 
     let defaultChanges = goSdk.initModule(ws, name: "init-default", path: defaultPath)
-    let legacyChanges = goSdk.initModule(ws, name: "init-legacy", path: legacyPath, legacyTemplate: true)
+    let legacyChanges = goSdk.initModule(
+      ws,
+      name: "init-legacy",
+      path: legacyPath,
+      legacyTemplate: true,
+    )
 
-    assert(contains(defaultChanges.addedPaths, defaultPath + "/dagger.json") == false, "initModule should not write dagger.json; the engine owns it")
+    assert(
+      contains(defaultChanges.addedPaths, defaultPath + "/dagger.json") == false,
+      "initModule should not write dagger.json; the engine owns it",
+    )
     assertAdded(defaultChanges, defaultPath + "/main.go")
-    assert(contains(defaultChanges.addedPaths, defaultPath + "/dagger.gen.go") == false, "initModule should not generate dagger.gen.go")
+    assert(
+      contains(defaultChanges.addedPaths, defaultPath + "/dagger.gen.go") == false,
+      "initModule should not generate dagger.gen.go",
+    )
     assert(defaultChanges.modifiedPaths.length == 0, "initModule unexpectedly modified existing files")
     assert(defaultChanges.removedPaths.length == 0, "initModule unexpectedly removed files")
 
-    assertContains(legacyChanges.layer.file(legacyPath + "/main.go").contents, "type InitLegacy struct{}", "legacy template did not render the module type")
+    assertContains(
+      legacyChanges.layer.file(legacyPath + "/main.go").contents,
+      "type InitLegacy struct{}",
+      "legacy template did not render the module type",
+    )
 
     null
   }
@@ -187,8 +200,13 @@ type E2e {
   initClient should not materialize files itself. The engine records the client
   and owns the generated context changeset.
   """
-  pub initClientCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.initClient(ws, path: outputRoot + "/client", module: generateModulePath, dev: true)
+  initClientCheck(ws: Workspace!): Void @check {
+    let changes = goSdk.initClient(
+      ws,
+      path: outputRoot + "/client",
+      module: generateModulePath,
+      dev: true,
+    )
 
     assert(changes.isEmpty, "initClient should return an empty SDK changeset")
 
@@ -199,12 +217,16 @@ type E2e {
   Generating an existing module should produce generated files rooted at that
   module without touching unrelated paths.
   """
-  pub generateCheck(ws: Workspace!): Void @check {
+  generateModuleCheck(ws: Workspace!): Void @check {
     let changes = goSdk.mod(ws, path: generateModulePath).generate(ws)
 
     assertAdded(changes, generateModulePath + "/dagger.gen.go")
     assertAdded(changes, generateModulePath + "/go.mod")
-    assertContains(changes.layer.file(generateModulePath + "/dagger.gen.go").contents, "Code generated by dagger.", "generate did not include dagger.gen.go")
+    assertContains(
+      changes.layer.file(generateModulePath + "/dagger.gen.go").contents,
+      "Code generated by dagger.",
+      "generate did not include dagger.gen.go",
+    )
 
     null
   }
@@ -212,15 +234,30 @@ type E2e {
   """
   Generating all modules should discover Go SDK modules and ignore skipped ones.
   """
-  pub generateAllCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.generateAll(ws)
+  generateCheck(ws: Workspace!): Void @check {
+    let changes = goSdk.generate(ws)
 
     assertAdded(changes, generateModulePath + "/dagger.gen.go")
-    assert(contains(changes.addedPaths, lookupModulePath + "/dagger.gen.go") == false, "generateAll generated a lookup fixture that should be skipped")
-    assert(contains(changes.addedPaths, depsModulePath + "/dagger.gen.go") == false, "generateAll generated dependency fixtures that should be skipped")
-    assert(contains(changes.addedPaths, skipModulePath + "/dagger.gen.go") == false, "generateAll generated a skipped module")
-    assert(contains(changes.addedPaths, managedTomlModulePath + "/dagger.gen.go") == false, "generateAll generated a skipped dagger-module.toml module")
-    assert(contains(changes.addedPaths, nonGoModulePath + "/dagger.gen.go") == false, "generateAll generated a non-Go SDK module")
+    assert(
+      contains(changes.addedPaths, lookupModulePath + "/dagger.gen.go") == false,
+      "generateAll generated a lookup fixture that should be skipped",
+    )
+    assert(
+      contains(changes.addedPaths, depsModulePath + "/dagger.gen.go") == false,
+      "generateAll generated dependency fixtures that should be skipped",
+    )
+    assert(
+      contains(changes.addedPaths, skipModulePath + "/dagger.gen.go") == false,
+      "generateAll generated a skipped module",
+    )
+    assert(
+      contains(changes.addedPaths, managedTomlModulePath + "/dagger.gen.go") == false,
+      "generateAll generated a skipped dagger-module.toml module",
+    )
+    assert(
+      contains(changes.addedPaths, nonGoModulePath + "/dagger.gen.go") == false,
+      "generateAll generated a non-Go SDK module",
+    )
 
     null
   }
@@ -231,15 +268,33 @@ type E2e {
   by the legacy dagger.json or the CLI 1.0 dagger-module.toml — and nothing
   that isn't managed by this SDK (e.g. a sibling module using another SDK).
   """
-  pub modulesCheck(ws: Workspace!): Void @check {
+  modulesCheck(ws: Workspace!): Void @check {
     let pathRecords = goSdk.modules(ws).{{rootPath}}
 
-    assert(pathRecords.filter { r => r.rootPath == lookupModulePath }.length > 0, "lookup Go module should be listed")
-    assert(pathRecords.filter { r => r.rootPath == skipModulePath }.length > 0, "skip-marked Go module should still be listed (skip only affects generate)")
-    assert(pathRecords.filter { r => r.rootPath == generateModulePath }.length > 0, "generate Go module should be listed")
-    assert(pathRecords.filter { r => r.rootPath == depsModulePath }.length > 0, "deps Go module should be listed")
-    assert(pathRecords.filter { r => r.rootPath == managedTomlModulePath }.length > 0, "a dagger-module.toml (CLI 1.0) managed module should be listed")
-    assert(pathRecords.filter { r => r.rootPath == nonGoModulePath }.length == 0, "a module not managed by this SDK should be excluded from modules listing")
+    assert(
+      pathRecords.filter { r => r.rootPath == lookupModulePath }.length > 0,
+      "lookup Go module should be listed",
+    )
+    assert(
+      pathRecords.filter { r => r.rootPath == skipModulePath }.length > 0,
+      "skip-marked Go module should still be listed (skip only affects generate)",
+    )
+    assert(
+      pathRecords.filter { r => r.rootPath == generateModulePath }.length > 0,
+      "generate Go module should be listed",
+    )
+    assert(
+      pathRecords.filter { r => r.rootPath == depsModulePath }.length > 0,
+      "deps Go module should be listed",
+    )
+    assert(
+      pathRecords.filter { r => r.rootPath == managedTomlModulePath }.length > 0,
+      "a dagger-module.toml (CLI 1.0) managed module should be listed",
+    )
+    assert(
+      pathRecords.filter { r => r.rootPath == nonGoModulePath }.length == 0,
+      "a module not managed by this SDK should be excluded from modules listing",
+    )
 
     null
   }
@@ -250,7 +305,7 @@ type E2e {
   cone (walk-down) plus the nearest enclosing one (find-up), and excludes managed
   modules that live outside it.
   """
-  pub modulesCwdCheck(ws: Workspace!): Void @check {
+  modulesCwdCheck(ws: Workspace!): Void @check {
     # A stable snapshot of the workspace, re-anchorable at any cwd. Keep every
     # module config (both dagger.json and dagger-module.toml, for discovery) and
     # the nested .keep so lookup/app/nested survives the include filter and can
@@ -260,12 +315,26 @@ type E2e {
     # Walk-down: from fixtures/generate only generate/app is in the cone; the
     # sibling managed modules live outside it and must be excluded. Its
     # cwd-relative path is "app" — a directory beneath the cwd.
-    let fromGenerate = goSdk.modules(root.asWorkspace(cwd: fixtureRoot + "/generate"))
+    let fromGenerate = goSdk.modules(
+      root.asWorkspace(cwd: fixtureRoot + "/generate"),
+    )
     let fromGenerateRoots = fromGenerate.{{rootPath}}
-    assert(fromGenerateRoots.filter { r => r.rootPath == generateModulePath }.length > 0, "cwd=generate: the managed module in the cone should be discovered")
-    assert(fromGenerateRoots.filter { r => r.rootPath == lookupModulePath }.length == 0, "cwd=generate: lookup/app is outside the cone and must be excluded")
-    assert(fromGenerateRoots.filter { r => r.rootPath == depsModulePath }.length == 0, "cwd=generate: deps/app is outside the cone and must be excluded")
-    assert(fromGenerateRoots.filter { r => r.rootPath == skipModulePath }.length == 0, "cwd=generate: skip/app is outside the cone and must be excluded")
+    assert(
+      fromGenerateRoots.filter { r => r.rootPath == generateModulePath }.length > 0,
+      "cwd=generate: the managed module in the cone should be discovered",
+    )
+    assert(
+      fromGenerateRoots.filter { r => r.rootPath == lookupModulePath }.length == 0,
+      "cwd=generate: lookup/app is outside the cone and must be excluded",
+    )
+    assert(
+      fromGenerateRoots.filter { r => r.rootPath == depsModulePath }.length == 0,
+      "cwd=generate: deps/app is outside the cone and must be excluded",
+    )
+    assert(
+      fromGenerateRoots.filter { r => r.rootPath == skipModulePath }.length == 0,
+      "cwd=generate: skip/app is outside the cone and must be excluded",
+    )
     assert(fromGenerateRoots.length == 1, "cwd=generate: exactly one managed module is in the cone")
     assert(fromGenerate.{{path}}.filter { r => r.path == "app" }.length > 0, "cwd=generate: the discovered module's path should be cwd-relative (app)")
 
@@ -274,8 +343,14 @@ type E2e {
     # cwd-relative path is ".." — an ancestor of the cwd.
     let fromNested = goSdk.modules(root.asWorkspace(cwd: lookupNestedPath))
     let fromNestedRoots = fromNested.{{rootPath}}
-    assert(fromNestedRoots.filter { r => r.rootPath == lookupModulePath }.length > 0, "cwd=lookup/app/nested: find-up should discover the enclosing lookup/app")
-    assert(fromNestedRoots.filter { r => r.rootPath == generateModulePath }.length == 0, "cwd=lookup/app/nested: generate/app is outside the cone")
+    assert(
+      fromNestedRoots.filter { r => r.rootPath == lookupModulePath }.length > 0,
+      "cwd=lookup/app/nested: find-up should discover the enclosing lookup/app",
+    )
+    assert(
+      fromNestedRoots.filter { r => r.rootPath == generateModulePath }.length == 0,
+      "cwd=lookup/app/nested: generate/app is outside the cone",
+    )
     assert(fromNestedRoots.length == 1, "cwd=lookup/app/nested: only the enclosing module should be discovered")
     assert(fromNested.{{path}}.filter { r => r.path == ".." }.length > 0, "cwd=lookup/app/nested: the enclosing module's path should be cwd-relative (..)")
 
@@ -283,11 +358,17 @@ type E2e {
     # only the managed ones — is discovered, whether marked by dagger.json or
     # dagger-module.toml.
     let fromRoot = goSdk.modules(root.asWorkspace(cwd: "/")).{{rootPath}}
-    assert(fromRoot.filter { r => r.rootPath == generateModulePath }.length > 0, "cwd=/: generate/app should be listed")
+    assert(
+      fromRoot.filter { r => r.rootPath == generateModulePath }.length > 0,
+      "cwd=/: generate/app should be listed",
+    )
     assert(fromRoot.filter { r => r.rootPath == lookupModulePath }.length > 0, "cwd=/: lookup/app should be listed")
     assert(fromRoot.filter { r => r.rootPath == depsModulePath }.length > 0, "cwd=/: deps/app should be listed")
     assert(fromRoot.filter { r => r.rootPath == skipModulePath }.length > 0, "cwd=/: skip/app should be listed")
-    assert(fromRoot.filter { r => r.rootPath == managedTomlModulePath }.length > 0, "cwd=/: the dagger-module.toml managed module should be listed")
+    assert(
+      fromRoot.filter { r => r.rootPath == managedTomlModulePath }.length > 0,
+      "cwd=/: the dagger-module.toml managed module should be listed",
+    )
     assert(fromRoot.length == 5, "cwd=/: exactly the five managed modules should be listed")
 
     null
@@ -296,7 +377,7 @@ type E2e {
   """
   A skip marker above a module should make generate return an empty changeset.
   """
-  pub skipGenerateCheck(ws: Workspace!): Void @check {
+  skipGenerateCheck(ws: Workspace!): Void @check {
     let mod = goSdk.mod(ws, path: skipModulePath)
     let changes = mod.generate(ws)
 
