@@ -356,6 +356,14 @@ type GoSdk {
     # force them to evaluate in parallel by asking each if they have changes
     changes.{{isEmpty}}
 
-    ws.changes.withChangesets(changes)
+    # Fold each module's own changes onto an empty base, not ws.changes. When this
+    # @generate runs nested under the engine's ModuleSource.generateLocalDependencies
+    # (the SDK generator invoked per local dependency), ws already has the leaf
+    # closure staged. Folding ws.changes back in re-included that staged closure,
+    # which the engine then re-rooted under the dependent (b/.dagger/modules/a/...)
+    # and octopus-merged against the freshly generated, overlapping files
+    # (apply ours patch: ... already exists). pws.fork.changes is empty, so only
+    # each module's own changes remain.
+    pws.fork.changes.withChangesets(changes)
   }
 }
