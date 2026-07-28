@@ -316,6 +316,132 @@ type GoSdk {
   }
 
   """
+  Build the engine-free client codegen helper.
+  """
+  let codegenBuilder: Container! {
+    container
+      .from("golang:1.25-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/helper", currentModule.source.directory("helpers/codegen"))
+      .withWorkdir("/helper")
+      .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "."])
+  }
+
+  """
+  Serialize the bound-module provenance the codegen helper embeds in the
+  generated serve bootstrap.
+  """
+  let boundModuleJSON(kindJSON: String!, path: String!, ref: String!, pin: String!): String! {
+    "{\"kind\":" + kindJSON + ",\"path\":" + JSON.encode(path) + ",\"ref\":" + JSON.encode(ref) + ",\"pin\":" + JSON.encode(pin) + "}"
+  }
+
+  """
+  Run client codegen: schema + meta in, generated client out. The existing
+  client directory seeds the output so user files survive and an existing
+  go.mod keeps its module name and replace directives (only the
+  dagger.io/dagger pin is refreshed).
+  """
+  let clientDirectory(
+    schemaJSON: String!,
+    moduleName: String!,
+    engineVersion: String!,
+    kindJSON: String!,
+    path: String!,
+    ref: String!,
+    pin: String!,
+    existing: Directory!,
+  ): Directory! {
+    let metaJson = "{\"moduleName\":" + JSON.encode(moduleName) + ",\"engineVersion\":" + JSON.encode(engineVersion) + ",\"module\":" + boundModuleJSON(kindJSON, path, ref, pin) + "}"
+    codegenBuilder
+      .withNewFile("/schema.json", schemaJSON)
+      .withNewFile("/meta.json", metaJson)
+      .withDirectory("/out", existing)
+      .withExec(["codegen", "--introspection-json-path", "/schema.json", "--client-meta-path", "/meta.json", "--output", "/out"])
+      .directory("/out")
+  }
+
+  """
+  Existing contents of the client directory, empty when it doesn't exist yet.
+  """
+  let existingClientDir(ws: Workspace!, path: String!): Directory! {
+    let filtered = ws.directory("/", include: [path + "/**"])
+    if (filtered.exists(path)) {
+      filtered.directory(path)
+    } else {
+      directory
+    }
+  }
+
+  """
+  Whether a client's bound-module ref points into the workspace rather than
+  at a remote module.
+  """
+  let isLocalModuleRef(ref: String!): Boolean! {
+    ref.hasPrefix("/") or ref.hasPrefix(".") or (ref.contains(".") == false)
+  }
+
+  """
+  Generate a typed Go client for the module at `module`, written to `path`.
+  """
+  pub generateClient(ws: Workspace!, module: String!, path: String!): Changeset! {
+    let pws = polyfill.workspace(ws)
+    let modSrc = pws.moduleSource("/" + module).core
+    let generated = clientDirectory(
+      modSrc.clientSchemaIntrospectionJSON.contents,
+      modSrc.moduleOriginalName,
+      modSrc.engineVersion,
+      JSON.encode(modSrc.kind),
+      module,
+      modSrc.asString,
+      modSrc.pin,
+      existingClientDir(ws, path),
+    )
+    pws.fork.withDirectory(path, generated).changes
+  }
+
+  """
+  Regenerate every Go client registered on this SDK in the workspace config.
+  """
+  pub generateAllClient(ws: Workspace!): Changeset! @generate {
+    let pws = polyfill.workspace(ws)
+    ws.sdk(name: currentModule.name).clients.{{name, source}}
+      .reduce(pws.fork) { fork, client =>
+        let generated = if (isLocalModuleRef(client.source)) {
+          # A local module's cached source can miss live edits, so re-resolve
+          # it fresh from the workspace; git modules are pinned/immutable.
+          let src = pws.moduleSource("/" + client.source).core
+          clientDirectory(
+            src.clientSchemaIntrospectionJSON.contents,
+            src.moduleOriginalName,
+            src.engineVersion,
+            JSON.encode(src.kind),
+            client.source,
+            src.asString,
+            src.pin,
+            existingClientDir(ws, client.name),
+          )
+        } else {
+          let m = moduleSource(refString: client.source)
+          clientDirectory(
+            m.clientSchemaIntrospectionJSON.contents,
+            m.moduleOriginalName,
+            m.engineVersion,
+            JSON.encode(m.kind),
+            # Git: unused (ref/pin drive the serve).
+            client.source,
+            m.asString,
+            m.pin,
+            existingClientDir(ws, client.name),
+          )
+        }
+        fork.withDirectory(client.name, generated)
+      }
+      .changes
+  }
+
+  """
   Render the legacy Go template with the requested module name.
   """
   let renderedLegacyTemplate(name: String!): Directory! {

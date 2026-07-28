@@ -1,0 +1,13 @@
+{
+  "name": "client-app",
+  "engineVersion": "latest",
+  "sdk": {
+    "source": "go"
+  },
+  "dependencies": [
+    {
+      "name": "client-dep",
+      "source": "../dep"
+    }
+  ]
+}

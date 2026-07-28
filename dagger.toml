@@ -36,3 +36,7 @@ path = ".dagger/modules/e2e/fixtures/skip/app"
 
 [[modules.go-sdk.as-sdk.modules]]
 path = ".dagger/modules/e2e/fixtures/managed-toml/app"
+
+[[modules.go-sdk.as-sdk.clients]]
+path = ".dagger/modules/e2e/fixtures/client/out"
+module = ".dagger/modules/e2e/fixtures/client/app"
