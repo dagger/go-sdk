@@ -12,6 +12,7 @@ source = ".dagger/modules/e2e"
 [modules.go-sdk]
 source = "."
 check.skip = ["*"]
+generate.skip = ["*"]
 
 [modules.dang-sdk]
 source = "https://github.com/dagger/dang-sdk"
