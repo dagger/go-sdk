@@ -6,7 +6,7 @@ type Mod {
   Workspace-root-relative path of this module root — the module's stable
   identity, independent of where the client is invoked from.
   """
-  pub rootPath: String!
+  rootPath: String!
 
   """
   Workspace containing this module.
@@ -23,7 +23,7 @@ type Mod {
   the module itself, "sub/mod" for a module beneath it, ".." for an enclosing one.
   A cwd-relative view of rootPath, so listings read the way a shell user would.
   """
-  pub path: String! {
+  path: String! {
     let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
     if (rootPath == cwd) {
       "."
@@ -42,7 +42,7 @@ type Mod {
   """
   Whether this module or an ancestor contains the configured generate skip marker.
   """
-  pub skipGenerate(ws: Workspace!): Boolean! {
+  skipGenerate(ws: Workspace!): Boolean! {
     hasMarker(ws, skipGenerateFilename)
   }
 
@@ -58,14 +58,16 @@ type Mod {
   Generate this module.
   If the generate skip marker is present, the changeset is empty.
   """
-  pub generate(ws: Workspace!): Changeset! {
+  generate(ws: Workspace!): Changeset! {
     if (skipGenerate(ws)) {
       polyfill.workspace(ws).fork.changes
     } else {
       # Stage the local dependency closure so this module's codegen sees
       # up-to-date dependency bindings before generating it.
-      let stagedWs = ws.withChanges(polyfill.workspace(ws).moduleSource("/" + rootPath).core.generateLocalDependencies(ws))
-      polyfill.workspace(stagedWs).moduleSource("/" + rootPath).generate.changes
+      let stagedWs = ws.withChanges(
+        polyfill.workspace(ws).moduleSource("/" + rootPath).core.generateLocalDependencies(ws),
+      )
+      polyfill.workspace(stagedWs).moduleSource("/" + rootPath).generate
     }
   }
 }

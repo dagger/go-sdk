@@ -341,29 +341,19 @@ type GoSdk {
   """
   generate(ws: Workspace!): Changeset! @generate {
     let pws = polyfill.workspace(ws)
-
-    let changes = modules(ws)
-      .filter { !_.skipGenerate(ws) }
-      .map { mod =>
-        # Stage this module's local dependency closure first (leaf-first, possibly
-        # across SDKs) so its codegen sees up-to-date dependency bindings. The dep
-        # codegen is ephemeral: taking the changeset against the staged workspace
-        # cancels it out, leaving only each module's own changes.
-        let stagedWs = ws.withChanges(pws.moduleSource("/" + mod.rootPath).core.generateLocalDependencies(ws))
-        polyfill.workspace(stagedWs).moduleSource("/" + mod.rootPath).generate.changes
-      }
-
-    # force them to evaluate in parallel by asking each if they have changes
-    changes.{{isEmpty}}
-
-    # Fold each module's own changes onto an empty base, not ws.changes. When this
-    # @generate runs nested under the engine's ModuleSource.generateLocalDependencies
-    # (the SDK generator invoked per local dependency), ws already has the leaf
-    # closure staged. Folding ws.changes back in re-included that staged closure,
-    # which the engine then re-rooted under the dependent (b/.dagger/modules/a/...)
-    # and octopus-merged against the freshly generated, overlapping files
-    # (apply ours patch: ... already exists). pws.fork.changes is empty, so only
-    # each module's own changes remain.
-    pws.fork.changes.withChangesets(changes)
+    changeset.withChangesets(
+      modules(ws)
+        .filter { !_.skipGenerate(ws) }
+        .map { mod =>
+          # Stage this module's local dependency closure first (leaf-first, possibly
+          # across SDKs) so its codegen sees up-to-date dependency bindings. The dep
+          # codegen is ephemeral: taking the changeset against the staged workspace
+          # cancels it out, leaving only each module's own changes.
+          let stagedWs = ws.withChanges(
+            pws.moduleSource("/" + mod.rootPath).core.generateLocalDependencies(ws),
+          )
+          polyfill.workspace(stagedWs).moduleSource("/" + mod.rootPath).generate
+        },
+    )
   }
 }
