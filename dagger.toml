@@ -3,9 +3,6 @@
 # Example:
 #   dagger install github.com/dagger/dagger/modules/wolfi
 
-# Marker filename that skips generate when found at or above a Go SDK module root.
-# settings.skipGenerateFilename = ""
-
 [modules.e2e]
 source = ".dagger/modules/e2e"
 
@@ -15,9 +12,7 @@ check.skip = ["*"]
 generate.skip = ["*"]
 
 [modules.dang-sdk]
-source = "https://github.com/dagger/dang-sdk"
-# Marker filename that skips generate when found at or above a Dang SDK module root.
-# settings.skipGenerateFilename = ""
+source = "github.com/dagger/dang-sdk"
 
 [modules.dang-sdk.as-sdk]
 
