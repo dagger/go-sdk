@@ -21,6 +21,20 @@ type E2e {
   # A CLI 1.0 managed module: configured by dagger-module.toml, not dagger.json.
   let managedTomlModulePath: String! = fixtureRoot + "/managed-toml/app"
 
+  # A client binds to the client/app module (which depends on client/dep) and
+  # is generated into its own dir.
+  let clientModulePath: String! = fixtureRoot + "/client/app"
+  let clientOutputPath: String! = fixtureRoot + "/client/out"
+  # A client dir with an existing go.mod (local replace) and a user file;
+  # regeneration must preserve both.
+  let clientExistingPath: String! = fixtureRoot + "/client/existing"
+
+  # dagger/dagger commit whose sdk/go the compile check builds the generated
+  # client against. Pinned to a commit (not a branch) so Dagger
+  # content-addresses the SDK tree and reuses it across runs. Bump to track
+  # main; must ship Workspace.moduleSource (dagger/dagger#13663).
+  let daggerSourceRef: String! = "3e6f3215788362eb45f4fd7540103007cbf52e27"
+
   """
   Fail the current check when a condition is false.
   """
@@ -385,6 +399,146 @@ type E2e {
 
     assert(mod.skipGenerate(ws), "skip marker was not detected")
     assert(changes.isEmpty, "generate returned changes for a skipped module")
+
+    null
+  }
+
+  """
+  Generating a client for a module should produce the core bindings, one
+  <module>.gen.go for the bound module, the dag package, and a go.mod pinned
+  to the module's engine version — rooted at the client output path.
+  """
+  clientGenerateCheck(ws: Workspace!): Void @check {
+    let changes = goSdk.generateClient(ws, module: clientModulePath, path: clientOutputPath)
+
+    assertAdded(changes, clientOutputPath + "/dagger.gen.go")
+    assertAdded(changes, clientOutputPath + "/client-app.gen.go")
+    assertAdded(changes, clientOutputPath + "/dag/dag.gen.go")
+    assertAdded(changes, clientOutputPath + "/go.mod")
+
+    # The binding must carry the bound module's actual API: proves the
+    # client-facing schema was resolved and codegen'd, not left empty.
+    assertContains(
+      changes.layer.file(clientOutputPath + "/client-app.gen.go").contents,
+      "Hello",
+      "the bound module's Hello function must be in the generated client",
+    )
+    # The bootstrap serves the one bound module, resolved via the workspace.
+    assertContains(
+      changes.layer.file(clientOutputPath + "/dagger.gen.go").contents,
+      "serveBoundModule",
+      "the client bootstrap must serve the bound module",
+    )
+
+    null
+  }
+
+  """
+  Regenerating a client whose go.mod already exists must preserve its module
+  name and local replace directives, and a user-authored file in the client
+  dir must survive: generated files overlay the existing dir.
+  """
+  clientRespectsExistingCheck(ws: Workspace!): Void @check {
+    let changes = goSdk.generateClient(ws, module: clientModulePath, path: clientExistingPath)
+
+    let gomod = changes.after.file(clientExistingPath + "/go.mod").contents
+    assertContains(gomod, "module my-existing-client", "existing go.mod module name must be preserved")
+    assertContains(gomod, "replace dagger.io/dagger => ./sdk", "existing local replace directive must be preserved")
+
+    assert(
+      contains(changes.removedPaths, clientExistingPath + "/notes.go") == false,
+      "regenerating a client must not remove a user-authored file",
+    )
+    assertContains(
+      changes.after.file(clientExistingPath + "/notes.go").contents,
+      "user-authored",
+      "the user's notes.go must survive regeneration",
+    )
+
+    null
+  }
+
+  """
+  Regenerating a client from within the client dir itself (cwd == the client
+  path) must still resolve the bound module — the ref is workspace-root
+  relative, so resolution must be cwd-independent. Changeset paths are
+  relative to that cwd, hence the bare names.
+  """
+  clientFromCwdCheck(ws: Workspace!): Void @check {
+    let atClient = ws
+      .directory("/", include: [fixtureRoot + "/client/**"])
+      .asWorkspace(cwd: clientExistingPath)
+    let changes = goSdk.generateClient(atClient, module: clientModulePath, path: clientExistingPath)
+
+    assertAdded(changes, "dagger.gen.go")
+    assert(
+      contains(changes.removedPaths, "notes.go") == false,
+      "regenerating from the client dir must not remove a user file",
+    )
+    assertContains(
+      changes.after.file("notes.go").contents,
+      "user-authored",
+      "the user's notes.go must survive regeneration from the client dir",
+    )
+
+    null
+  }
+
+  """
+  Regenerating all workspace-registered clients should generate each one at
+  its configured path.
+  """
+  clientGenerateAllCheck(ws: Workspace!): Void @check {
+    let changes = goSdk.generateAllClient(ws)
+
+    assertAdded(changes, clientOutputPath + "/dagger.gen.go")
+    assertAdded(changes, clientOutputPath + "/client-app.gen.go")
+    assertAdded(changes, clientOutputPath + "/go.mod")
+
+    null
+  }
+
+  """
+  A generated client must compile. The bootstrap calls
+  Workspace.moduleSource, which no released dagger.io/dagger ships yet, so
+  build against the SDK from a pinned dagger commit — catching binding and
+  go.mod bugs that file-presence checks miss.
+  """
+  clientCompilesCheck(ws: Workspace!): Void @check {
+    let changes = goSdk.generateClient(ws, module: clientModulePath, path: clientOutputPath)
+    let clientDir = changes.layer.directory(clientOutputPath)
+
+    let out = container
+      .from("golang:1.26-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/dagger-sdk", git("https://github.com/dagger/dagger").commit(daggerSourceRef).tree.directory("sdk/go"))
+      .withDirectory("/client", clientDir)
+      .withWorkdir("/client")
+      .withExec(["go", "mod", "edit", "-replace", "dagger.io/dagger=/dagger-sdk"])
+      .withExec(["go", "mod", "tidy"])
+      .withExec(["go", "build", "./..."])
+      .stdout
+
+    null
+  }
+
+  """
+  The codegen helper must pass its own unit + golden tests. Runs `go test` in
+  a container so `dagger check` covers the codegen logic, not just its
+  end-to-end output.
+  """
+  helperTestsCheck(ws: Workspace!): Void @check {
+    let out = container
+      .from("golang:1.25-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/helpers", ws.directory("helpers"))
+      .withWorkdir("/helpers/codegen")
+      .withExec(["go", "test", "./..."])
+      .stdout
 
     null
   }
