@@ -135,7 +135,7 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		}, t.TempDir())
 
 		dep := readOverlay(t, state, "hello.gen.go")
-		require.Contains(t, dep, "package dagger")
+		require.Contains(t, dep, "package hello")
 		require.Contains(t, dep, "type Hello struct")
 		require.Contains(t, dep, "func (r *Query) Hello(")
 		// The core file no longer holds the module-contributed types...
@@ -147,6 +147,71 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		dag := readOverlay(t, state, "dag/dag.gen.go")
 		require.Contains(t, dag, "func Hello(")
 	})
+}
+
+// TestGenerateClient_PackageName checks that a client is named after the
+// directory it is generated into, so two clients are two importable packages
+// instead of two things called "dagger".
+func TestGenerateClient_PackageName(t *testing.T) {
+	clientConfig := func(clientPath string) *generator.ClientGeneratorConfig {
+		return &generator.ClientGeneratorConfig{
+			ModuleName:  "hello",
+			ClientPath:  clientPath,
+			BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: ".dagger/modules/hello"},
+		}
+	}
+
+	t.Run("every generated file takes the client dir's name", func(t *testing.T) {
+		state := generateClient(t, clientConfig("internal/dagger/engine-dev"), t.TempDir())
+
+		for _, path := range []string{"dagger.gen.go", "hello.gen.go"} {
+			require.Contains(t, readOverlay(t, state, path), "package enginedev\n", path)
+			require.NotContains(t, readOverlay(t, state, path), "package dagger\n", path)
+		}
+		// The dag subpackage keeps its own name and reaches the client
+		// through an alias, so the rename doesn't leak into it.
+		dag := readOverlay(t, state, "dag/dag.gen.go")
+		require.Contains(t, dag, "package dag\n")
+		require.Contains(t, dag, `dagger "hello"`)
+	})
+
+	t.Run("without a client path, the module path names the package", func(t *testing.T) {
+		dir := t.TempDir()
+		existing := "module github.com/acme/cli-dev\n\ngo 1.24.0\n"
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(existing), 0o600))
+
+		state := generateClient(t, clientConfig(""), dir)
+
+		require.Contains(t, readOverlay(t, state, "dagger.gen.go"), "package clidev\n")
+	})
+}
+
+// TestClientPackageName covers the reduction of a client location to a Go
+// package name, including the locations that cannot produce one.
+func TestClientPackageName(t *testing.T) {
+	for _, tc := range []struct {
+		clientPath    string
+		packageImport string
+		want          string
+	}{
+		// The client dir wins over the module path.
+		{"internal/dagger/engine-dev", "engine-dev", "enginedev"},
+		{"clients/Cli_Dev", "github.com/acme/proj", "cli_dev"},
+		// No client dir: fall back to the last element of the module path.
+		{"", "github.com/acme/cli-dev", "clidev"},
+		{".", "hello", "hello"},
+		// A leading digit cannot start an identifier, and neither candidate
+		// works here.
+		{"2fa", "9", "fa"},
+		{"9", "8", defaultClientPackageName},
+		// A keyword is not usable as a package name.
+		{"go", "range", defaultClientPackageName},
+		{"", "", defaultClientPackageName},
+	} {
+		t.Run(tc.clientPath+"|"+tc.packageImport, func(t *testing.T) {
+			require.Equal(t, tc.want, clientPackageName(tc.clientPath, tc.packageImport))
+		})
+	}
 }
 
 // TestGenerateClient_GoMod checks the offline go.mod handling: a fresh client
