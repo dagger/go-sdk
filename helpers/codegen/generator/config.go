@@ -59,6 +59,13 @@ type ClientGeneratorConfig struct {
 	// The name of the module to generate for.
 	ModuleName string
 
+	// ClientPath is where the client lives in the user's project, relative to
+	// the workspace root (e.g. "internal/dagger/engine-dev"). The generator
+	// runs against a materialized copy of that directory, so OutputDir does
+	// not reveal it; the SDK passes it in. It names the generated Go package,
+	// so two clients don't end up with the same package name.
+	ClientPath string
+
 	// BoundModule is the single module the generated client serves; it drives
 	// the generated serveBoundModule bootstrap.
 	BoundModule BoundModule

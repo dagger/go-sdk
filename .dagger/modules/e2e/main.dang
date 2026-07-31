@@ -24,7 +24,7 @@ type E2e {
   # A client binds to the client/app module (which depends on client/dep) and
   # is generated into its own dir.
   let clientModulePath: String! = fixtureRoot + "/client/app"
-  let clientOutputPath: String! = fixtureRoot + "/client/out"
+  let clientOutputPath: String! = fixtureRoot + "/client/app-client"
   # A client dir with an existing go.mod (local replace) and a user file;
   # regeneration must preserve both.
   let clientExistingPath: String! = fixtureRoot + "/client/existing"
@@ -435,6 +435,18 @@ type E2e {
       changes.layer.file(clientOutputPath + "/dagger.gen.go").contents,
       "func NewClient(ctx context.Context, dag *dagger.Client)",
       "the client must expose NewClient to join an existing session",
+    )
+    # The package is named after the client's own directory, so two clients
+    # are two importable packages rather than two "dagger"s.
+    assertContains(
+      changes.layer.file(clientOutputPath + "/dagger.gen.go").contents,
+      "package appclient",
+      "the client package must be named after its directory",
+    )
+    assertContains(
+      changes.layer.file(clientOutputPath + "/client-app.gen.go").contents,
+      "package appclient",
+      "the bound module's bindings must be in the same package",
     )
 
     null
