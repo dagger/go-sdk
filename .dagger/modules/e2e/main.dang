@@ -429,6 +429,13 @@ type E2e {
       "serveBoundModule",
       "the client bootstrap must serve the bound module",
     )
+    # NewClient attaches to an already-open session, so several generated
+    # clients can share one and exchange objects.
+    assertContains(
+      changes.layer.file(clientOutputPath + "/dagger.gen.go").contents,
+      "func NewClient(ctx context.Context, dag *dagger.Client)",
+      "the client must expose NewClient to join an existing session",
+    )
 
     null
   }

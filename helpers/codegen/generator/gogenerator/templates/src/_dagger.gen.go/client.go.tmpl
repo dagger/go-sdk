@@ -4,6 +4,10 @@ type Client struct {
 	*Query
 	dag *dagger.Client
 	client graphql.Client
+	// ownsSession is set when this client opened the session itself (via
+	// Connect) and is therefore the one allowed to close it. A client built
+	// by NewClient borrows a session someone else owns.
+	ownsSession bool
 }
 
 // ClientOpt holds a client option
@@ -44,12 +48,36 @@ var WithRunnerHost = dagger.WithRunnerHost
 var WithEnvironmentVariable = dagger.WithEnvironmentVariable
 
 
+// Connect opens a session of its own and returns a client bound to it. It is
+// the one-line path when this is the only client in the program; use NewClient
+// to put several clients on one session.
 func Connect(ctx context.Context, opts ...ClientOpt) (*Client, error) {
 	dag, err := dagger.Connect(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
 
+	c, err := NewClient(ctx, dag)
+	if err != nil {
+		dag.Close()
+		return nil, err
+	}
+	c.ownsSession = true
+
+	return c, nil
+}
+
+// NewClient serves the bound module into an already-open session and returns a
+// client sharing it. Object IDs belong to the session that made them, so this
+// is what lets two generated clients exchange objects:
+//
+//	dag, err := dagger.Connect(ctx)
+//	engine, err := enginedev.NewClient(ctx, dag)
+//	cli, err := clidev.NewClient(ctx, dag)
+//
+// The session stays the caller's to close: Close on the returned client is a
+// no-op.
+func NewClient(ctx context.Context, dag *dagger.Client) (*Client, error) {
 	c := &Client{
 		Query: &Query{
 			query: dag.QueryBuilder(),
@@ -66,7 +94,12 @@ func Connect(ctx context.Context, opts ...ClientOpt) (*Client, error) {
 }
 
 {{/*  The standalone client in not dev mode needs to expose a close method for the global client to work */ -}}
+// Close closes the session, but only if this client opened it. Closing a
+// borrowed session would pull it out from under whoever else is on it.
 func (c *Client) Close() error {
+	if !c.ownsSession {
+		return nil
+	}
 	return c.dag.Close()
 }
 

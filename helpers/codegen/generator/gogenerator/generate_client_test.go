@@ -149,6 +149,27 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 	})
 }
 
+// TestGenerateClient_Session checks the two ways of getting a client: Connect
+// opens a session and owns it, NewClient borrows one that is already open so
+// several clients can share it (and must not close it behind their owner's
+// back).
+func TestGenerateClient_Session(t *testing.T) {
+	state := generateClient(t, &generator.ClientGeneratorConfig{
+		ModuleName:  "hello",
+		BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: ".dagger/modules/hello"},
+	}, t.TempDir())
+
+	core := readOverlay(t, state, "dagger.gen.go")
+	require.Contains(t, core, "func NewClient(ctx context.Context, dag *dagger.Client) (*Client, error)")
+	require.Contains(t, core, "func Connect(ctx context.Context, opts ...ClientOpt) (*Client, error)")
+	// Connect is the one-line path: it opens a session, then hands it to
+	// NewClient, so both routes serve the bound module the same way.
+	require.Contains(t, core, "c, err := NewClient(ctx, dag)")
+	require.Contains(t, core, "c.ownsSession = true")
+	// A borrowed session belongs to whoever opened it.
+	require.Contains(t, core, "if !c.ownsSession {")
+}
+
 // TestGenerateClient_GoMod checks the offline go.mod handling: a fresh client
 // dir gets a go.mod pinning dagger.io/dagger at the engine version; an
 // existing go.mod keeps its module name and local replace directives while the
