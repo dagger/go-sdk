@@ -30,6 +30,7 @@ func main() {
 // the client generator needs (see generator.ClientGeneratorConfig).
 type clientMeta struct {
 	ModuleName    string                `json:"moduleName"`
+	ClientPath    string                `json:"clientPath"`
 	EngineVersion string                `json:"engineVersion"`
 	Module        generator.BoundModule `json:"module"`
 }
@@ -83,6 +84,7 @@ func run() error {
 			return fmt.Errorf("unmarshal client meta json: %w", err)
 		}
 		clientConfig.ModuleName = meta.ModuleName
+		clientConfig.ClientPath = meta.ClientPath
 		clientConfig.EngineVersion = meta.EngineVersion
 		clientConfig.BoundModule = meta.Module
 

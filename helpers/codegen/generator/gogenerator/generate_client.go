@@ -46,9 +46,9 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 		}
 	}
 
-	// The generated client is a library package named "dagger". Its import
-	// path is the client module path: an existing go.mod wins, otherwise the
-	// bound module's name (lowercased) names the fresh module.
+	// The generated client's import path is the client module path: an
+	// existing go.mod wins, otherwise the bound module's name (lowercased)
+	// names the fresh module.
 	packageImport := strings.ToLower(g.Config.ClientConfig.ModuleName)
 	if existingGoMod != nil && existingGoMod.Module != nil {
 		packageImport = existingGoMod.Module.Mod.Path
@@ -58,7 +58,7 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 	}
 
 	if err := generateCode(ctx, g.Config, schema, schemaVersion, mfs, &PackageInfo{
-		PackageName:   "dagger",
+		PackageName:   clientPackageName(g.Config.ClientConfig.ClientPath, packageImport),
 		PackageImport: packageImport,
 	}); err != nil {
 		return nil, fmt.Errorf("generate code: %w", err)

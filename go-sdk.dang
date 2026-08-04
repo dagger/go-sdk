@@ -342,6 +342,10 @@ type GoSdk {
   client directory seeds the output so user files survive and an existing
   go.mod keeps its module name and replace directives (only the
   dagger.io/dagger pin is refreshed).
+
+  `clientPath` is where the client lands in the workspace; codegen only ever
+  sees a copy of that directory, so it has to be told, and it names the
+  generated Go package after it.
   """
   let clientDirectory(
     schemaJSON: String!,
@@ -351,9 +355,10 @@ type GoSdk {
     path: String!,
     ref: String!,
     pin: String!,
+    clientPath: String!,
     existing: Directory!,
   ): Directory! {
-    let metaJson = "{\"moduleName\":" + JSON.encode(moduleName) + ",\"engineVersion\":" + JSON.encode(engineVersion) + ",\"module\":" + boundModuleJSON(kindJSON, path, ref, pin) + "}"
+    let metaJson = "{\"moduleName\":" + JSON.encode(moduleName) + ",\"clientPath\":" + JSON.encode(clientPath) + ",\"engineVersion\":" + JSON.encode(engineVersion) + ",\"module\":" + boundModuleJSON(kindJSON, path, ref, pin) + "}"
     codegenBuilder
       .withNewFile("/schema.json", schemaJSON)
       .withNewFile("/meta.json", metaJson)
@@ -396,6 +401,7 @@ type GoSdk {
       module,
       modSrc.asString,
       modSrc.pin,
+      path,
       existingClientDir(ws, path),
     )
     pws.fork.withDirectory(path, generated).changes
@@ -428,6 +434,7 @@ type GoSdk {
             client.source,
             src.asString,
             src.pin,
+            client.name,
             existingClientDir(ws, client.name),
           )
         } else {
@@ -441,6 +448,7 @@ type GoSdk {
             client.source,
             m.asString,
             m.pin,
+            client.name,
             existingClientDir(ws, client.name),
           )
         }
