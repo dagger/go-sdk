@@ -402,11 +402,19 @@ type GoSdk {
   }
 
   """
-  Regenerate every Go client registered on this SDK in the workspace config.
+  Regenerate every Go client registered on this SDK that is visible from the
+  client's current location.
+
+  Scoped by cwd like `generate`: a returned changeset may only carry paths under
+  the caller's location, so regenerating from a subdirectory — or nested under
+  the engine's per-dependency generation, where the cwd is the dependency —
+  skips clients that live elsewhere in the workspace.
   """
   pub generateAllClient(ws: Workspace!): Changeset! @generate {
     let pws = polyfill.workspace(ws)
+    let cwd = normalizePath(ws.cwd)
     ws.sdk(name: currentModule.name).clients.{{name, source}}
+      .filter { client => pathContains(cwd, normalizePath(client.name)) }
       .reduce(pws.fork) { fork, client =>
         let generated = if (isLocalModuleRef(client.source)) {
           # A local module's cached source can miss live edits, so re-resolve

@@ -499,6 +499,28 @@ type E2e {
   }
 
   """
+  Regenerating all clients is anchored at the caller's cwd, like modules(). A
+  cwd holding no registered client yields an empty changeset rather than
+  raising for a client outside the changeset root — the shape the engine
+  produces when it generates a freshly initialized module, or a single local
+  dependency, while a client lives elsewhere in the workspace.
+  """
+  clientGenerateAllCwdCheck(ws: Workspace!): Void @check {
+    # Only the workspace config is needed: the cwd filter drops every client
+    # before any module source is resolved.
+    let atModule = ws
+      .directory("/", include: ["dagger.toml"])
+      .asWorkspace(cwd: generateModulePath)
+
+    assert(
+      goSdk.generateAllClient(atModule).isEmpty,
+      "a client outside the cwd should be skipped, not staged",
+    )
+
+    null
+  }
+
+  """
   A generated client must compile. The bootstrap calls
   Workspace.moduleSource, which no released dagger.io/dagger ships yet, so
   build against the SDK from a pinned dagger commit — catching binding and
