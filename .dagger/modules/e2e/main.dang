@@ -69,6 +69,13 @@ type E2e {
   }
 
   """
+  Assert that a string does not contain a substring.
+  """
+  let assertNotContains(value: String!, want: String!, message: String!): Void {
+    assert(value.contains(want) == false, message)
+  }
+
+  """
   The helper should expose the generate skip marker used by callers.
   """
   skipGenerateFilenameCheck: Void @check {
@@ -186,7 +193,7 @@ type E2e {
       ws,
       name: "init-legacy",
       path: legacyPath,
-      legacyTemplate: true,
+      template: "legacy",
     )
 
     assert(
@@ -205,6 +212,68 @@ type E2e {
       legacyChanges.layer.file(legacyPath + "/main.go").contents,
       "type InitLegacy struct{}",
       "legacy template did not render the module type",
+    )
+
+    null
+  }
+
+  """
+  Return the error message raised by an init that should be rejected, or the
+  changeset's added paths when it unexpectedly succeeds.
+  """
+  let initFailure(changes: Changeset!): String! {
+    changes.addedPaths.join(", ") rescue {
+      err: Error => err.message
+    }
+  }
+
+  """
+  The default template should render a working module (a struct with a Container
+  function that reads source from the workspace), and the empty template should
+  render a bare struct. Both must have their {{ .ModuleType }} placeholder fully
+  substituted.
+  """
+  templateCheck(ws: Workspace!): Void @check {
+    let defaultPath = outputRoot + "/template-default"
+    let emptyPath = outputRoot + "/template-empty"
+    let unnamedPath = outputRoot + "/template-unnamed"
+
+    let defaultChanges = goSdk.initModule(ws, name: "template-default", path: defaultPath)
+    assertAdded(defaultChanges, defaultPath + "/main.go")
+    let defaultMain = defaultChanges.layer.file(defaultPath + "/main.go").contents
+    assertContains(defaultMain, "type TemplateDefault struct {", "default template should render the module struct")
+    assertContains(defaultMain, "func (m *TemplateDefault) Container() *dagger.Container", "default template should expose the Container function")
+    assertContains(defaultMain, "ws.Directory(", "default template constructor should read source from the workspace")
+    assertContains(defaultMain, "BaseImageAddress", "default template should expose the base image field")
+    # The import path is derived from the module name, so a wrong rendering only
+    # shows up at build time — inside the engine, not here.
+    assertContains(defaultMain, "\"dagger/template-default/internal/dagger\"", "default template should render the module import path")
+    assertNotContains(defaultMain, "{{", "default template placeholders should be fully rendered")
+
+    let emptyChanges = goSdk.initModule(ws, name: "template-empty", path: emptyPath, template: "empty")
+    assertAdded(emptyChanges, emptyPath + "/main.go")
+    let emptyMain = emptyChanges.layer.file(emptyPath + "/main.go").contents
+    assertContains(emptyMain, "type TemplateEmpty struct{}", "empty template should render a bare struct")
+    assertNotContains(emptyMain, "{{", "empty template placeholders should be fully rendered")
+
+    # An unnamed template means the default, not the templates/ directory —
+    # which exists, so it would render every starter as a subdirectory.
+    let unnamedChanges = goSdk.initModule(ws, name: "template-unnamed", path: unnamedPath, template: "")
+    assertAdded(unnamedChanges, unnamedPath + "/main.go")
+    assert(
+      contains(unnamedChanges.addedPaths, unnamedPath + "/default/main.go") == false,
+      "an unnamed template should render the default starter, not every starter",
+    )
+    assertContains(
+      unnamedChanges.layer.file(unnamedPath + "/main.go").contents,
+      "type TemplateUnnamed struct {",
+      "an unnamed template should render the default starter",
+    )
+
+    assertContains(
+      initFailure(goSdk.initModule(ws, name: "unknown", path: outputRoot + "/init-unknown", template: "no-such-template")),
+      "unknown init template",
+      "init accepted a template it does not ship",
     )
 
     null
