@@ -60,14 +60,14 @@ type Mod {
   """
   generate(ws: Workspace!): Changeset! {
     if (skipGenerate(ws)) {
-      polyfill.workspace(ws).fork.changes
+      ws.fork.changes
     } else {
       # Stage the local dependency closure so this module's codegen sees
       # up-to-date dependency bindings before generating it.
       let stagedWs = ws.withChanges(
-        polyfill.workspace(ws).moduleSource("/" + rootPath).core.generateLocalDependencies(ws),
+        ws.moduleSource("/" + rootPath).generateLocalDependencies(ws),
       )
-      polyfill.workspace(stagedWs).moduleSource("/" + rootPath).generate
+      stagedWs.moduleSource("/" + rootPath).generatedContextChangeset
     }
   }
 }

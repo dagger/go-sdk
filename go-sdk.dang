@@ -31,8 +31,7 @@ type GoSdk {
   modules(ws: Workspace!): [Mod!]! {
     let managed = currentModule.asSDK(workspace: ws).modules.{{path}}
     let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
-    polyfill
-      .workspace(ws)
+    ws
       .findConfigDirs(moduleConfigFilenames, exclude: ["**/vendor/**"])
       .map { dir => moduleRelPath(cwd, dir) }
       .uniq
@@ -279,7 +278,7 @@ type GoSdk {
       rawPath.trimSuffix("/")
     }
 
-    let fork = polyfill.workspace(ws).fork
+    let fork = ws.fork
 
     let templateSource = if (legacyTemplate) {
       renderedLegacyTemplate(name)
@@ -297,7 +296,7 @@ type GoSdk {
         ``` + "\n",
       )
     }
-    fork.withDirectory(modPath, templateSource).changes
+    fork.withNewDirectory("/" + modPath, templateSource).changes
   }
 
   """
@@ -312,7 +311,7 @@ type GoSdk {
     module: String!,
     dev: Boolean! = false,
   ): Changeset! {
-    polyfill.workspace(ws).fork.changes
+    ws.fork.changes
   }
 
   """
@@ -386,8 +385,7 @@ type GoSdk {
   Generate a typed Go client for the module at `module`, written to `path`.
   """
   pub generateClient(ws: Workspace!, module: String!, path: String!): Changeset! {
-    let pws = polyfill.workspace(ws)
-    let modSrc = pws.moduleSource("/" + module).core
+    let modSrc = ws.moduleSource("/" + module)
     let generated = clientDirectory(
       modSrc.clientSchemaIntrospectionJSON.contents,
       modSrc.moduleOriginalName,
@@ -398,7 +396,7 @@ type GoSdk {
       modSrc.pin,
       existingClientDir(ws, path),
     )
-    pws.fork.withDirectory(path, generated).changes
+    ws.fork.withNewDirectory("/" + path, generated).changes
   }
 
   """
@@ -411,15 +409,14 @@ type GoSdk {
   skips clients that live elsewhere in the workspace.
   """
   pub generateAllClient(ws: Workspace!): Changeset! @generate {
-    let pws = polyfill.workspace(ws)
     let cwd = normalizePath(ws.cwd)
     ws.sdk(name: currentModule.name).clients.{{name, source}}
       .filter { client => pathContains(cwd, normalizePath(client.name)) }
-      .reduce(pws.fork) { fork, client =>
+      .reduce(ws.fork) { fork, client =>
         let generated = if (isLocalModuleRef(client.source)) {
           # A local module's cached source can miss live edits, so re-resolve
           # it fresh from the workspace; git modules are pinned/immutable.
-          let src = pws.moduleSource("/" + client.source).core
+          let src = ws.moduleSource("/" + client.source)
           clientDirectory(
             src.clientSchemaIntrospectionJSON.contents,
             src.moduleOriginalName,
@@ -444,7 +441,7 @@ type GoSdk {
             existingClientDir(ws, client.name),
           )
         }
-        fork.withDirectory(client.name, generated)
+        fork.withNewDirectory("/" + client.name, generated)
       }
       .changes
   }
@@ -474,7 +471,6 @@ type GoSdk {
   Modules with the generate skip marker are skipped.
   """
   generate(ws: Workspace!): Changeset! @generate {
-    let pws = polyfill.workspace(ws)
     changeset.withChangesets(
       modules(ws)
         .filter { !_.skipGenerate(ws) }
@@ -484,9 +480,9 @@ type GoSdk {
           # codegen is ephemeral: taking the changeset against the staged workspace
           # cancels it out, leaving only each module's own changes.
           let stagedWs = ws.withChanges(
-            pws.moduleSource("/" + mod.rootPath).core.generateLocalDependencies(ws),
+            ws.moduleSource("/" + mod.rootPath).generateLocalDependencies(ws),
           )
-          polyfill.workspace(stagedWs).moduleSource("/" + mod.rootPath).generate
+          stagedWs.moduleSource("/" + mod.rootPath).generatedContextChangeset
         },
     )
   }
