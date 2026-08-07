@@ -20,6 +20,11 @@ type GoSdk {
   let moduleConfigFilenames: [String!]! = ["dagger-module.toml", "dagger.json"]
 
   """
+  Starter used by init when none is named.
+  """
+  let defaultTemplate: String! = "default"
+
+  """
   Return every Go SDK module this workspace manages that is visible from the
   client's current location.
 
@@ -63,7 +68,7 @@ type GoSdk {
   Return init templates tracked by this module.
 
   Templates live under templates/<name> and are materialized into the new
-  module. Passing an empty template to init uses the module default.
+  module. Init picks one by name, or the module default when none is named.
   """
   templates: [Template!]! {
     if (currentModule.source.exists("templates")) {
@@ -261,14 +266,20 @@ type GoSdk {
   """
   Initialize Go-owned files for a new Dagger module.
 
-  When `legacyTemplate` is true, materialize the legacy template. Otherwise
-  materialize this module's minimal template.
+  The engine resolves the destination `path` and owns the module's config; this
+  function only returns the SDK-owned starter source to layer onto `path`.
+
+  Pass `template` to pick a starter under templates/<template>; it defaults to
+  `default` (a small working module).
   """
   initModule(
     ws: Workspace!,
     name: String!,
     path: String!,
-    legacyTemplate: Boolean! = false,
+    """
+    Starter to materialize from templates/<template>: `default` for a small working module, `empty` for a bare struct, `legacy` for the pre-1.0 scaffold.
+    """
+    template: String! = defaultTemplate,
   ): Changeset! {
     let rawPath = path.trimPrefix("./").trimPrefix("/")
     let modPath = if (rawPath == "" or rawPath == ".") {
@@ -281,23 +292,16 @@ type GoSdk {
 
     let fork = polyfill.workspace(ws).fork
 
-    let templateSource = if (legacyTemplate) {
-      renderedLegacyTemplate(name)
-      # TODO: We need interpolation in `templates/*` files
-      # For now i'm leveraging dang's string interpolation to avoid
-      # pulling a golang container just for this.
-    } else {
-      let goName = ToCamel(name)
-      directory.withNewFile(
-        "main.go",
-        ```
-        package main
+    # An empty name means "the default", not the templates/ directory itself —
+    # which exists, so it would pass the check below and render every starter as
+    # a subdirectory of the new module.
+    let starter = if (template == "") { defaultTemplate } else { template }
 
-        type ${goName} struct{}
-        ``` + "\n",
-      )
+    if (currentModule.source.exists("templates/" + starter) == false) {
+      raise "unknown init template: " + starter
+    } else {
+      fork.withDirectory(modPath, renderedTemplate(name, starter)).changes
     }
-    fork.withDirectory(modPath, templateSource).changes
   }
 
   """
@@ -450,16 +454,16 @@ type GoSdk {
   }
 
   """
-  Render the legacy Go template with the requested module name.
+  Render the templates/<template> starter with the requested module name.
   """
-  let renderedLegacyTemplate(name: String!): Directory! {
+  let renderedTemplate(name: String!, template: String!): Directory! {
     container
       .from("golang:1.25-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
-      .withDirectory("/template", currentModule.source.directory("templates/legacy"))
+      .withDirectory("/template", currentModule.source.directory("templates/" + template))
       .withWorkdir("/helper")
       .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
       .withExec(["render-template", name, "/template", "/rendered"])
