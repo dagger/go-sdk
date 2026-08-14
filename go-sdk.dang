@@ -13,55 +13,21 @@ type GoSdk {
   targetRuntime: String! { "go" }
 
   """
-  Config filenames that mark a Dagger module root: the CLI 1.0
-  `dagger-module.toml` (workspace-managed modules) and the legacy `dagger.json`.
-  A managed module is discovered by whichever it uses.
-  """
-  let moduleConfigFilenames: [String!]! = ["dagger-module.toml", "dagger.json"]
-
-  """
   Starter used by init when none is named.
   """
   let defaultTemplate: String! = "default"
 
   """
-  Return every Go SDK module this workspace manages that is visible from the
-  client's current location.
-
-  Discovery is anchored at the client's cwd, not the workspace root: the
-  nearest enclosing module plus every managed module at or below the cwd.
-  Running from a subdirectory acts on the project you're in — and the projects
-  beneath it — not the whole workspace.
+  Return every managed Go SDK module in the client's cwd scope: every module at
+  or below the cwd, plus the nearest enclosing module when the cwd itself is not
+  a managed module. The engine selects this directly from the workspace's
+  registered SDK modules; no filesystem discovery is required.
   """
   modules(ws: Workspace!): [Mod!]! {
-    let managed = currentModule.asSDK(workspace: ws).modules.{{path}}
-    let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
-    polyfill
-      .workspace(ws)
-      .findConfigDirs(moduleConfigFilenames, exclude: ["**/vendor/**"])
-      .map { dir => moduleRelPath(cwd, dir) }
-      .uniq
-      .filter { path => managed.filter { m => m.path == path }.length > 0 }
-      .map { path => Mod(rootPath: path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
-  }
-
-  """
-  Resolve a cwd-relative path — at or below the cwd ("." , "sub/dir") or a
-  strict ancestor (".." , "../..") — against the cwd into a
-  workspace-root-relative path.
-  """
-  let moduleRelPath(cwd: String!, dir: String!): String! {
-    let base = if (cwd == "" or cwd == ".") { [] } else { cwd.split("/") }
-    let segs = dir.split("/").reduce(base) { acc, seg =>
-      if (seg == "..") {
-        acc.dropLast(1)
-      } else if (seg == "." or seg == "") {
-        acc
-      } else {
-        acc + [seg]
-      }
-    }
-    if (segs.length == 0) { "." } else { segs.join("/") }
+    currentModule
+      .asSDK(workspace: ws)
+      .modules.{{path}}
+      .map { module => Mod(rootPath: module.path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
   }
 
   """
@@ -116,12 +82,11 @@ type GoSdk {
   let managedBase(ws: Workspace!, path: String!): String {
     # asSDK raises when this module is not installed as an SDK in the active
     # workspace, which is the normal case for a legacy dagger.json-only repo.
-    # The `.{{path}}` selection is what executes the query, so it must sit
-    # inside the guard.
+    # Selecting `path` executes the query, so it must sit inside the guard.
     let managed = currentModule.asSDK(workspace: ws).modules.{{path}} rescue []
 
     managed
-      .map { m => normalizePath(m.path) }
+      .map { module => normalizePath(module.path) }
       .filter { base => pathContains(base, path) }
       .reduce(null) { best, base =>
         if (best == null) {
@@ -290,8 +255,6 @@ type GoSdk {
       rawPath.trimSuffix("/")
     }
 
-    let fork = polyfill.workspace(ws).fork
-
     # An empty name means "the default", not the templates/ directory itself —
     # which exists, so it would pass the check below and render every starter as
     # a subdirectory of the new module.
@@ -300,15 +263,20 @@ type GoSdk {
     if (currentModule.source.exists("templates/" + starter) == false) {
       raise "unknown init template: " + starter
     } else {
-      fork.withDirectory(modPath, renderedTemplate(name, starter)).changes
+      # withNewDirectory replaces the directory, so layer the starter onto
+      # whatever is already there: init must never remove a user's files.
+      ws.withNewDirectory(
+        "/" + modPath,
+        existingDir(ws, modPath).withDirectory(".", renderedTemplate(name, starter)),
+      ).changes(ws)
     }
   }
 
   """
-  Generate a typed Go client for `module` at `path`.
+  Seed the SDK-owned files a new Go client needs at `path` — there are none.
 
-  The engine records the managed client in workspace config before calling
-  this function. The engine owns materializing the generated client files.
+  The engine records the managed client in workspace config and materializes
+  the client itself through the `@generate` hook, so this returns no changes.
   """
   initClient(
     ws: Workspace!,
@@ -316,7 +284,7 @@ type GoSdk {
     module: String!,
     dev: Boolean! = false,
   ): Changeset! {
-    polyfill.workspace(ws).fork.changes
+    ws.changes(ws)
   }
 
   """
@@ -367,9 +335,9 @@ type GoSdk {
   }
 
   """
-  Existing contents of the client directory, empty when it doesn't exist yet.
+  Existing contents of a workspace directory, empty when it doesn't exist yet.
   """
-  let existingClientDir(ws: Workspace!, path: String!): Directory! {
+  let existingDir(ws: Workspace!, path: String!): Directory! {
     let filtered = ws.directory("/", include: [path + "/**"])
     if (filtered.exists(path)) {
       filtered.directory(path)
@@ -390,8 +358,7 @@ type GoSdk {
   Generate a typed Go client for the module at `module`, written to `path`.
   """
   pub generateClient(ws: Workspace!, module: String!, path: String!): Changeset! {
-    let pws = polyfill.workspace(ws)
-    let modSrc = pws.moduleSource("/" + module).core
+    let modSrc = ws.moduleSource("/" + module)
     let generated = clientDirectory(
       modSrc.clientSchemaIntrospectionJSON.contents,
       modSrc.moduleOriginalName,
@@ -400,9 +367,9 @@ type GoSdk {
       module,
       modSrc.asString,
       modSrc.pin,
-      existingClientDir(ws, path),
+      existingDir(ws, path),
     )
-    pws.fork.withDirectory(path, generated).changes
+    ws.withNewDirectory("/" + path, generated).changes(ws)
   }
 
   """
@@ -415,15 +382,14 @@ type GoSdk {
   skips clients that live elsewhere in the workspace.
   """
   pub generateAllClient(ws: Workspace!): Changeset! @generate {
-    let pws = polyfill.workspace(ws)
     let cwd = normalizePath(ws.cwd)
     ws.sdk(name: currentModule.name).clients.{{name, source}}
       .filter { client => pathContains(cwd, normalizePath(client.name)) }
-      .reduce(pws.fork) { fork, client =>
+      .reduce(ws) { stagedWs, client =>
         let generated = if (isLocalModuleRef(client.source)) {
           # A local module's cached source can miss live edits, so re-resolve
           # it fresh from the workspace; git modules are pinned/immutable.
-          let src = pws.moduleSource("/" + client.source).core
+          let src = ws.moduleSource("/" + client.source)
           clientDirectory(
             src.clientSchemaIntrospectionJSON.contents,
             src.moduleOriginalName,
@@ -432,7 +398,7 @@ type GoSdk {
             client.source,
             src.asString,
             src.pin,
-            existingClientDir(ws, client.name),
+            existingDir(ws, client.name),
           )
         } else {
           let m = moduleSource(refString: client.source)
@@ -445,12 +411,12 @@ type GoSdk {
             client.source,
             m.asString,
             m.pin,
-            existingClientDir(ws, client.name),
+            existingDir(ws, client.name),
           )
         }
-        fork.withDirectory(client.name, generated)
+        stagedWs.withNewDirectory("/" + client.name, generated)
       }
-      .changes
+      .changes(ws)
   }
 
   """
@@ -478,20 +444,10 @@ type GoSdk {
   Modules with the generate skip marker are skipped.
   """
   generate(ws: Workspace!): Changeset! @generate {
-    let pws = polyfill.workspace(ws)
     changeset.withChangesets(
       modules(ws)
         .filter { !_.skipGenerate(ws) }
-        .map { mod =>
-          # Stage this module's local dependency closure first (leaf-first, possibly
-          # across SDKs) so its codegen sees up-to-date dependency bindings. The dep
-          # codegen is ephemeral: taking the changeset against the staged workspace
-          # cancels it out, leaving only each module's own changes.
-          let stagedWs = ws.withChanges(
-            pws.moduleSource("/" + mod.rootPath).core.generateLocalDependencies(ws),
-          )
-          polyfill.workspace(stagedWs).moduleSource("/" + mod.rootPath).generate
-        },
+        .map { mod => mod.generate(ws) },
     )
   }
 }

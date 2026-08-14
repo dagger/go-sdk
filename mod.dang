@@ -60,14 +60,28 @@ type Mod {
   """
   generate(ws: Workspace!): Changeset! {
     if (skipGenerate(ws)) {
-      polyfill.workspace(ws).fork.changes
+      ws.changes(ws)
     } else {
       # Stage the local dependency closure so this module's codegen sees
-      # up-to-date dependency bindings before generating it.
+      # up-to-date dependency bindings. It is only an input to resolving the
+      # module source, never the diff baseline, so the dependencies' codegen
+      # does not ride along.
       let stagedWs = ws.withChanges(
-        polyfill.workspace(ws).moduleSource("/" + rootPath).core.generateLocalDependencies(ws),
+        ws.moduleSource("/" + rootPath).generateLocalDependencies(ws),
       )
-      polyfill.workspace(stagedWs).moduleSource("/" + rootPath).generate
+      let generated = stagedWs
+        .moduleSource("/" + rootPath)
+        .generatedContextDirectory
+        .directory(rootPath)
+
+      # The generated context holds only generated files, and withNewDirectory
+      # replaces rather than layers, so merge it onto the module first.
+      # Workspace.changes then reports just the difference, rooted at the
+      # caller's cwd.
+      ws.withNewDirectory(
+        "/" + rootPath,
+        ws.directory("/" + rootPath).withDirectory(".", generated),
+      ).changes(ws)
     }
   }
 }

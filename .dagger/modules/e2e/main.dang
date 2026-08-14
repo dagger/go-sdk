@@ -218,6 +218,27 @@ type E2e {
   }
 
   """
+  initModule into a directory that already holds files should layer the starter
+  onto it, never replace it: a user running `dagger module init` in an existing
+  project keeps their files.
+  """
+  initOverExistingCheck(ws: Workspace!): Void @check {
+    let changes = goSdk.initModule(ws, name: "init-over-existing", path: lookupModulePath)
+
+    assert(
+      changes.removedPaths.length == 0,
+      "initModule removed existing files: " + changes.removedPaths.join(", "),
+    )
+    assertContains(
+      changes.after.file(lookupModulePath + "/dagger.json").contents,
+      "\"source\": \"go\"",
+      "initModule must leave the existing module config in place",
+    )
+
+    null
+  }
+
+  """
   Return the error message raised by an init that should be rejected, or the
   changeset's added paths when it unexpectedly succeeds.
   """
@@ -311,6 +332,15 @@ type E2e {
       "generate did not include dagger.gen.go",
     )
 
+    # The fixture commits .gitattributes, which generation also emits, so a
+    # generator that returns its whole generated context instead of the
+    # difference reports it as added. Every other file here is genuinely new on
+    # a fresh module, which is why only an already-present one can catch that.
+    assert(
+      contains(changes.addedPaths, generateModulePath + "/.gitattributes") == false,
+      "generate re-added files that already exist: " + changes.addedPaths.join(", "),
+    )
+
     null
   }
 
@@ -392,7 +422,8 @@ type E2e {
     # A stable snapshot of the workspace, re-anchorable at any cwd. Keep the
     # workspace config (dagger.toml, whose [modules.<sdk>.as-sdk] list is what
     # modules() resolves the re-anchored workspace against), every module config
-    # (both dagger.json and dagger-module.toml, for discovery) and the nested
+    # (both dagger.json and dagger-module.toml, so each registered path still
+    # resolves to a real module) and the nested
     # .keep so lookup/app/nested survives the include filter and can serve as a
     # config-less subdirectory.
     let root = ws.directory("/", include: ["dagger.toml", "**/dagger.json", "**/dagger-module.toml", "**/.keep"])
