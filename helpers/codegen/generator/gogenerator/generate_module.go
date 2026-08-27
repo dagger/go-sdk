@@ -441,3 +441,26 @@ func goEnv(dir string, env string) (string, error) {
 	}
 	return strings.TrimSpace(buf.String()), nil
 }
+
+// GoWorkRelPath returns the go.work in effect for the module source, relative
+// to outputDir, or "" when there is none or it lies outside outputDir. The
+// caller carries that file back to the workspace, since `go work use .` may
+// have enrolled the module in it.
+func GoWorkRelPath(outputDir, sourcePath string) (string, error) {
+	goWork, err := goWorkPath(filepath.Join(outputDir, sourcePath))
+	if err != nil {
+		return "", fmt.Errorf("find go.work: %w", err)
+	}
+	if goWork == "" {
+		return "", nil
+	}
+	absOut, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(absOut, goWork)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", nil
+	}
+	return filepath.ToSlash(rel), nil
+}

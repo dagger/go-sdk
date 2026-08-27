@@ -1,6 +1,8 @@
 package gogenerator
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -111,4 +113,20 @@ func TestSupportsSelfTypes(t *testing.T) {
 	require.True(t, supportsSelfTypes("v0.12.0"))
 	require.False(t, supportsSelfTypes("v0.11.9"))
 	require.False(t, supportsSelfTypes(""))
+}
+
+func TestGoWorkRelPath(t *testing.T) {
+	root := t.TempDir()
+	mod := filepath.Join(root, "mods", "app")
+	require.NoError(t, os.MkdirAll(mod, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mod, "go.mod"), []byte("module example.com/app\n\ngo 1.22\n"), 0o600))
+
+	rel, err := GoWorkRelPath(root, "mods/app")
+	require.NoError(t, err)
+	require.Empty(t, rel, "no go.work in effect")
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.work"), []byte("go 1.22\n"), 0o600))
+	rel, err = GoWorkRelPath(root, "mods/app")
+	require.NoError(t, err)
+	require.Equal(t, "go.work", rel)
 }
