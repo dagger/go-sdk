@@ -60,7 +60,7 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 	if err := generateCode(ctx, g.Config, schema, schemaVersion, mfs, &PackageInfo{
 		PackageName:   "dagger",
 		PackageImport: packageImport,
-	}); err != nil {
+	}, nil); err != nil {
 		return nil, fmt.Errorf("generate code: %w", err)
 	}
 

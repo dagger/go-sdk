@@ -3,6 +3,7 @@ package templates
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"go/token"
@@ -13,11 +14,14 @@ import (
 	"text/template"
 
 	"github.com/iancoleman/strcase"
+	"golang.org/x/tools/go/packages"
 
 	"codegen/generator"
 	"codegen/introspection"
 )
 
+// GoTemplateFuncs builds the FuncMap for client generation, which needs no
+// parsed module package. Module generation uses GoTemplateFuncsForModule.
 func GoTemplateFuncs(
 	schema *introspection.Schema,
 	fullSchema *introspection.Schema,
@@ -36,15 +40,48 @@ func GoTemplateFuncs(
 	}.FuncMap()
 }
 
+// GoTemplateFuncsForModule builds the FuncMap for module generation, which
+// needs the loaded module package/fileset and the pass index the client path
+// omits.
+func GoTemplateFuncsForModule(
+	ctx context.Context,
+	schema *introspection.Schema,
+	fullSchema *introspection.Schema,
+	schemaVersion string,
+	cfg generator.Config,
+	pkg *packages.Package,
+	fset *token.FileSet,
+	pass int,
+) template.FuncMap {
+	if fullSchema == nil {
+		fullSchema = schema
+	}
+	return goTemplateFuncs{
+		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{}),
+		ctx:             ctx,
+		cfg:             cfg,
+		modulePkg:       pkg,
+		moduleFset:      fset,
+		schema:          schema,
+		fullSchema:      fullSchema,
+		schemaVersion:   schemaVersion,
+		pass:            pass,
+	}.FuncMap()
+}
+
 type goTemplateFuncs struct {
 	*generator.CommonFunctions
-	cfg    generator.Config
-	schema *introspection.Schema
+	ctx        context.Context
+	cfg        generator.Config
+	modulePkg  *packages.Package
+	moduleFset *token.FileSet
+	schema     *introspection.Schema
 	// fullSchema is the complete schema including all dependency types. It is
-	// used for type lookups while schema may be a filtered subset used for
-	// code rendering.
+	// used for type lookups (e.g. resolving dep-contributed enums in module
+	// code) while schema may be a filtered subset used for code rendering.
 	fullSchema    *introspection.Schema
 	schemaVersion string
+	pass          int
 }
 
 func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
@@ -97,6 +134,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"FormatArrayField":        funcs.formatArrayField,
 		"FormatArrayToSingleType": funcs.formatArrayToSingleType,
 		"IsModuleCode":            funcs.isModuleCode,
+		"IsPartial":               funcs.isPartial,
 		"IsStandaloneClient":      funcs.isStandaloneClient,
 		"ModuleRelPath":           funcs.moduleRelPath,
 		"BoundModule":             funcs.boundModule,
@@ -450,6 +488,12 @@ func (funcs goTemplateFuncs) isInterfaceRef(t *introspection.TypeRef) bool {
 		}
 	}
 	return false
+}
+
+// isPartial reports whether this is a first (bootstrap) pass, before the
+// module's own source has been loaded.
+func (funcs goTemplateFuncs) isPartial() bool {
+	return funcs.pass == 0
 }
 
 func (funcs goTemplateFuncs) supportsNullableObjects() bool {

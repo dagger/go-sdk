@@ -29,6 +29,10 @@ type ModuleGeneratorConfig struct {
 
 	// ModuleParentPath is the path from the module source subpath to the context directory
 	ModuleParentPath string
+
+	// LibVersion pins dagger.io/dagger in the generated module's go.mod
+	// (`go get dagger.io/dagger@<LibVersion>`).
+	LibVersion string
 }
 
 // Module-source kinds a generated client can bind to. A local module
