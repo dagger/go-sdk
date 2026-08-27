@@ -1,0 +1,88 @@
+"""
+Runtime module for the Go SDK.
+
+Builds a module's committed, already-generated source into its entrypoint
+binary. Code generation is owned by the Go SDK's `generate` step (`dagger
+generate`), not here: dagger-module.toml modules commit their generated
+files, so the engine skips codegen at module load and this runtime only
+builds.
+
+A module opts in from its dagger-module.toml:
+
+  [runtime]
+    source = "github.com/dagger/go-sdk/runtime"
+"""
+type GoSdkRuntime {
+  let modSourceDirPath: String! { "/src" }
+  let runtimePath: String! { "/runtime" }
+  let goImage: String! { "golang:1.26-alpine" }
+
+  """
+  No-op: code generation is owned by `dagger generate`. dagger-module.toml
+  modules commit the generated files, so the engine never calls this at
+  module load; returning the module source unchanged keeps the SDK
+  code-generator contract satisfied without generating anything.
+  """
+  pub codegen(modSource: ModuleSource!, introspectionJson: File): GeneratedCode! {
+    generatedCode(code: modSource.contextDirectory)
+  }
+
+  """
+  Build the module from its committed source and return a container that
+  runs the resulting binary. This is what the engine's native Go runtime does
+  for a dagger-module.toml module, and nothing more: no codegen, no
+  introspection, no credential forwarding.
+
+  introspectionJson is declared, and never read, on purpose: its optionality
+  is what the engine reads (RuntimeTrustsCommittedFiles) to decide it may
+  skip codegen at module load and omit the argument altogether. Dropping the
+  argument would tell the engine the opposite.
+  """
+  pub moduleRuntime(modSource: ModuleSource!, introspectionJson: File): Container! {
+    let subPath = modSource.sourceSubpath
+    let contextDir = modSource.contextDirectory
+
+    checkGeneratedFiles(contextDir, subPath)
+
+    let workdir = if (subPath == "" or subPath == ".") {
+      modSourceDirPath
+    } else {
+      modSourceDirPath + "/" + subPath
+    }
+
+    container
+      .from(goImage)
+      .withoutEntrypoint
+      # `go build` falls back to VCS when the module proxy cannot serve a
+      # dependency.
+      .withExec(["apk", "add", "--no-cache", "git"])
+      .withMountedCache(path: "/go/pkg/mod", cache: cacheVolume("go-mod"), sharing: CacheSharingMode.SHARED)
+      .withMountedCache(path: "/root/.cache/go-build", cache: cacheVolume("go-build"), sharing: CacheSharingMode.SHARED)
+      .withMountedDirectory(modSourceDirPath, contextDir)
+      .withWorkdir(workdir)
+      # strip DWARF debug symbols to save a few MBs of space
+      .withExec(["go", "build", "-ldflags", "-s -w", "-o", runtimePath, "."])
+      # remove shared cache mounts from the final container so module code
+      # can't do weird things with them like IPC, etc.
+      .withoutMount("/go/pkg/mod")
+      .withoutMount("/root/.cache/go-build")
+      .withEntrypoint([runtimePath])
+  }
+
+  """
+  Fail early, actionably, when the module is missing its generated (committed)
+  files — `dagger generate` was never run, or its output was not committed —
+  rather than letting `go build` report an undefined `dag` deep in the user's
+  code.
+  """
+  let checkGeneratedFiles(contextDir: Directory!, subPath: String!): Void {
+    let moduleLabel = if (subPath == "" or subPath == ".") { "." } else { subPath }
+    let missing = ["dagger.gen.go", "internal/dagger/dagger.gen.go"]
+      .map { rel => if (subPath == "" or subPath == ".") { rel } else { subPath + "/" + rel } }
+      .filter { path => contextDir.exists(path: path, expectedType: ExistsType.REGULAR_TYPE) == false }
+    if (missing.length > 0) {
+      raise "module \"" + moduleLabel + "\": generated file \"" + missing.join("\", \"") + "\" is missing; run `dagger generate` and commit the generated files"
+    }
+    null
+  }
+}
