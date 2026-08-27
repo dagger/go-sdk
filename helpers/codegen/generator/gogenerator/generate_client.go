@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/psanford/memfs"
@@ -91,7 +92,11 @@ func (g *GoGenerator) freshClientGoMod(modulePath string) ([]byte, error) {
 	if err := clientGoMod.AddModuleStmt(modulePath); err != nil {
 		return nil, fmt.Errorf("failed to add module statement to client go.mod: %w", err)
 	}
-	if err := clientGoMod.AddGoStmt(goVersion); err != nil {
+	langVersion, err := goLanguageVersion(runtime.Version())
+	if err != nil {
+		return nil, err
+	}
+	if err := clientGoMod.AddGoStmt(langVersion); err != nil {
 		return nil, fmt.Errorf("failed to add go statement to client go.mod: %w", err)
 	}
 
