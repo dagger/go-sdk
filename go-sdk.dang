@@ -263,12 +263,9 @@ type GoSdk {
     if (currentModule.source.exists("templates/" + starter) == false) {
       raise "unknown init template: " + starter
     } else {
-      # withNewDirectory replaces the directory, so layer the starter onto
-      # whatever is already there: init must never remove a user's files.
-      ws.withNewDirectory(
-        "/" + modPath,
-        existingDir(ws, modPath).withDirectory(".", renderedTemplate(name, starter)),
-      ).changes(ws)
+      # Init must never remove a user's files, so the starter layers onto
+      # whatever is already at the destination.
+      ws.withDirectory("/" + modPath, renderedTemplate(name, starter)).changes(ws)
     }
   }
 
