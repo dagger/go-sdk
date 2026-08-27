@@ -653,7 +653,7 @@ type E2e {
   """
   helperTestsCheck(ws: Workspace!): Void @check {
     let out = container
-      .from("golang:1.25-alpine")
+      .from("golang:1.26-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
