@@ -24,6 +24,10 @@ type ModuleGeneratorConfig struct {
 	// Name of the module to generate code for.
 	ModuleName string
 
+	// ModuleRootPath is the subpath in OutputDir of the module root — the
+	// directory holding dagger-module.toml, at or above ModuleSourcePath.
+	ModuleRootPath string
+
 	// ModuleSourcePath is the subpath in OutputDir where the module source subpath is located.
 	ModuleSourcePath string
 

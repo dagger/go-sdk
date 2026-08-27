@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"go/format"
 	"go/token"
+	"go/version"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/iancoleman/strcase"
 	"github.com/psanford/memfs"
+	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 
@@ -33,8 +36,33 @@ const (
 
 var goVersion = strings.TrimPrefix(runtime.Version(), "go")
 
+// develGoVersion pulls the language version out of a toolchain string
+// go/version rejects, which in practice means a devel build: "devel
+// go1.27-abcdef 2026-01-01".
+var develGoVersion = regexp.MustCompile(`\bgo(\d+\.\d+)`)
+
+// goLanguageVersion is the language version (major.minor) of a Go toolchain
+// version, the go directive a fresh go.mod starts with. The engine writes its
+// binary's full patch version; major.minor lets `go get` raise the directive
+// to what a dependency needs, and keeps the builder image's patch level out of
+// users' go.mod. semver cannot parse a release candidate ("go1.26rc1"), so the
+// stdlib's own Go-version parser does it.
+func goLanguageVersion(toolchain string) (string, error) {
+	if lang := version.Lang(toolchain); lang != "" {
+		return strings.TrimPrefix(lang, "go"), nil
+	}
+	if m := develGoVersion.FindStringSubmatch(toolchain); m != nil {
+		return m[1], nil
+	}
+	return "", fmt.Errorf("unrecognized Go toolchain version %q: cannot derive a go directive from it", toolchain)
+}
+
 type GoGenerator struct {
 	Config generator.Config
+
+	// libraryMod caches the pinned dagger.io/dagger go.mod across the module
+	// bootstrap passes.
+	libraryMod *modfile.File
 }
 
 // PackageInfo describes the Go package the generated files belong to.
