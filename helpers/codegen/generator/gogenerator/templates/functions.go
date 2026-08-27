@@ -69,6 +69,36 @@ func GoTemplateFuncsForModule(
 	}.FuncMap()
 }
 
+// ModuleIntrospectionEmitter produces the module's own types as
+// introspection JSON, for merging into the dependency schema.
+type ModuleIntrospectionEmitter interface {
+	ModuleIntrospectionJSON(moduleName string) ([]byte, error)
+}
+
+// NewModuleIntrospectionEmitter constructs a minimal emitter suitable for
+// calling ModuleIntrospectionJSON. The schema and schemaVersion are the current
+// (deps) schema; pkg and fset are from packages.Load on the module source.
+func NewModuleIntrospectionEmitter(
+	ctx context.Context,
+	schema *introspection.Schema,
+	schemaVersion string,
+	cfg generator.Config,
+	pkg *packages.Package,
+	fset *token.FileSet,
+) ModuleIntrospectionEmitter {
+	return goTemplateFuncs{
+		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{}),
+		ctx:             ctx,
+		cfg:             cfg,
+		modulePkg:       pkg,
+		moduleFset:      fset,
+		schema:          schema,
+		fullSchema:      schema,
+		schemaVersion:   schemaVersion,
+		pass:            1,
+	}
+}
+
 type goTemplateFuncs struct {
 	*generator.CommonFunctions
 	ctx        context.Context
@@ -135,6 +165,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"FormatArrayToSingleType": funcs.formatArrayToSingleType,
 		"IsModuleCode":            funcs.isModuleCode,
 		"IsPartial":               funcs.isPartial,
+		"ModuleMainSrc":           funcs.moduleMainSrc,
 		"IsStandaloneClient":      funcs.isStandaloneClient,
 		"ModuleRelPath":           funcs.moduleRelPath,
 		"BoundModule":             funcs.boundModule,
