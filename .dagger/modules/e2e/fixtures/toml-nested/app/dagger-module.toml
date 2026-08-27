@@ -1,0 +1,6 @@
+name = "toml-nested-app"
+engineVersion = "v1.0.0-0"
+source = "src"
+
+[runtime]
+  source = "go"
