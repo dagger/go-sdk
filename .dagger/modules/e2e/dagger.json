@@ -8,6 +8,11 @@
     {
       "name": "go-sdk",
       "source": "../../.."
+    },
+    {
+      "name": "sdk-sdk",
+      "source": "github.com/dagger/sdk-sdk",
+      "pin": "334448911a8292fba0d677e5f31926c79ad80ad3"
     }
   ]
 }

@@ -30,3 +30,30 @@ func TestValidateBoundModuleKind(t *testing.T) {
 		})
 	}
 }
+
+func TestModuleFlagsRequired(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		flags   moduleFlags
+		wantErr string
+	}{
+		{name: "complete", flags: moduleFlags{name: "app", rootPath: ".", sourcePath: ".", libVersion: "v1"}},
+		{name: "missing name", flags: moduleFlags{rootPath: ".", sourcePath: ".", libVersion: "v1"}, wantErr: "--module-name is required"},
+		{name: "missing root", flags: moduleFlags{name: "app", sourcePath: ".", libVersion: "v1"}, wantErr: "--module-root-path is required"},
+		{name: "missing source", flags: moduleFlags{name: "app", rootPath: ".", libVersion: "v1"}, wantErr: "--module-source-path is required"},
+		{name: "missing lib version", flags: moduleFlags{name: "app", rootPath: ".", sourcePath: "."}, wantErr: "--lib-version is required"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.flags.config()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("want %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}

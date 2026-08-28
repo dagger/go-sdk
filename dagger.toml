@@ -11,6 +11,9 @@ source = "."
 check.skip = ["*"]
 generate.skip = ["*"]
 
+[modules.go-sdk-runtime]
+source = "runtime"
+
 [modules.dang-sdk]
 source = "github.com/dagger/dang-sdk"
 
@@ -39,6 +42,21 @@ path = ".dagger/modules/e2e/fixtures/skip/app"
 
 [[modules.go-sdk.as-sdk.modules]]
 path = ".dagger/modules/e2e/fixtures/managed-toml/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/toml-generate/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/toml-nested/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/toml-stale/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/engine-codegen/app"
+
+[[modules.go-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/runtime/app"
 
 [[modules.go-sdk.as-sdk.clients]]
 path = ".dagger/modules/e2e/fixtures/client/out"

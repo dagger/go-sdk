@@ -8,6 +8,16 @@ type GoSdk {
   skipGenerateFilename: String! = ".dagger-go-sdk-skip-generate"
 
   """
+  Marker filename that keeps generate on the engine's own Go codegen when
+  found at or above a dagger-module.toml module root.
+
+  The engine forwards host credentials (GOPRIVATE, gitconfig, the SSH agent)
+  into its codegen container; this module cannot, so a module with private Go
+  dependencies opts back into the engine path with this marker.
+  """
+  engineCodegenFilename: String! = ".dagger-go-sdk-engine-codegen"
+
+  """
   Runtime source to write into modules created by this SDK.
   """
   targetRuntime: String! { "go" }
@@ -27,7 +37,7 @@ type GoSdk {
     currentModule
       .asSDK(workspace: ws)
       .modules.{{path}}
-      .map { module => Mod(rootPath: module.path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
+      .map { module => Mod(rootPath: module.path, ws: ws, skipGenerateFilename: skipGenerateFilename, engineCodegenFilename: engineCodegenFilename) }
   }
 
   """
@@ -150,6 +160,7 @@ type GoSdk {
       rootPath: modPath,
       ws: ws,
       skipGenerateFilename: skipGenerateFilename,
+      engineCodegenFilename: engineCodegenFilename,
     )
   }
 
@@ -282,20 +293,6 @@ type GoSdk {
     dev: Boolean! = false,
   ): Changeset! {
     ws.changes(ws)
-  }
-
-  """
-  Build the engine-free client codegen helper.
-  """
-  let codegenBuilder: Container! {
-    container
-      .from("golang:1.25-alpine")
-      .withoutEntrypoint
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/helper", currentModule.source.directory("helpers/codegen"))
-      .withWorkdir("/helper")
-      .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "."])
   }
 
   """
@@ -438,13 +435,44 @@ type GoSdk {
   location: running from a subdirectory generates only the project you're in
   and the projects beneath it.
 
+  Each module is generated against the workspace the previous ones already
+  changed, not against a shared baseline: two modules sharing a parent
+  `go.work` both run `go work use .` on it, and merging their independent
+  changesets would leave one of the two enrolments behind.
+
   Modules with the generate skip marker are skipped.
   """
   generate(ws: Workspace!): Changeset! @generate {
-    changeset.withChangesets(
-      modules(ws)
-        .filter { !_.skipGenerate(ws) }
-        .map { mod => mod.generate(ws) },
-    )
+    modules(ws)
+      .filter { !_.skipGenerate(ws) }
+      .reduce(ws) { staged, mod => mod.generated(staged) }
+      .changes(ws)
   }
 }
+
+"""
+Build the engine-free codegen helper, shared by client and module generation.
+"""
+let codegenBuilder: Container! {
+  container
+    # 1.26: the pinned dagger.io/dagger (goSDKLibVersion) needs go >= 1.26.1,
+    # and generated modules must build against it.
+    .from("golang:1.26-alpine")
+    .withoutEntrypoint
+    # `go mod tidy` falls back to VCS when the module proxy cannot serve a
+    # dependency.
+    .withExec(["apk", "add", "--no-cache", "git", "openssh"])
+    .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+    .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+    .withDirectory("/helper", currentModule.source.directory("helpers/codegen"))
+    .withWorkdir("/helper")
+    .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "."])
+}
+
+"""
+dagger.io/dagger version pinned into generated modules' go.mod, the analogue
+of the engine's goSDKLibVersion and initialised to the engine's value at
+v1.0.0-beta.11. Its go.mod also seeds the minimum versions of the generated
+code's dependencies. Bump it when the engine pin moves.
+"""
+let goSDKLibVersion: String! = "1309520660f6a5b35ef97b4fbe151e32a06a8dc5"

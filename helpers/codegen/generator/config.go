@@ -24,11 +24,19 @@ type ModuleGeneratorConfig struct {
 	// Name of the module to generate code for.
 	ModuleName string
 
+	// ModuleRootPath is the subpath in OutputDir of the module root — the
+	// directory holding dagger-module.toml, at or above ModuleSourcePath.
+	ModuleRootPath string
+
 	// ModuleSourcePath is the subpath in OutputDir where the module source subpath is located.
 	ModuleSourcePath string
 
 	// ModuleParentPath is the path from the module source subpath to the context directory
 	ModuleParentPath string
+
+	// LibVersion pins dagger.io/dagger in the generated module's go.mod
+	// (`go get dagger.io/dagger@<LibVersion>`).
+	LibVersion string
 }
 
 // Module-source kinds a generated client can bind to. A local module

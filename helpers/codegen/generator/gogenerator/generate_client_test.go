@@ -167,7 +167,8 @@ func TestGenerateClient_GoMod(t *testing.T) {
 
 		goMod := readOverlay(t, state, "go.mod")
 		require.Contains(t, goMod, "module hello\n")
-		require.Contains(t, goMod, "go 1.")
+		// major.minor only: the builder image's patch level is not the user's
+		require.Regexp(t, `\ngo \d+\.\d+\n`, goMod)
 		require.Contains(t, goMod, "require dagger.io/dagger v0.19.2")
 	})
 

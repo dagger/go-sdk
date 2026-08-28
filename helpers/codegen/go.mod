@@ -3,7 +3,10 @@ module codegen
 go 1.25.1
 
 require (
+	github.com/dave/jennifer v1.7.1
 	github.com/iancoleman/strcase v0.3.0
+	github.com/mitchellh/mapstructure v1.5.0
+	github.com/pelletier/go-toml v1.9.5
 	github.com/psanford/memfs v0.0.0-20241019191636-4ef911798f9b
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/mod v0.37.0
