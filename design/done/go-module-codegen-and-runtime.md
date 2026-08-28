@@ -2,7 +2,7 @@
 
 author: yves
 created: 2026-08-27
-status: in progress
+status: done (draft PR dagger/go-sdk#35, CI green at 6ef236e)
 related: `design/new-default-template.md`; `github.com/dagger/python-sdk`
 `future/done/self-contained-python-sdk.md` (sibling precedent);
 `github.com/dagger/java-sdk` `runtime/main.dang` (dang-authored runtime
@@ -688,8 +688,8 @@ subcommand) working until `go-sdk.dang` moves off it.
 
 | item | value |
 |---|---|
-| phase | 6 — handed to the integrator for a draft PR (11 patches; e-2-e 35/35, sdk-sdk 28/28, dang-sdk 1/1 green locally) |
+| phase | done — archived after CI went green on the draft PR |
 | branch | `go-sdk-module-codegen-runtime-lead-640790c0` (fork `eunomie/go-sdk`) |
 | base | `main` @ `ec2d1ff` |
-| PR | — |
-| last green SHA | — |
+| PR | https://github.com/dagger/go-sdk/pull/35 (draft) |
+| last green SHA | `6ef236e9f823d37e25818ac7fb6dd77dcc102247` (65/65 Dagger Cloud checks) |
