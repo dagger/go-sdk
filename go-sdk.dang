@@ -305,9 +305,12 @@ type GoSdk {
     container
       .from("golang:1.26-alpine")
       .withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "build-base"])
       .withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-codegen-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-codegen-build"))
       .withDirectory("/helpers", currentModule.source.directory("helpers"))
+      .withWorkdir("/helpers/entrypoint-contract")
+      .withExec(["go", "build", "-o", "/usr/local/bin/entrypoint-contract", "."])
       .withWorkdir("/helpers/module-codegen")
       .withExec(["go", "build", "-o", "/usr/local/bin/module-codegen", "."])
   }
@@ -324,7 +327,7 @@ type GoSdk {
     ws: Workspace!,
     name: String!,
     path: String! = ".",
-    engineVersion: String! = "v1.0.0-beta.11",
+    daggerVersion: String! = "v1.0.0-beta.11",
   ): Changeset! {
     let rawPath = path.trimPrefix("./").trimPrefix("/")
     let modulePath = if (rawPath == "" or rawPath == ".") {
@@ -335,22 +338,28 @@ type GoSdk {
       rawPath.trimSuffix("/")
     }
 
+    let generatorArgs = [
+      "module-codegen",
+      "--module-root", "/workspace/" + modulePath,
+      "--module-name", name,
+      "--introspection-json-path", "/schema.json",
+      "--schema-version", daggerVersion,
+      "--dagger-version", daggerVersion,
+      "--go-image", "golang:1.26-alpine",
+      "--core-only",
+      "--remove-legacy-manifest",
+    ]
     let generated = moduleCodegenV2Builder
       .withDirectory("/workspace", ws.directory("/"))
       .withFile(
         "/schema.json",
         currentModule.source.file("helpers/codegen/introspection/testdata/schema.json"),
       )
+      .withExec(generatorArgs)
       .withExec([
-        "module-codegen",
-        "--module-root", "/workspace/" + modulePath,
-        "--module-name", name,
+        "entrypoint-contract",
+        "--entrypoint-dir", "/workspace/" + modulePath + "/internal/dagger/entrypoint",
         "--introspection-json-path", "/schema.json",
-        "--schema-version", engineVersion,
-        "--engine-version", engineVersion,
-        "--go-image", "golang:1.26-alpine",
-        "--core-only",
-        "--remove-legacy-manifest",
       ])
       .directory("/workspace")
 

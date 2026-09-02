@@ -28,9 +28,12 @@ type Mod {
     container
       .from("golang:1.26-alpine")
       .withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "build-base"])
       .withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-codegen-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-codegen-build"))
       .withDirectory("/helpers", currentModule.source.directory("helpers"))
+      .withWorkdir("/helpers/entrypoint-contract")
+      .withExec(["go", "build", "-o", "/usr/local/bin/entrypoint-contract", "."])
       .withWorkdir("/helpers/module-codegen")
       .withExec(["go", "build", "-o", "/usr/local/bin/module-codegen", "."])
   }
@@ -96,9 +99,14 @@ type Mod {
           "--module-name", moduleSource.moduleOriginalName,
           "--introspection-json-path", "/schema.json",
           "--schema-version", moduleSource.engineVersion,
-          "--engine-version", moduleSource.engineVersion,
+          "--dagger-version", moduleSource.engineVersion,
           "--go-image", "golang:1.26-alpine",
           "--remove-legacy-manifest",
+        ])
+        .withExec([
+          "entrypoint-contract",
+          "--entrypoint-dir", "/workspace/" + rootPath + "/internal/dagger/entrypoint",
+          "--introspection-json-path", "/schema.json",
         ])
         .directory("/workspace")
 

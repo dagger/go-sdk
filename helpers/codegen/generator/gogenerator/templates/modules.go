@@ -36,10 +36,16 @@ func (funcs goTemplateFuncs) isStandaloneClient() bool {
 }
 
 func (funcs goTemplateFuncs) Dependencies() []generator.ModuleSourceDependency {
+	if funcs.cfg.ClientConfig == nil {
+		return nil
+	}
 	return funcs.cfg.ClientConfig.ModuleDependencies
 }
 
 func (funcs goTemplateFuncs) HasLocalDependencies() bool {
+	if funcs.cfg.ClientConfig == nil {
+		return false
+	}
 	for _, dep := range funcs.cfg.ClientConfig.ModuleDependencies {
 		if dep.Kind == "LOCAL_SOURCE" {
 			return true
