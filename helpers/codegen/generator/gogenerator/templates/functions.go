@@ -3,6 +3,7 @@ package templates
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"go/token"
@@ -13,10 +14,17 @@ import (
 	"text/template"
 
 	"github.com/iancoleman/strcase"
+	"golang.org/x/tools/go/packages"
 
 	"codegen/generator"
 	"codegen/introspection"
 )
+
+// ModuleIntrospectionEmitter produces the module's own types as
+// introspection JSON, for merging into the dependency schema.
+type ModuleIntrospectionEmitter interface {
+	ModuleIntrospectionJSON(moduleName string) ([]byte, error)
+}
 
 func GoTemplateFuncs(
 	schema *introspection.Schema,
@@ -24,27 +32,74 @@ func GoTemplateFuncs(
 	schemaVersion string,
 	cfg generator.Config,
 ) template.FuncMap {
+	return GoModuleTemplateFuncs(context.Background(), schema, fullSchema, schemaVersion, cfg, nil, nil, 0)
+}
+
+// GoModuleTemplateFuncs adds the package and source state needed by module
+// analysis to the template functions used by the client generator.
+func GoModuleTemplateFuncs(
+	ctx context.Context,
+	schema *introspection.Schema,
+	fullSchema *introspection.Schema,
+	schemaVersion string,
+	cfg generator.Config,
+	pkg *packages.Package,
+	fset *token.FileSet,
+	pass int,
+) template.FuncMap {
 	if fullSchema == nil {
 		fullSchema = schema
 	}
 	return goTemplateFuncs{
 		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{}),
+		ctx:             ctx,
 		cfg:             cfg,
+		modulePkg:       pkg,
+		moduleFset:      fset,
 		schema:          schema,
 		fullSchema:      fullSchema,
 		schemaVersion:   schemaVersion,
+		pass:            pass,
 	}.FuncMap()
+}
+
+// NewModuleIntrospectionEmitter constructs a minimal emitter suitable for
+// calling ModuleIntrospectionJSON. The schema and schemaVersion are the current
+// (deps) schema; pkg and fset are from packages.Load on the module source.
+func NewModuleIntrospectionEmitter(
+	ctx context.Context,
+	schema *introspection.Schema,
+	schemaVersion string,
+	cfg generator.Config,
+	pkg *packages.Package,
+	fset *token.FileSet,
+) ModuleIntrospectionEmitter {
+	return goTemplateFuncs{
+		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{}),
+		ctx:             ctx,
+		cfg:             cfg,
+		modulePkg:       pkg,
+		moduleFset:      fset,
+		schema:          schema,
+		fullSchema:      schema,
+		schemaVersion:   schemaVersion,
+		pass:            1,
+	}
 }
 
 type goTemplateFuncs struct {
 	*generator.CommonFunctions
-	cfg    generator.Config
-	schema *introspection.Schema
+	ctx        context.Context
+	cfg        generator.Config
+	modulePkg  *packages.Package
+	moduleFset *token.FileSet
+	schema     *introspection.Schema
 	// fullSchema is the complete schema including all dependency types. It is
-	// used for type lookups while schema may be a filtered subset used for
-	// code rendering.
+	// used for type lookups (e.g. resolving dep-contributed enums in module
+	// code) while schema may be a filtered subset used for code rendering.
 	fullSchema    *introspection.Schema
 	schemaVersion string
+	pass          int
 }
 
 func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
@@ -69,6 +124,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		// interface support
 		"IsInterfaceType":          funcs.isInterfaceType,
 		"IsInterfaceRef":           funcs.isInterfaceRef,
+		"IsNullableObject":         funcs.isNullableObject,
 		"IsListOfInterface":        funcs.isListOfInterface,
 		"InterfaceClientName":      funcs.interfaceClientName,
 		"InterfaceReturnType":      funcs.interfaceReturnType,
@@ -95,10 +151,14 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"IsPointer":               funcs.isPointer,
 		"FormatArrayField":        funcs.formatArrayField,
 		"FormatArrayToSingleType": funcs.formatArrayToSingleType,
+		"IsPartial":               funcs.isPartial,
 		"IsModuleCode":            funcs.isModuleCode,
 		"IsStandaloneClient":      funcs.isStandaloneClient,
+		"ModuleMainSrc":           funcs.moduleMainSrc,
 		"ModuleRelPath":           funcs.moduleRelPath,
 		"BoundModule":             funcs.boundModule,
+		"Dependencies":            funcs.Dependencies,
+		"HasLocalDependencies":    funcs.HasLocalDependencies,
 		"IsExtendableType":        funcs.isExtendableType,
 		"FullSchemaTypes":         funcs.fullSchemaTypes,
 		"HasIDField":              funcs.hasIDField,
@@ -118,6 +178,10 @@ func (funcs goTemplateFuncs) legacyGoSDKCompat() bool {
 		return false
 	}
 	return !funcs.CheckVersionCompatibility(legacyGoSDKCompatCutoverVersion)
+}
+
+func (funcs goTemplateFuncs) supportsNullableObjects() bool {
+	return generator.SupportsNullableObjects(funcs.schemaVersion)
 }
 
 // fullSchemaTypes returns all types from the full schema, including dependency
@@ -358,7 +422,7 @@ func (funcs goTemplateFuncs) fieldFunction(f introspection.Field, topLevel bool,
 
 	// Generate arguments
 	args := []string{}
-	if f.TypeRef.IsScalar() || f.TypeRef.IsList() {
+	if f.TypeRef.IsScalar() || f.TypeRef.IsList() || funcs.isNullableObject(f.TypeRef) {
 		args = append(args, "ctx context.Context")
 	}
 	for _, arg := range f.Args {
@@ -410,6 +474,12 @@ func (funcs goTemplateFuncs) fieldFunction(f introspection.Field, topLevel bool,
 		retType = fmt.Sprintf("(*%s, error)", retType)
 	case f.TypeRef.IsScalar() || f.TypeRef.IsList():
 		retType = fmt.Sprintf("(%s, error)", retType)
+	case funcs.isNullableObject(f.TypeRef):
+		if funcs.isInterfaceRef(f.TypeRef) {
+			retType = fmt.Sprintf("(%s, error)", retType)
+		} else {
+			retType = fmt.Sprintf("(*%s, error)", retType)
+		}
 	case funcs.isInterfaceRef(f.TypeRef):
 		retType, err = funcs.interfaceReturnType(funcs.InnerType(f.TypeRef).Name, scopes...)
 		if err != nil {
@@ -443,6 +513,10 @@ func (funcs goTemplateFuncs) isInterfaceRef(t *introspection.TypeRef) bool {
 		}
 	}
 	return false
+}
+
+func (funcs goTemplateFuncs) isNullableObject(t *introspection.TypeRef) bool {
+	return funcs.supportsNullableObjects() && t != nil && t.IsOptional() && (t.IsObject() || funcs.isInterfaceRef(t))
 }
 
 // isListOfInterface returns true if the type ref is a list whose element is an interface.
@@ -534,7 +608,7 @@ func (funcs goTemplateFuncs) interfaceMethodSignature(f introspection.Field) (st
 	sig := formatName(f.Name)
 
 	args := []string{}
-	if f.TypeRef.IsScalar() || f.TypeRef.IsList() {
+	if f.TypeRef.IsScalar() || f.TypeRef.IsList() || funcs.isNullableObject(f.TypeRef) {
 		args = append(args, "ctx context.Context")
 	}
 	for _, arg := range f.Args {
@@ -575,6 +649,12 @@ func (funcs goTemplateFuncs) interfaceMethodSignature(f introspection.Field) (st
 		sig += fmt.Sprintf(" (%s, error)", retType)
 	case f.TypeRef.IsScalar() || f.TypeRef.IsList():
 		sig += fmt.Sprintf(" (%s, error)", retType)
+	case funcs.isNullableObject(f.TypeRef):
+		if funcs.isInterfaceRef(f.TypeRef) {
+			sig += fmt.Sprintf(" (%s, error)", retType)
+		} else {
+			sig += fmt.Sprintf(" (*%s, error)", retType)
+		}
 	case funcs.isInterfaceRef(f.TypeRef):
 		retType, err = funcs.interfaceReturnType(funcs.InnerType(f.TypeRef).Name)
 		if err != nil {
@@ -596,7 +676,7 @@ func (funcs goTemplateFuncs) interfaceClientMethod(ifaceName string, f introspec
 	sig := "func (r *" + clientName + ") " + formatName(f.Name)
 
 	args := []string{}
-	if f.TypeRef.IsScalar() || f.TypeRef.IsList() {
+	if f.TypeRef.IsScalar() || f.TypeRef.IsList() || funcs.isNullableObject(f.TypeRef) {
 		args = append(args, "ctx context.Context")
 	}
 	for _, arg := range f.Args {
@@ -637,6 +717,12 @@ func (funcs goTemplateFuncs) interfaceClientMethod(ifaceName string, f introspec
 		sig += fmt.Sprintf(" (%s, error)", retType)
 	case f.TypeRef.IsScalar() || f.TypeRef.IsList():
 		sig += fmt.Sprintf(" (%s, error)", retType)
+	case funcs.isNullableObject(f.TypeRef):
+		if funcs.isInterfaceRef(f.TypeRef) {
+			sig += fmt.Sprintf(" (%s, error)", retType)
+		} else {
+			sig += fmt.Sprintf(" (*%s, error)", retType)
+		}
 	case funcs.isInterfaceRef(f.TypeRef):
 		retType, err = funcs.interfaceReturnType(funcs.InnerType(f.TypeRef).Name)
 		if err != nil {
@@ -681,6 +767,11 @@ func (funcs goTemplateFuncs) FormatInputType(arg introspection.InputValue, scope
 		return baseType, nil
 	}
 	return funcs.CommonFunctions.FormatInputType(arg.TypeRef, scopes...)
+}
+
+// isPartial determines if we are in a first-pass or not
+func (funcs goTemplateFuncs) isPartial() bool {
+	return funcs.pass == 0
 }
 
 // legacyIDName returns the Go identifier for the per-type ID name

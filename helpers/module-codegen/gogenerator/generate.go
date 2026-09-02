@@ -20,8 +20,9 @@ import (
 
 	"codegen/generator"
 	clientgen "codegen/generator/gogenerator"
+	"codegen/generator/gogenerator/templates"
 	"codegen/introspection"
-	"module-codegen/gogenerator/templates"
+	"module-codegen/manifest"
 )
 
 type GenerateConfig struct {
@@ -29,7 +30,7 @@ type GenerateConfig struct {
 	ModuleName           string
 	SchemaPath           string
 	SchemaVersion        string
-	EngineVersion        string
+	DaggerVersion        string
 	GoImage              string
 	CoreOnly             bool
 	RemoveLegacyManifest bool
@@ -52,7 +53,12 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if packageName == "main" {
 		return fmt.Errorf("manifest v2 requires an importable Go package; change package main to package %s", defaultPackageName(cfg.ModuleName))
 	}
-	if err := pinDagger(goModPath, cfg.EngineVersion); err != nil {
+	moduleSubpath, err := filepath.Rel(filepath.Dir(goModPath), root)
+	if err != nil {
+		return fmt.Errorf("resolve module path relative to go.mod: %w", err)
+	}
+	moduleSubpath = filepath.ToSlash(moduleSubpath)
+	if err := pinDagger(goModPath, cfg.DaggerVersion); err != nil {
 		return err
 	}
 	if err := removeLegacyGeneratedFile(root); err != nil {
@@ -74,7 +80,7 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 		ClientConfig: &generator.ClientGeneratorConfig{},
 		ModuleConfig: &generator.ModuleGeneratorConfig{
 			ModuleName: cfg.ModuleName,
-			LibVersion: cfg.EngineVersion,
+			LibVersion: cfg.DaggerVersion,
 		},
 	}
 	client := &clientgen.GoGenerator{Config: genCfg}
@@ -114,7 +120,7 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("reload module package: %w", err)
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, cfg.GoImage,
+		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage,
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
@@ -131,7 +137,13 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := writeFile(filepath.Join(entrypointDir, "main.dang"), artifacts.EntrypointSource); err != nil {
 		return err
 	}
-	if err := writeFile(filepath.Join(root, "dagger-module.toml"), []byte(renderManifest(cfg.ModuleName, cfg.EngineVersion))); err != nil {
+	moduleManifest := manifest.New(cfg.ModuleName).
+		WithEntrypoint(manifest.DangKind, "./internal/dagger/entrypoint")
+	manifestFile, err := moduleManifest.AsFile()
+	if err != nil {
+		return fmt.Errorf("render module manifest: %w", err)
+	}
+	if err := writeFile(filepath.Join(root, "dagger-module.toml"), manifestFile); err != nil {
 		return err
 	}
 	if cfg.RemoveLegacyManifest {
@@ -335,19 +347,6 @@ func writeFile(path string, data []byte) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
-}
-
-func renderManifest(name, engineVersion string) string {
-	var b strings.Builder
-	b.WriteString("manifestVersion = 2\n")
-	fmt.Fprintf(&b, "name = %q\n", name)
-	if engineVersion != "" {
-		fmt.Fprintf(&b, "engineVersion = %q\n", engineVersion)
-	}
-	b.WriteString("\n[entrypoint]\n")
-	b.WriteString("driver = \"dang\"\n")
-	b.WriteString("source = \"./internal/dagger/entrypoint\"\n")
-	return b.String()
 }
 
 func defaultPackageName(moduleName string) string {
