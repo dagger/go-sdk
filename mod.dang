@@ -19,6 +19,23 @@ type Mod {
   let skipGenerateFilename: String!
 
   """
+  Build the self-hosted manifest-v2 module generator.
+
+  The helper imports the SDK's existing client generator through a local Go
+  module replacement. The module analyzer is the hardened engine Go analyzer.
+  """
+  let moduleCodegenBuilder: Container! {
+    container
+      .from("golang:1.26-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-codegen-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-codegen-build"))
+      .withDirectory("/helpers", currentModule.source.directory("helpers"))
+      .withWorkdir("/helpers/module-codegen")
+      .withExec(["go", "build", "-o", "/usr/local/bin/module-codegen", "."])
+  }
+
+  """
   This module root relative to the client's current location: "." when the cwd is
   the module itself, "sub/mod" for a module beneath it, ".." for an enclosing one.
   A cwd-relative view of rootPath, so listings read the way a shell user would.
@@ -69,15 +86,29 @@ type Mod {
       let stagedWs = ws.withChanges(
         ws.moduleSource("/" + rootPath).generateLocalDependencies(ws),
       )
-      let generated = stagedWs
-        .moduleSource("/" + rootPath)
-        .generatedContextDirectory
-        .directory(rootPath)
+      let moduleSource = stagedWs.moduleSource("/" + rootPath)
+      let generated = moduleCodegenBuilder
+        .withDirectory("/workspace", ws.directory("/"))
+        .withFile("/schema.json", moduleSource.introspectionSchemaJSON)
+        .withExec([
+          "module-codegen",
+          "--module-root", "/workspace/" + rootPath,
+          "--module-name", moduleSource.moduleOriginalName,
+          "--introspection-json-path", "/schema.json",
+          "--schema-version", moduleSource.engineVersion,
+          "--engine-version", moduleSource.engineVersion,
+          "--go-image", "golang:1.26-alpine",
+          "--remove-legacy-manifest",
+        ])
+        .directory("/workspace")
 
-      # The generated context holds only generated files, so it layers onto the
-      # module rather than standing in for it. Workspace.changes then reports
-      # just the difference, rooted at the caller's cwd.
-      ws.withDirectory("/" + rootPath, generated).changes(ws)
+      # The helper updates only SDK-owned generated files, the Go dependency
+      # lock files, and the manifest. Diff against the original workspace so
+      # dependency staging does not become part of this module's changeset.
+      ws
+        .withDirectory("/", generated)
+        .withNewDirectory("/" + rootPath, generated.directory(rootPath))
+        .changes(ws)
     }
   }
 }

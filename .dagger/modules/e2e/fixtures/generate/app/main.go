@@ -1,3 +1,3 @@
-package main
+package generate_app
 
 type GenerateApp struct{}

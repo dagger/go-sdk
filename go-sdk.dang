@@ -289,13 +289,75 @@ type GoSdk {
   """
   let codegenBuilder: Container! {
     container
-      .from("golang:1.25-alpine")
+      .from("golang:1.26-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/helper", currentModule.source.directory("helpers/codegen"))
       .withWorkdir("/helper")
       .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "."])
+  }
+
+  """
+  Build the self-hosted manifest-v2 module generator.
+  """
+  let moduleCodegenV2Builder: Container! {
+    container
+      .from("golang:1.26-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-codegen-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-codegen-build"))
+      .withDirectory("/helpers", currentModule.source.directory("helpers"))
+      .withWorkdir("/helpers/module-codegen")
+      .withExec(["go", "build", "-o", "/usr/local/bin/module-codegen", "."])
+  }
+
+  """
+  Generate a manifest-v2 Go module without asking the engine to load the
+  target module first.
+
+  This is the development path while the engine manifest-v2 loader is not
+  complete. The regular generate hook uses the target module's live schema.
+  This function uses the SDK's beta.11 core-schema fixture.
+  """
+  pub generateV2(
+    ws: Workspace!,
+    name: String!,
+    path: String! = ".",
+    engineVersion: String! = "v1.0.0-beta.11",
+  ): Changeset! {
+    let rawPath = path.trimPrefix("./").trimPrefix("/")
+    let modulePath = if (rawPath == "" or rawPath == ".") {
+      "."
+    } else if (rawPath == ".." or rawPath.trimPrefix("../") != rawPath) {
+      raise "path escapes workspace: " + rawPath
+    } else {
+      rawPath.trimSuffix("/")
+    }
+
+    let generated = moduleCodegenV2Builder
+      .withDirectory("/workspace", ws.directory("/"))
+      .withFile(
+        "/schema.json",
+        currentModule.source.file("helpers/codegen/introspection/testdata/schema.json"),
+      )
+      .withExec([
+        "module-codegen",
+        "--module-root", "/workspace/" + modulePath,
+        "--module-name", name,
+        "--introspection-json-path", "/schema.json",
+        "--schema-version", engineVersion,
+        "--engine-version", engineVersion,
+        "--go-image", "golang:1.26-alpine",
+        "--core-only",
+        "--remove-legacy-manifest",
+      ])
+      .directory("/workspace")
+
+    ws
+      .withDirectory("/", generated)
+      .withNewDirectory("/" + modulePath, generated.directory(modulePath))
+      .changes(ws)
   }
 
   """

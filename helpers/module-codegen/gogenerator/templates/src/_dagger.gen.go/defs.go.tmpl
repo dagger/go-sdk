@@ -195,16 +195,16 @@ func (c *Client) QueryBuilder() *querybuilder.Selection {
 func getClientParams() (graphql.Client, *querybuilder.Selection) {
 	portStr, ok := os.LookupEnv("DAGGER_SESSION_PORT")
 	if !ok {
-		return unavailableGraphQLClient{fmt.Errorf("DAGGER_SESSION_PORT is not set; run this call in a Dagger session")}, querybuilder.Query()
+		panic("DAGGER_SESSION_PORT is not set")
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return unavailableGraphQLClient{fmt.Errorf("DAGGER_SESSION_PORT %q is invalid: %w", portStr, err)}, querybuilder.Query()
+		panic(fmt.Errorf("DAGGER_SESSION_PORT %q is invalid: %w", portStr, err))
 	}
 
 	sessionToken := os.Getenv("DAGGER_SESSION_TOKEN")
 	if sessionToken == "" {
-		return unavailableGraphQLClient{fmt.Errorf("DAGGER_SESSION_TOKEN is not set; run this call in a Dagger session")}, querybuilder.Query()
+		panic("DAGGER_SESSION_TOKEN is not set")
 	}
 
 	host := fmt.Sprintf("127.0.0.1:%d", port)
@@ -237,12 +237,6 @@ func fallbackSpanContext(ctx context.Context) context.Context {
 		return ctx
 	}
 	return telemetry.Propagator.Extract(ctx, telemetry.NewEnvCarrier(true))
-}
-
-type unavailableGraphQLClient struct { err error }
-
-func (c unavailableGraphQLClient) MakeRequest(context.Context, *graphql.Request, *graphql.Response) error {
-	return c.err
 }
 
 // TODO: pollutes namespace, move to non internal package in dagger.io/dagger
