@@ -29,6 +29,22 @@ type ModuleGeneratorConfig struct {
 
 	// ModuleParentPath is the path from the module source subpath to the context directory
 	ModuleParentPath string
+
+	// Whether generation is part of module initialization.
+	IsInit bool
+
+	// LibVersion is the dagger.io/dagger version used by the generated module.
+	LibVersion string
+}
+
+// ModuleSourceDependency describes one dependency in a module schema.
+// Module code generation keeps this type because its hardened templates also
+// support dependency-aware module clients.
+type ModuleSourceDependency struct {
+	Kind   string
+	Name   string `json:"moduleOriginalName"`
+	Pin    string
+	Source string `json:"asString"`
 }
 
 // Module-source kinds a generated client can bind to. A local module
@@ -62,6 +78,10 @@ type ClientGeneratorConfig struct {
 	// BoundModule is the single module the generated client serves; it drives
 	// the generated serveBoundModule bootstrap.
 	BoundModule BoundModule
+
+	// ModuleDependencies is retained for module-client template compatibility.
+	// Standalone clients use BoundModule instead.
+	ModuleDependencies []ModuleSourceDependency
 
 	// The engine version from dagger.json, used to pin the dagger.io/dagger dependency.
 	// This is only populated when generating from a module source (not in tests).

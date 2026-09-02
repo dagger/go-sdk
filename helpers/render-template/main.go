@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,9 +28,10 @@ func run(args []string) error {
 	templateDir := args[1]
 	outDir := args[2]
 	data := map[string]string{
-		"ModuleName":   moduleName,
-		"ModuleType":   strcase.ToCamel(moduleName),
-		"ModuleImport": "dagger/" + strcase.ToKebab(moduleName),
+		"ModuleName":    moduleName,
+		"ModuleType":    strcase.ToCamel(moduleName),
+		"ModulePackage": modulePackage(moduleName),
+		"ModuleImport":  "dagger/" + strcase.ToKebab(moduleName),
 	}
 
 	return filepath.WalkDir(templateDir, func(path string, entry os.DirEntry, err error) error {
@@ -74,4 +76,18 @@ func run(args []string) error {
 		}
 		return os.WriteFile(dst, buf.Bytes(), 0o644)
 	})
+}
+
+func modulePackage(moduleName string) string {
+	name := strings.ReplaceAll(strcase.ToKebab(moduleName), "-", "_")
+	if name == "" {
+		return "module"
+	}
+	if name[0] >= '0' && name[0] <= '9' {
+		name = "module_" + name
+	}
+	if token.IsKeyword(name) {
+		name += "_module"
+	}
+	return name
 }
