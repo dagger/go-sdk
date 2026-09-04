@@ -94,7 +94,7 @@ type GoSdk {
       .withLegacyGoRuntime
 
     clients.reduce(base) { manifest, target =>
-      manifest.withDependency(
+      manifest.withLegacyRuntimeDependency(
         name: target.moduleOriginalName,
         source: dependencySource(ws, target),
         pin: target.pin,
