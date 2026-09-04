@@ -1,0 +1,60 @@
+"""Checks the Go SDK against the Dagger development engine."""
+type EngineE2e {
+  let assert(condition: Boolean!, message: String!): Void {
+    if (condition == false) {
+      raise message
+    }
+    null
+  }
+
+  """Build the module-max engine and use this checkout as its Go SDK."""
+  devSdkCheck(ws: Workspace!): Void @check {
+    let sdkSource = ws.directory("/", exclude: [".git"])
+    assert(sdkSource.exists("dagger.toml"), "Go SDK workspace source has no dagger.toml")
+
+    let engineSource = git("https://github.com/dagger/dagger")
+      .branch("sdk-ux-module-max")
+      .asWorkspace
+    let client = engineDev(ws: engineSource)
+      .playground
+      .withMountedDirectory("./go-sdk", sdkSource)
+      .withWorkdir("./go-sdk")
+      .withExec(["git", "init", "--quiet"])
+    assert(client.directory(".").exists("dagger.toml"), "nested client has no dagger.toml")
+
+    let listed = client.withExec(["dagger", "sdk", "list"])
+
+    assert(listed.stdout.contains("go"), "development Go SDK was not listed")
+
+    let checked = listed.withExec([
+      "dagger", "-m", ".dagger/modules/e2e",
+      "check",
+      "e-2-e:module-client-check",
+      "e-2-e:module-skip-check",
+      "e-2-e:standalone-client-preservation-check",
+    ])
+
+    let initialized = checked
+      .withExec([
+        "dagger", "--auto-apply", "module", "init", "go",
+        "--name", "sdk-smoke",
+        "--path", ".dagger/modules/sdk-smoke",
+      ])
+      .withExec(["test", "-f", ".dagger/modules/sdk-smoke/dagger-module.toml"])
+      .withExec(["test", "-f", ".dagger/modules/sdk-smoke/dagger.json"])
+      .withExec(["test", "-f", ".dagger/modules/sdk-smoke/dagger.gen.go"])
+      .withExec(["test", "-f", ".dagger/modules/sdk-smoke/internal/dagger/dagger.gen.go"])
+
+    let release = initialized
+      .withExec([
+        "dagger", "-m", ".dagger/modules/sdk-smoke",
+        "call", "container", "file",
+        "--path", "/etc/alpine-release",
+        "contents",
+      ])
+      .stdout
+
+    assert(release.trim != "", "generated module did not run")
+    null
+  }
+}
