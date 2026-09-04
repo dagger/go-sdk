@@ -1,43 +1,12 @@
-"""
-End-to-end checks for the Go SDK helper module.
-"""
+"""End-to-end checks for the Go SDK module provider."""
 type E2e {
   let fixtureRoot: String! = ".dagger/modules/e2e/fixtures"
   let outputRoot: String! = ".dagger/modules/e2e/out"
+  let clientTargetPath: String! = fixtureRoot + "/client/dep"
+  let secondClientTargetPath: String! = fixtureRoot + "/client/app"
+  # Dagger Go library source used by the generated-client compile check.
+  let daggerSourceRef: String! = "44f87a32cf6aceb807c02bebde03ccb0e3fd014e"
 
-  let lookupModulePath: String! = fixtureRoot + "/lookup/app"
-  let lookupNestedPath: String! = lookupModulePath + "/nested"
-  let nonGoModulePath: String! = fixtureRoot + "/lookup/not-go"
-  let tomlModulePath: String! = fixtureRoot + "/lookup-toml/app"
-  let tomlNestedPath: String! = tomlModulePath + "/nested"
-  let nonGoTomlModulePath: String! = fixtureRoot + "/lookup-toml/not-go"
-  let commentedTomlModulePath: String! = fixtureRoot + "/lookup-toml/commented"
-  let singleQuotedTomlModulePath: String! = fixtureRoot + "/lookup-toml/single-quoted"
-  let partialLegacyPath: String! = fixtureRoot + "/partial/legacy/app"
-  let partialLegacyNestedPath: String! = partialLegacyPath + "/nested"
-  let skipModulePath: String! = fixtureRoot + "/skip/app"
-  let generateModulePath: String! = fixtureRoot + "/generate/app"
-  let depsModulePath: String! = fixtureRoot + "/deps/app"
-  # A CLI 1.0 managed module: configured by dagger-module.toml, not dagger.json.
-  let managedTomlModulePath: String! = fixtureRoot + "/managed-toml/app"
-
-  # A client binds to the client/app module (which depends on client/dep) and
-  # is generated into its own dir.
-  let clientModulePath: String! = fixtureRoot + "/client/app"
-  let clientOutputPath: String! = fixtureRoot + "/client/out"
-  # A client dir with an existing go.mod (local replace) and a user file;
-  # regeneration must preserve both.
-  let clientExistingPath: String! = fixtureRoot + "/client/existing"
-
-  # dagger/dagger commit whose sdk/go the compile check builds the generated
-  # client against. Pinned to a commit (not a branch) so Dagger
-  # content-addresses the SDK tree and reuses it across runs. Bump to track
-  # main; must ship Workspace.moduleSource (dagger/dagger#13663).
-  let daggerSourceRef: String! = "3e6f3215788362eb45f4fd7540103007cbf52e27"
-
-  """
-  Fail the current check when a condition is false.
-  """
   let assert(condition: Boolean!, message: String!): Void {
     if (condition == false) {
       raise message
@@ -45,599 +14,197 @@ type E2e {
     null
   }
 
-  """
-  Return true when a list contains the exact string.
-  """
-  let contains(values: [String!]!, want: String!): Boolean! {
-    values
-      .filter { value => value == want }
-      .length > 0
-  }
-
-  """
-  Assert that a changeset added a path.
-  """
-  let assertAdded(changes: Changeset!, path: String!): Void {
-    assert(contains(changes.addedPaths, path), "expected added path: " + path)
-  }
-
-  """
-  Assert that a string contains a substring.
-  """
   let assertContains(value: String!, want: String!, message: String!): Void {
     assert(value.contains(want), message)
   }
 
-  """
-  Assert that a string does not contain a substring.
-  """
-  let assertNotContains(value: String!, want: String!, message: String!): Void {
-    assert(value.contains(want) == false, message)
+  let exists(ws: Workspace!, path: String!): Boolean! {
+    ws.directory(".", include: [path]).exists(path)
   }
 
-  """
-  The helper should expose the generate skip marker used by callers.
-  """
-  skipGenerateFilenameCheck: Void @check {
-    assert(goSdk.skipGenerateFilename == ".dagger-go-sdk-skip-generate", "skip marker filename changed")
+  """Scope detection returns the nearest parent Go module."""
+  detectScopeCheck(ws: Workspace!): Void @check {
+    let scopePath = fixtureRoot + "/client/existing"
+    let nested = ws.withWorkdir(scopePath)
 
+    let detected = goSdk.detectScope(nested)
+    assert(detected == scopePath, "detectScope returned " + detected + ", expected " + scopePath)
     null
   }
 
-  """
-  Mod lookup should find the owning Go SDK module when called from a nested path.
-  """
-  moduleLookupCheck(ws: Workspace!): Void @check {
-    let nested = goSdk.mod(ws, path: lookupNestedPath)
-    let exact = goSdk.mod(ws, path: lookupModulePath, findUp: false)
+  """A new module gets current and legacy manifests, starter source, and generated Go code."""
+  moduleInitCheck(ws: Workspace!): Void @check {
+    let scopePath = outputRoot + "/module-init"
+    let input = ws
+      .withNewFile(scopePath + "/user.txt", "keep me\n")
+      .withWorkdir(scopePath)
+    let generated = goSdk.generateScope(
+      ws: input,
+      isModule: true,
+      name: "module-init",
+      clients: [],
+    )
 
-    assert(nested.rootPath == lookupModulePath, "find-up lookup returned the wrong module path")
-    assert(exact.rootPath == lookupModulePath, "exact lookup returned the wrong module path")
-
+    assert(exists(generated, "dagger-module.toml"), "module manifest was not created")
+    assert(exists(generated, "dagger.json"), "legacy module manifest was not created")
+    assert(exists(generated, "main.go"), "starter source was not created")
+    assert(exists(generated, "dagger.gen.go"), "module adapter was not generated")
+    assert(exists(generated, "internal/dagger/dagger.gen.go"), "aggregate client package was not generated")
+    assertContains(generated.file("dagger-module.toml").contents, "name = \"module-init\"", "manifest name is wrong")
+    assertContains(generated.file("dagger-module.toml").contents, "engineVersion = \"v", "manifest engine version is missing")
+    assertContains(generated.file("dagger-module.toml").contents, "source = \"go\"", "manifest runtime is wrong")
+    assert(generated.file("dagger-module.toml").contents.contains("source = \".\"") == false, "manifest has an unexpected module source")
+    assertContains(generated.file("dagger.json").contents, "\"name\": \"module-init\"", "legacy manifest name is wrong")
+    assertContains(generated.file("dagger.json").contents, "\"engineVersion\": \"v", "legacy manifest engine version is missing")
+    assertContains(generated.file("dagger.json").contents, "\"source\": \"go\"", "legacy manifest runtime is wrong")
+    assert(generated.file("dagger.json").contents.contains("\"source\": \".\"") == false, "legacy manifest has an unexpected module source")
+    assertContains(generated.file("user.txt").contents, "keep me", "existing file was not preserved")
     null
   }
 
-  """
-  Return the error message raised while resolving a module, or its resolved
-  path when the lookup unexpectedly succeeds.
-  """
-  let lookupFailure(ws: Workspace!, path: String!): String! {
-    goSdk.mod(ws, path: path).rootPath rescue {
-      err: Error => err.message
-    }
-  }
-
-  """
-  Mod lookup should find the owning module through a dagger-module.toml.
-  """
-  moduleLookupTomlCheck(ws: Workspace!): Void @check {
-    let nested = goSdk.mod(ws, path: tomlNestedPath)
-    let exact = goSdk.mod(ws, path: tomlModulePath)
-
-    assert(nested.rootPath == tomlModulePath, "find-up lookup returned the wrong dagger-module.toml module path")
-    assert(exact.rootPath == tomlModulePath, "exact lookup returned the wrong dagger-module.toml module path")
-
-    null
-  }
-
-  """
-  A dagger-module.toml module owned by another runtime should be rejected with
-  a message naming that runtime.
-  """
-  moduleLookupNonGoTomlCheck(ws: Workspace!): Void @check {
-    let message = lookupFailure(ws, nonGoTomlModulePath)
-
-    assertContains(message, "does not use the Go SDK", "non-Go runtime was not rejected: " + message)
-    assertContains(message, "dang", "rejection did not name the owning runtime: " + message)
-
-    null
-  }
-
-  """
-  A commented-out source must not be read as the module's runtime. The
-  effective declaration below it owns the module, so lookup must be rejected
-  and name that runtime.
-  """
-  moduleLookupCommentedTomlCheck(ws: Workspace!): Void @check {
-    let message = lookupFailure(ws, commentedTomlModulePath)
-
-    assertContains(message, "does not use the Go SDK", "commented-out source was read as the runtime: " + message)
-    assertContains(message, "dang", "rejection did not name the effective runtime: " + message)
-
-    null
-  }
-
-  """
-  A single-quoted source is valid TOML and should resolve like a double-quoted
-  one.
-  """
-  moduleLookupSingleQuotedTomlCheck(ws: Workspace!): Void @check {
-    let mod = goSdk.mod(ws, path: singleQuotedTomlModulePath)
-
-    assert(mod.rootPath == singleQuotedTomlModulePath, "single-quoted source did not resolve; got " + mod.rootPath)
-
-    null
-  }
-
-  """
-  In a partially migrated workspace the closest config wins: a deeper legacy
-  dagger.json module must beat an ancestor's dagger-module.toml.
-  """
-  moduleLookupPartialMigrationCheck(ws: Workspace!): Void @check {
-    let nested = goSdk.mod(ws, path: partialLegacyNestedPath)
-
-    assert(nested.rootPath == partialLegacyPath, "closest config did not win; resolved to " + nested.rootPath)
-
-    null
-  }
-
-  """
-  The SDK should report the builtin runtime it targets.
-  """
-  targetRuntimeCheck: Void @check {
-    assert(goSdk.targetRuntime == "go", "targetRuntime should be go")
-
-    null
-  }
-
-  """
-  initModule should produce only the SDK-owned seed files. The engine owns the
-  module's dagger.json, so it must not appear in the changeset.
-  """
-  initCheck(ws: Workspace!): Void @check {
-    let defaultPath = outputRoot + "/init-default"
-    let legacyPath = outputRoot + "/init-legacy"
-
-    let defaultChanges = goSdk.initModule(ws, name: "init-default", path: defaultPath)
-    let legacyChanges = goSdk.initModule(
-      ws,
-      name: "init-legacy",
-      path: legacyPath,
-      template: "legacy",
+  """Module clients become inputs to the existing module generator."""
+  moduleClientCheck(ws: Workspace!): Void @check {
+    let goScopePath = fixtureRoot + "/go-scope"
+    let scopePath = goScopePath + "/module-client"
+    let input = ws
+      .withNewDirectory(scopePath, directory)
+      .withWorkdir(scopePath)
+    let target = ws.moduleSource("/" + clientTargetPath)
+    let initialized = goSdk.generateScope(
+      ws: input,
+      isModule: true,
+      name: "module-client",
+      clients: [],
+    )
+    let generated = goSdk.generateScope(
+      ws: initialized,
+      isModule: true,
+      name: "module-client",
+      clients: [target],
     )
 
     assert(
-      contains(defaultChanges.addedPaths, defaultPath + "/dagger.json") == false,
-      "initModule should not write dagger.json; the engine owns it",
+      exists(generated, "internal/dagger/client-dep.gen.go"),
+      "module client binding was not generated",
     )
-    assertAdded(defaultChanges, defaultPath + "/main.go")
     assert(
-      contains(defaultChanges.addedPaths, defaultPath + "/dagger.gen.go") == false,
-      "initModule should not generate dagger.gen.go",
-    )
-    assert(defaultChanges.modifiedPaths.length == 0, "initModule unexpectedly modified existing files")
-    assert(defaultChanges.removedPaths.length == 0, "initModule unexpectedly removed files")
-
-    assertContains(
-      legacyChanges.layer.file(legacyPath + "/main.go").contents,
-      "type InitLegacy struct{}",
-      "legacy template did not render the module type",
-    )
-
-    null
-  }
-
-  """
-  initModule into a directory that already holds files should layer the starter
-  onto it, never replace it: a user running `dagger module init` in an existing
-  project keeps their files.
-  """
-  initOverExistingCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.initModule(ws, name: "init-over-existing", path: lookupModulePath)
-
-    assert(
-      changes.removedPaths.length == 0,
-      "initModule removed existing files: " + changes.removedPaths.join(", "),
+      exists(
+        generated.withWorkdir(goScopePath),
+        "internal/dagger/clients/client-dep/client-dep.gen.go",
+      ),
+      "standalone module client was not generated",
     )
     assertContains(
-      changes.after.file(lookupModulePath + "/dagger.json").contents,
-      "\"source\": \"go\"",
-      "initModule must leave the existing module config in place",
-    )
-
-    null
-  }
-
-  """
-  Return the error message raised by an init that should be rejected, or the
-  changeset's added paths when it unexpectedly succeeds.
-  """
-  let initFailure(changes: Changeset!): String! {
-    changes.addedPaths.join(", ") rescue {
-      err: Error => err.message
-    }
-  }
-
-  """
-  The default template should render a working module (a struct with a Container
-  function that reads source from the workspace), and the empty template should
-  render a bare struct. Both must have their {{ .ModuleType }} placeholder fully
-  substituted.
-  """
-  templateCheck(ws: Workspace!): Void @check {
-    let defaultPath = outputRoot + "/template-default"
-    let emptyPath = outputRoot + "/template-empty"
-    let unnamedPath = outputRoot + "/template-unnamed"
-
-    let defaultChanges = goSdk.initModule(ws, name: "template-default", path: defaultPath)
-    assertAdded(defaultChanges, defaultPath + "/main.go")
-    let defaultMain = defaultChanges.layer.file(defaultPath + "/main.go").contents
-    assertContains(defaultMain, "type TemplateDefault struct {", "default template should render the module struct")
-    assertContains(defaultMain, "func (m *TemplateDefault) Container() *dagger.Container", "default template should expose the Container function")
-    assertContains(defaultMain, "ws.Directory(", "default template constructor should read source from the workspace")
-    assertContains(defaultMain, "BaseImageAddress", "default template should expose the base image field")
-    # The import path is derived from the module name, so a wrong rendering only
-    # shows up at build time — inside the engine, not here.
-    assertContains(defaultMain, "\"dagger/template-default/internal/dagger\"", "default template should render the module import path")
-    assertNotContains(defaultMain, "{{", "default template placeholders should be fully rendered")
-
-    let emptyChanges = goSdk.initModule(ws, name: "template-empty", path: emptyPath, template: "empty")
-    assertAdded(emptyChanges, emptyPath + "/main.go")
-    let emptyMain = emptyChanges.layer.file(emptyPath + "/main.go").contents
-    assertContains(emptyMain, "type TemplateEmpty struct{}", "empty template should render a bare struct")
-    assertNotContains(emptyMain, "{{", "empty template placeholders should be fully rendered")
-
-    # An unnamed template means the default, not the templates/ directory —
-    # which exists, so it would render every starter as a subdirectory.
-    let unnamedChanges = goSdk.initModule(ws, name: "template-unnamed", path: unnamedPath, template: "")
-    assertAdded(unnamedChanges, unnamedPath + "/main.go")
-    assert(
-      contains(unnamedChanges.addedPaths, unnamedPath + "/default/main.go") == false,
-      "an unnamed template should render the default starter, not every starter",
+      generated.file("dagger-module.toml").contents,
+      "name = \"client-dep\"",
+      "module client was not saved in the manifest",
     )
     assertContains(
-      unnamedChanges.layer.file(unnamedPath + "/main.go").contents,
-      "type TemplateUnnamed struct {",
-      "an unnamed template should render the default starter",
-    )
-
-    assertContains(
-      initFailure(goSdk.initModule(ws, name: "unknown", path: outputRoot + "/init-unknown", template: "no-such-template")),
-      "unknown init template",
-      "init accepted a template it does not ship",
-    )
-
-    null
-  }
-
-  """
-  initClient should not materialize files itself. The engine records the client
-  and owns the generated context changeset.
-  """
-  initClientCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.initClient(
-      ws,
-      path: outputRoot + "/client",
-      module: generateModulePath,
-      dev: true,
-    )
-
-    assert(changes.isEmpty, "initClient should return an empty SDK changeset")
-
-    null
-  }
-
-  """
-  Generating an existing module should produce generated files rooted at that
-  module without touching unrelated paths.
-  """
-  generateModuleCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.mod(ws, path: generateModulePath).generate(ws)
-
-    assertAdded(changes, generateModulePath + "/dagger.gen.go")
-    assertAdded(changes, generateModulePath + "/go.mod")
-    assertContains(
-      changes.layer.file(generateModulePath + "/dagger.gen.go").contents,
-      "Code generated by dagger.",
-      "generate did not include dagger.gen.go",
-    )
-
-    # The fixture commits .gitattributes, which generation also emits, so a
-    # generator that returns its whole generated context instead of the
-    # difference reports it as added. Every other file here is genuinely new on
-    # a fresh module, which is why only an already-present one can catch that.
-    assert(
-      contains(changes.addedPaths, generateModulePath + "/.gitattributes") == false,
-      "generate re-added files that already exist: " + changes.addedPaths.join(", "),
-    )
-
-    null
-  }
-
-  """
-  Generating all modules should discover Go SDK modules and ignore skipped ones.
-  """
-  generateCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.generate(ws)
-
-    assertAdded(changes, generateModulePath + "/dagger.gen.go")
-    assert(
-      contains(changes.addedPaths, lookupModulePath + "/dagger.gen.go") == false,
-      "generateAll generated a lookup fixture that should be skipped",
-    )
-    assert(
-      contains(changes.addedPaths, depsModulePath + "/dagger.gen.go") == false,
-      "generateAll generated dependency fixtures that should be skipped",
-    )
-    assert(
-      contains(changes.addedPaths, skipModulePath + "/dagger.gen.go") == false,
-      "generateAll generated a skipped module",
-    )
-    assert(
-      contains(changes.addedPaths, managedTomlModulePath + "/dagger.gen.go") == false,
-      "generateAll generated a skipped dagger-module.toml module",
-    )
-    assert(
-      contains(changes.addedPaths, nonGoModulePath + "/dagger.gen.go") == false,
-      "generateAll generated a non-Go SDK module",
-    )
-
-    null
-  }
-
-  """
-  From the workspace root the whole workspace is in scope, so modules() should
-  return every Go SDK module this workspace manages — whether it is configured
-  by the legacy dagger.json or the CLI 1.0 dagger-module.toml — and nothing
-  that isn't managed by this SDK (e.g. a sibling module using another SDK).
-  """
-  modulesCheck(ws: Workspace!): Void @check {
-    let pathRecords = goSdk.modules(ws).{{rootPath}}
-
-    assert(
-      pathRecords.filter { r => r.rootPath == lookupModulePath }.length > 0,
-      "lookup Go module should be listed",
-    )
-    assert(
-      pathRecords.filter { r => r.rootPath == skipModulePath }.length > 0,
-      "skip-marked Go module should still be listed (skip only affects generate)",
-    )
-    assert(
-      pathRecords.filter { r => r.rootPath == generateModulePath }.length > 0,
-      "generate Go module should be listed",
-    )
-    assert(
-      pathRecords.filter { r => r.rootPath == depsModulePath }.length > 0,
-      "deps Go module should be listed",
-    )
-    assert(
-      pathRecords.filter { r => r.rootPath == managedTomlModulePath }.length > 0,
-      "a dagger-module.toml (CLI 1.0) managed module should be listed",
-    )
-    assert(
-      pathRecords.filter { r => r.rootPath == nonGoModulePath }.length == 0,
-      "a module not managed by this SDK should be excluded from modules listing",
-    )
-
-    null
-  }
-
-  """
-  Discovery is anchored at the client's cwd, not the workspace root. Re-anchoring
-  the workspace to a subdirectory scopes modules() to the managed modules in that
-  cone (walk-down) plus the nearest enclosing one (find-up), and excludes managed
-  modules that live outside it.
-  """
-  modulesCwdCheck(ws: Workspace!): Void @check {
-    # A stable snapshot of the workspace, re-anchorable at any cwd. Keep the
-    # workspace config (dagger.toml, whose [modules.<sdk>.as-sdk] list is what
-    # modules() resolves the re-anchored workspace against), every module config
-    # (both dagger.json and dagger-module.toml, so each registered path still
-    # resolves to a real module) and the nested
-    # .keep so lookup/app/nested survives the include filter and can serve as a
-    # config-less subdirectory.
-    let root = ws.directory("/", include: ["dagger.toml", "**/dagger.json", "**/dagger-module.toml", "**/.keep"])
-
-    # Walk-down: from fixtures/generate only generate/app is in the cone; the
-    # sibling managed modules live outside it and must be excluded. Its
-    # cwd-relative path is "app" — a directory beneath the cwd.
-    let fromGenerate = goSdk.modules(
-      root.asWorkspace(cwd: fixtureRoot + "/generate"),
-    )
-    let fromGenerateRoots = fromGenerate.{{rootPath}}
-    assert(
-      fromGenerateRoots.filter { r => r.rootPath == generateModulePath }.length > 0,
-      "cwd=generate: the managed module in the cone should be discovered",
-    )
-    assert(
-      fromGenerateRoots.filter { r => r.rootPath == lookupModulePath }.length == 0,
-      "cwd=generate: lookup/app is outside the cone and must be excluded",
-    )
-    assert(
-      fromGenerateRoots.filter { r => r.rootPath == depsModulePath }.length == 0,
-      "cwd=generate: deps/app is outside the cone and must be excluded",
-    )
-    assert(
-      fromGenerateRoots.filter { r => r.rootPath == skipModulePath }.length == 0,
-      "cwd=generate: skip/app is outside the cone and must be excluded",
-    )
-    assert(fromGenerateRoots.length == 1, "cwd=generate: exactly one managed module is in the cone")
-    assert(fromGenerate.{{path}}.filter { r => r.path == "app" }.length > 0, "cwd=generate: the discovered module's path should be cwd-relative (app)")
-
-    # Find-up: from inside lookup/app (a nested subdir with no config of its own)
-    # the enclosing managed module is discovered; siblings are not. Its
-    # cwd-relative path is ".." — an ancestor of the cwd.
-    let fromNested = goSdk.modules(root.asWorkspace(cwd: lookupNestedPath))
-    let fromNestedRoots = fromNested.{{rootPath}}
-    assert(
-      fromNestedRoots.filter { r => r.rootPath == lookupModulePath }.length > 0,
-      "cwd=lookup/app/nested: find-up should discover the enclosing lookup/app",
-    )
-    assert(
-      fromNestedRoots.filter { r => r.rootPath == generateModulePath }.length == 0,
-      "cwd=lookup/app/nested: generate/app is outside the cone",
-    )
-    assert(fromNestedRoots.length == 1, "cwd=lookup/app/nested: only the enclosing module should be discovered")
-    assert(fromNested.{{path}}.filter { r => r.path == ".." }.length > 0, "cwd=lookup/app/nested: the enclosing module's path should be cwd-relative (..)")
-
-    # Root cwd: the whole workspace is in scope, so every managed module — and
-    # only the managed ones — is discovered, whether marked by dagger.json or
-    # dagger-module.toml.
-    let fromRoot = goSdk.modules(root.asWorkspace(cwd: "/")).{{rootPath}}
-    assert(
-      fromRoot.filter { r => r.rootPath == generateModulePath }.length > 0,
-      "cwd=/: generate/app should be listed",
-    )
-    assert(fromRoot.filter { r => r.rootPath == lookupModulePath }.length > 0, "cwd=/: lookup/app should be listed")
-    assert(fromRoot.filter { r => r.rootPath == depsModulePath }.length > 0, "cwd=/: deps/app should be listed")
-    assert(fromRoot.filter { r => r.rootPath == skipModulePath }.length > 0, "cwd=/: skip/app should be listed")
-    assert(
-      fromRoot.filter { r => r.rootPath == managedTomlModulePath }.length > 0,
-      "cwd=/: the dagger-module.toml managed module should be listed",
-    )
-    assert(fromRoot.length == 5, "cwd=/: exactly the five managed modules should be listed")
-
-    null
-  }
-
-  """
-  A skip marker above a module should make generate return an empty changeset.
-  """
-  skipGenerateCheck(ws: Workspace!): Void @check {
-    let mod = goSdk.mod(ws, path: skipModulePath)
-    let changes = mod.generate(ws)
-
-    assert(mod.skipGenerate(ws), "skip marker was not detected")
-    assert(changes.isEmpty, "generate returned changes for a skipped module")
-
-    null
-  }
-
-  """
-  Generating a client for a module should produce the core bindings, one
-  <module>.gen.go for the bound module, the dag package, and a go.mod pinned
-  to the module's engine version — rooted at the client output path.
-  """
-  clientGenerateCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.generateClient(ws, module: clientModulePath, path: clientOutputPath)
-
-    assertAdded(changes, clientOutputPath + "/dagger.gen.go")
-    assertAdded(changes, clientOutputPath + "/client-app.gen.go")
-    assertAdded(changes, clientOutputPath + "/dag/dag.gen.go")
-    assertAdded(changes, clientOutputPath + "/go.mod")
-
-    # The binding must carry the bound module's actual API: proves the
-    # client-facing schema was resolved and codegen'd, not left empty.
-    assertContains(
-      changes.layer.file(clientOutputPath + "/client-app.gen.go").contents,
-      "Hello",
-      "the bound module's Hello function must be in the generated client",
-    )
-    # The bootstrap serves the one bound module, resolved via the workspace.
-    assertContains(
-      changes.layer.file(clientOutputPath + "/dagger.gen.go").contents,
-      "serveBoundModule",
-      "the client bootstrap must serve the bound module",
-    )
-
-    null
-  }
-
-  """
-  Regenerating a client whose go.mod already exists must preserve its module
-  name and local replace directives, and a user-authored file in the client
-  dir must survive: generated files overlay the existing dir.
-  """
-  clientRespectsExistingCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.generateClient(ws, module: clientModulePath, path: clientExistingPath)
-
-    let gomod = changes.after.file(clientExistingPath + "/go.mod").contents
-    assertContains(gomod, "module my-existing-client", "existing go.mod module name must be preserved")
-    assertContains(gomod, "replace dagger.io/dagger => ./sdk", "existing local replace directive must be preserved")
-
-    assert(
-      contains(changes.removedPaths, clientExistingPath + "/notes.go") == false,
-      "regenerating a client must not remove a user-authored file",
+      generated.file("dagger-module.toml").contents,
+      "source = \"../../client/dep\"",
+      "module client source is wrong in the current manifest",
     )
     assertContains(
-      changes.after.file(clientExistingPath + "/notes.go").contents,
-      "user-authored",
-      "the user's notes.go must survive regeneration",
+      generated.file("dagger.json").contents,
+      "\"source\": \"../../client/dep\"",
+      "module client source is wrong in the legacy manifest",
     )
-
     null
   }
 
-  """
-  Regenerating a client from within the client dir itself (cwd == the client
-  path) must still resolve the bound module — the ref is workspace-root
-  relative, so resolution must be cwd-independent. Changeset paths are
-  relative to that cwd, hence the bare names.
-  """
-  clientFromCwdCheck(ws: Workspace!): Void @check {
-    let atClient = ws
-      .directory("/", include: [fixtureRoot + "/client/**"])
-      .asWorkspace(cwd: clientExistingPath)
-    let changes = goSdk.generateClient(atClient, module: clientModulePath, path: clientExistingPath)
-
-    assertAdded(changes, "dagger.gen.go")
-    assert(
-      contains(changes.removedPaths, "notes.go") == false,
-      "regenerating from the client dir must not remove a user file",
+  """The generate skip marker protects codegen but not generated manifests."""
+  moduleSkipCheck(ws: Workspace!): Void @check {
+    let scopePath = fixtureRoot + "/skip/app"
+    let input = ws
+      .withNewFile(scopePath + "/dagger-module.toml", "name = \"module-skip\"\nengineVersion = \"latest\"\ndisableDefaultFunctionCaching = true\n\n[runtime]\nsource = \"go\"\n")
+      .withNewFile(scopePath + "/internal/dagger/clients/keep.txt", "keep me\n")
+      .withWorkdir(scopePath)
+    let generated = goSdk.generateScope(
+      ws: input,
+      isModule: true,
+      name: "module-skip",
+      clients: [],
     )
+
+    assert(exists(generated, "internal/dagger/clients/keep.txt"), "skip marker removed existing files")
+    assert(exists(generated, "dagger.gen.go") == false, "skip marker generated module code")
+    assert(exists(generated, "dagger.json"), "manifest builder did not create the legacy manifest")
+    assertContains(generated.file("dagger-module.toml").contents, "engineVersion = \"v", "manifest engine version was not regenerated")
+    assert(generated.file("dagger-module.toml").contents.contains("disableDefaultFunctionCaching") == false, "manifest preserved an old setting")
+    null
+  }
+
+  """A client-only scope writes one target package under internal/dagger/clients."""
+  standaloneClientCheck(ws: Workspace!): Void @check {
+    let scopePath = fixtureRoot + "/go-scope"
+    let input = ws
+      .withNewFile(scopePath + "/go.mod", "module example.com/app\n\ngo 1.25\n")
+      .withNewFile(scopePath + "/user.go", "package app\n")
+      .withWorkdir(scopePath)
+    let target = ws.moduleSource("/" + clientTargetPath)
+    let secondTarget = ws.moduleSource("/" + secondClientTargetPath)
+    let generated = goSdk.generateScope(
+      ws: input,
+      isModule: false,
+      name: "standalone-client",
+      clients: [target, secondTarget],
+    )
+    let targetPath = "internal/dagger/clients/client-dep"
+    let secondTargetPath = "internal/dagger/clients/client-app"
+
+    assert(exists(generated, targetPath + "/dagger.gen.go"), "core client code was not generated")
+    assert(exists(generated, targetPath + "/client-dep.gen.go"), "target client code was not generated")
+    assert(exists(generated, targetPath + "/dag/dag.gen.go"), "dag package was not generated")
+    assert(exists(generated, targetPath + "/go.mod") == false, "target client created a nested go.mod")
+    assert(exists(generated, secondTargetPath + "/client-app.gen.go"), "second target client was not generated")
     assertContains(
-      changes.after.file("notes.go").contents,
-      "user-authored",
-      "the user's notes.go must survive regeneration from the client dir",
+      generated.file(targetPath + "/dagger.gen.go").contents,
+      "ModuleSource(\"/" + clientTargetPath + "\")",
+      "local target path was not preserved",
     )
+    assertContains(generated.file("go.mod").contents, "dagger.io/dagger", "scope go.mod was not updated")
+    assert(exists(generated, "user.go"), "user source was not preserved")
 
-    null
-  }
-
-  """
-  Regenerating all workspace-registered clients should generate each one at
-  its configured path.
-  """
-  clientGenerateAllCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.generateAllClient(ws)
-
-    assertAdded(changes, clientOutputPath + "/dagger.gen.go")
-    assertAdded(changes, clientOutputPath + "/client-app.gen.go")
-    assertAdded(changes, clientOutputPath + "/go.mod")
-
-    null
-  }
-
-  """
-  Regenerating all clients is anchored at the caller's cwd, like modules(). A
-  cwd holding no registered client yields an empty changeset rather than
-  raising for a client outside the changeset root — the shape the engine
-  produces when it generates a freshly initialized module, or a single local
-  dependency, while a client lives elsewhere in the workspace.
-  """
-  clientGenerateAllCwdCheck(ws: Workspace!): Void @check {
-    # Only the workspace config is needed: the cwd filter drops every client
-    # before any module source is resolved.
-    let atModule = ws
-      .directory("/", include: ["dagger.toml"])
-      .asWorkspace(cwd: generateModulePath)
-
-    assert(
-      goSdk.generateAllClient(atModule).isEmpty,
-      "a client outside the cwd should be skipped, not staged",
+    let regenerated = goSdk.generateScope(
+      ws: generated,
+      isModule: false,
+      name: "standalone-client",
+      clients: [target, secondTarget],
     )
-
+    assert(regenerated.changes(generated).isEmpty, "standalone client regeneration was not stable")
     null
   }
 
-  """
-  A generated client must compile. The bootstrap calls
-  Workspace.moduleSource, which no released dagger.io/dagger ships yet, so
-  build against the SDK from a pinned dagger commit — catching binding and
-  go.mod bugs that file-presence checks miss.
-  """
-  clientCompilesCheck(ws: Workspace!): Void @check {
-    let changes = goSdk.generateClient(ws, module: clientModulePath, path: clientOutputPath)
-    let clientDir = changes.layer.directory(clientOutputPath)
-
+  """Two standalone target packages compile in one Go module."""
+  standaloneClientCompilesCheck(ws: Workspace!): Void @check {
+    let scopePath = fixtureRoot + "/go-scope"
+    let input = ws
+      .withNewFile(scopePath + "/go.mod", "module example.com/compile\n\ngo 1.25\n")
+      .withNewFile(scopePath + "/main.go", "package compile\n")
+      .withWorkdir(scopePath)
+    let generated = goSdk.generateScope(
+      ws: input,
+      isModule: false,
+      name: "standalone-compile",
+      clients: [
+        ws.moduleSource("/" + clientTargetPath),
+        ws.moduleSource("/" + secondClientTargetPath),
+      ],
+    )
     let out = container
       .from("golang:1.26-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/dagger-sdk", git("https://github.com/dagger/dagger").commit(daggerSourceRef).tree.directory("sdk/go"))
-      .withDirectory("/client", clientDir)
-      .withWorkdir("/client")
+      .withDirectory(
+        "/dagger-sdk",
+        git("https://github.com/dagger/dagger")
+          .commit(daggerSourceRef)
+          .tree
+          .directory("sdk/go"),
+      )
+      .withDirectory("/src", generated.directory("."))
+      .withWorkdir("/src")
       .withExec(["go", "mod", "edit", "-replace", "dagger.io/dagger=/dagger-sdk"])
       .withExec(["go", "mod", "tidy"])
       .withExec(["go", "build", "./..."])
@@ -646,11 +213,35 @@ type E2e {
     null
   }
 
-  """
-  The codegen helper must pass its own unit + golden tests. Runs `go test` in
-  a container so `dagger check` covers the codegen logic, not just its
-  end-to-end output.
-  """
+  """Regeneration preserves existing generated and user-owned client packages."""
+  standaloneClientPreservationCheck(ws: Workspace!): Void @check {
+    let scopePath = fixtureRoot + "/go-scope"
+    let input = ws
+      .withNewFile(scopePath + "/go.mod", "module example.com/preservation\n\ngo 1.25\n")
+      .withNewFile(scopePath + "/user.go", "package preservation\n")
+      .withNewFile(scopePath + "/internal/dagger/clients/custom/user.go", "package custom\n")
+      .withWorkdir(scopePath)
+    let target = ws.moduleSource("/" + clientTargetPath)
+    let withClient = goSdk.generateScope(
+      ws: input,
+      isModule: false,
+      name: "standalone-preservation",
+      clients: [target],
+    )
+    let withoutClient = goSdk.generateScope(
+      ws: withClient,
+      isModule: false,
+      name: "standalone-preservation",
+      clients: [],
+    )
+
+    assert(exists(withoutClient, "internal/dagger/clients/client-dep/dagger.gen.go"), "regeneration deleted generated client code")
+    assert(exists(withoutClient, "internal/dagger/clients/custom/user.go"), "regeneration deleted user-owned client code")
+    assert(exists(withoutClient, "user.go"), "regeneration deleted user source")
+    null
+  }
+
+  """The client code generator unit tests pass."""
   helperTestsCheck(ws: Workspace!): Void @check {
     let out = container
       .from("golang:1.25-alpine")

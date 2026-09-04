@@ -1,41 +1,64 @@
 """
-Manage Dagger modules that use the Go SDK.
+Manage Dagger modules and module clients that use the Go SDK.
 """
 type GoSdk {
-  """
-  Marker filename that skips generate when found at or above a Go SDK module root.
-  """
+  """Marker filename that disables regeneration for an existing module scope."""
   skipGenerateFilename: String! = ".dagger-go-sdk-skip-generate"
 
-  """
-  Runtime source to write into modules created by this SDK.
-  """
-  targetRuntime: String! { "go" }
+  """Starter template used when a new module scope is initialized."""
+  template: String! = "default"
 
-  """
-  Starter used by init when none is named.
-  """
-  let defaultTemplate: String! = "default"
-
-  """
-  Return every managed Go SDK module in the client's cwd scope: every module at
-  or below the cwd, plus the nearest enclosing module when the cwd itself is not
-  a managed module. The engine selects this directly from the workspace's
-  registered SDK modules; no filesystem discovery is required.
-  """
-  modules(ws: Workspace!): [Mod!]! {
-    currentModule
-      .asSDK(workspace: ws)
-      .modules.{{path}}
-      .map { module => Mod(rootPath: module.path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
+  """Return the nearest Go scope that contains Workspace.cwd."""
+  detectScope(ws: Workspace!): String! {
+    let goMod = ws.findUp("go.mod")
+    if (goMod == null) {
+      ""
+    } else {
+      configDir(goMod, "go.mod")
+    }
   }
 
   """
-  Return init templates tracked by this module.
+  Generate the complete module and client state for one SDK scope.
 
-  Templates live under templates/<name> and are materialized into the new
-  module. Init picks one by name, or the module default when none is named.
+  Every scope generates standalone clients in its nearest Go scope. Module
+  scopes also use the built-in Go module generator.
   """
+  generateScope(
+    ws: Workspace!,
+    isModule: Boolean!,
+    name: String!,
+    clients: [ModuleSource!]!,
+  ): Workspace! {
+    let hadManifest = exists(ws, "dagger-module.toml") or exists(ws, "dagger.json")
+    let initialized = if (isModule and !hadManifest) {
+      ws.withDirectory(".", renderedTemplate(name, selectedTemplate))
+    } else {
+      ws
+    }
+
+    if (isModule) {
+      let manifest = generatedManifest(initialized, name, clients)
+      let configured = initialized.withDirectory(".", manifest.directory)
+
+      # A new module must always get its initial generated files. For an
+      # existing module, preserve the current skip-marker behavior.
+      if (hadManifest and hasGenerateSkip(configured)) {
+        configured
+      } else {
+        # ModuleSource supplies only the built-in Go code generator. Remove
+        # its manifest output and write the configured builder output last.
+        let generated = configured
+          .withDirectory(".", generatedModuleCode(configured))
+          .withDirectory(".", manifest.directory)
+        generateStandaloneClients(generated, clients)
+      }
+    } else {
+      generateStandaloneClients(initialized, clients)
+    }
+  }
+
+  """Return init templates tracked by this module."""
   templates: [Template!]! {
     if (currentModule.source.exists("templates")) {
       let root = currentModule.source.directory("templates")
@@ -46,247 +69,109 @@ type GoSdk {
         )
       }
     } else {
-      directory.entries.map { name =>
-        Template(
-          name: name,
-          source: directory,
-        )
-      }
+      []
     }
   }
 
+  let selectedTemplate: String! {
+    if (template == "") { "default" } else { template }
+  }
+
   let normalizePath(p: String!): String! {
-    let trimmed = p.trimPrefix("./").trimPrefix("/").trimSuffix("/")
+    let trimmed = p.trimPrefix("/").trimPrefix("./").trimSuffix("/")
     if (trimmed == "") { "." } else { trimmed }
-  }
-
-  let pathDepth(p: String!): Int! {
-    if (p == ".") { 0 } else { p.split("/").length }
-  }
-
-  let pathContains(base: String!, p: String!): Boolean! {
-    base == "." or p == base or p.hasPrefix(base + "/")
   }
 
   let configDir(foundPath: String!, marker: String!): String! {
     normalizePath(foundPath.trimPrefix("/").trimSuffix(marker))
   }
 
-  """
-  Return the deepest workspace-managed module containing `path`, or null when
-  this SDK manages none of its ancestors.
-
-  The workspace's [[modules.<sdk>.as-sdk.modules]] entries are the source of
-  truth for SDK-managed modules, so membership needs no config sniffing.
-  """
-  let managedBase(ws: Workspace!, path: String!): String {
-    # asSDK raises when this module is not installed as an SDK in the active
-    # workspace, which is the normal case for a legacy dagger.json-only repo.
-    # Selecting `path` executes the query, so it must sit inside the guard.
-    let managed = currentModule.asSDK(workspace: ws).modules.{{path}} rescue []
-
-    managed
-      .map { module => normalizePath(module.path) }
-      .filter { base => pathContains(base, path) }
-      .reduce(null) { best, base =>
-        if (best == null) {
-          base
-        } else if (pathDepth(base) > pathDepth(best)) {
-          base
-        } else {
-          best
-        }
-      }
+  let exists(ws: Workspace!, path: String!): Boolean! {
+    ws.directory(".", include: [path]).exists(path)
   }
 
-  """
-  Return the Go SDK module at or above a workspace path.
+  let hasGenerateSkip(ws: Workspace!): Boolean! {
+    ws.findUp(skipGenerateFilename) != null
+  }
 
-  When `findUp` is true, `path` may point inside the module.
-  """
-  mod(ws: Workspace!, path: String! = ".", findUp: Boolean! = true): Mod! {
-    let modPath = if (findUp) {
-      let needle = normalizePath(path)
-
-      let asSdkBase = managedBase(ws, needle)
-      let foundToml = ws.findUp("dagger-module.toml", path)
-      let foundJson = ws.findUp("dagger.json", path)
-      let tomlBase = if (foundToml == null) { null } else {
-        configDir(
-          foundToml,
-          "dagger-module.toml",
-        )
-      }
-      let jsonBase = if (foundJson == null) { null } else {
-        configDir(
-          foundJson,
-          "dagger.json",
-        )
-      }
-
-      # Every candidate is an ancestor of `path`, so they lie on one chain and
-      # the deepest is the owning module. Resolving each source separately and
-      # falling back in order would let a shallow as-sdk entry or an ancestor's
-      # dagger-module.toml shadow a deeper module in a partially-migrated repo.
-      let asSdkDepth = baseDepth(asSdkBase)
-      let tomlDepth = baseDepth(tomlBase)
-      let jsonDepth = baseDepth(jsonBase)
-      let best = maxDepth(maxDepth(asSdkDepth, tomlDepth), jsonDepth)
-
-      if (asSdkBase != null and asSdkDepth == best) {
-        asSdkBase
-      } else if (tomlBase != null and tomlDepth == best) {
-        resolveTomlBase(ws, tomlBase, path)
-      } else if (jsonBase != null and jsonDepth == best) {
-        resolveJsonBase(ws, jsonBase, path)
+  """Generate standalone clients at the nearest Go scope without changing cwd."""
+  let generateStandaloneClients(
+    ws: Workspace!,
+    clients: [ModuleSource!]!,
+  ): Workspace! {
+    let originalScope = normalizePath(ws.cwd)
+    clients.reduce(ws) { current, target =>
+      let goScope = detectScope(current)
+      if (goScope == "") {
+        raise "cannot generate Go clients without a go.mod"
       } else {
-        raise "no Dagger module found containing path: " + path
+        generateStandaloneClient(current.withWorkdir(goScope), target)
+          .withWorkdir(originalScope)
       }
-    } else {
-      path.trimPrefix("/")
-    }
-
-    Mod(
-      rootPath: modPath,
-      ws: ws,
-      skipGenerateFilename: skipGenerateFilename,
-    )
-  }
-
-  let baseDepth(base: String): Int! {
-    if (base == null) { -1 } else { pathDepth(base) }
-  }
-
-  let maxDepth(a: Int!, b: Int!): Int! {
-    if (b > a) { b } else { a }
-  }
-
-  let resolveTomlBase(ws: Workspace!, base: String!, path: String!): String! {
-    let runtimeSource = tomlRuntimeSource(ws, base)
-    if (runtimeSource == "go") {
-      base
-    } else if (runtimeSource == "") {
-      raise "Dagger module does not use the Go SDK: " + path
-    } else {
-      raise "Dagger module does not use the Go SDK: " + path + " (runtime source: " + runtimeSource + ")"
     }
   }
 
-  let resolveJsonBase(ws: Workspace!, base: String!, path: String!): String! {
-    let configPath = if (base == ".") { "dagger.json" } else { base + "/dagger.json" }
-    if (ws
-      .directory("/", include: [configPath])
-      .file(configPath)
-      .search(
-        pattern: "\"sdk\"\\s*:\\s*\\{[^}]*\"source\"\\s*:\\s*\"go\"",
-        multiline: true,
-        dotall: true,
-        limit: 1,
-      ).{{id}}
-      .length == 0) {
-      raise "Dagger module does not use the Go SDK: " + path
-    } else {
-      base
-    }
-  }
-
-  """
-  Return the runtime source declared by a module's dagger-module.toml, or ""
-  when it declares none.
-
-  Only a quoted `source` on its own line of a literal [runtime] section is
-  recognized; inline tables and other TOML spellings read as no declaration,
-  which callers reject rather than mistake for Go.
-  """
-  let tomlRuntimeSource(ws: Workspace!, base: String!): String! {
-    let configPath = if (base == ".") { "dagger-module.toml" } else { base + "/dagger-module.toml" }
-    let matches = ws
-      .directory("/", include: [configPath])
-      .file(configPath)
-      .search(
-        pattern: "^[ \\t]*\\[runtime\\][^\\[]*?^[ \\t]*source[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*')",
-        multiline: true,
-        limit: 1,
-      ).{{matchedLines}}
-
-    matches
-      .map { m => runtimeSourceValue(m.matchedLines) }
-      .reduce("") { acc, source => if (acc == "") { source } else { acc } }
-  }
-
-  """
-  Extract the runtime source value out of a matched [runtime] block.
-
-  The match stops at the first uncommented assignment, so the value lives on
-  the block's last line, ahead of any trailing comment.
-  """
-  let runtimeSourceValue(block: String!): String! {
-    let sourceLine = block.trimSpace.split("\n").reduce("") { acc, line => line }
-    let assignment = sourceLine.split("#").reduce("") { acc, part => if (acc == "") { part } else { acc } }.trimSpace
-    let quote = if (assignment.trimSuffix("'") == assignment) { "\"" } else { "'" }
-
-    assignment.trimSuffix(quote).split(quote).reduce("") { acc, part => part }
-  }
-
-  """
-  Initialize Go-owned files for a new Dagger module.
-
-  The engine resolves the destination `path` and owns the module's config; this
-  function only returns the SDK-owned starter source to layer onto `path`.
-
-  Pass `template` to pick a starter under templates/<template>; it defaults to
-  `default` (a small working module).
-  """
-  initModule(
+  """Create both manifests from the scope inputs and SDK defaults."""
+  let generatedManifest(
     ws: Workspace!,
     name: String!,
-    path: String!,
-    """
-    Starter to materialize from templates/<template>: `default` for a small working module, `empty` for a bare struct, `legacy` for the pre-1.0 scaffold.
-    """
-    template: String! = defaultTemplate,
-  ): Changeset! {
-    let rawPath = path.trimPrefix("./").trimPrefix("/")
-    let modPath = if (rawPath == "" or rawPath == ".") {
-      "."
-    } else if (rawPath == ".." or rawPath.trimPrefix("../") != rawPath) {
-      raise "path escapes workspace: " + rawPath
-    } else {
-      rawPath.trimSuffix("/")
-    }
+    clients: [ModuleSource!]!,
+  ): ModuleManifest! {
+    let base = moduleManifest
+      .withName(name)
+      .withLegacyGoRuntime
 
-    # An empty name means "the default", not the templates/ directory itself —
-    # which exists, so it would pass the check below and render every starter as
-    # a subdirectory of the new module.
-    let starter = if (template == "") { defaultTemplate } else { template }
-
-    if (currentModule.source.exists("templates/" + starter) == false) {
-      raise "unknown init template: " + starter
-    } else {
-      # Init must never remove a user's files, so the starter layers onto
-      # whatever is already at the destination.
-      ws.withDirectory("/" + modPath, renderedTemplate(name, starter)).changes(ws)
+    clients.reduce(base) { manifest, target =>
+      manifest.withDependency(
+        name: target.moduleOriginalName,
+        source: dependencySource(ws, target),
+        pin: target.pin,
+      )
     }
   }
 
-  """
-  Seed the SDK-owned files a new Go client needs at `path` — there are none.
-
-  The engine records the managed client in workspace config and materializes
-  the client itself through the `@generate` hook, so this returns no changes.
-  """
-  initClient(
-    ws: Workspace!,
-    path: String!,
-    module: String!,
-    dev: Boolean! = false,
-  ): Changeset! {
-    ws.changes(ws)
+  """Return the target address to store in both module manifests."""
+  let dependencySource(ws: Workspace!, target: ModuleSource!): String! {
+    if (target.kind == ModuleSourceKind.GIT_SOURCE) {
+      target.asString
+    } else {
+      let relative = Path(normalizePath(target.sourceRootSubpath))
+        .relativeTo(Path(normalizePath(ws.cwd)))
+      if (relative == null) {
+        raise "cannot resolve client module path " + target.sourceRootSubpath +
+          " from scope " + ws.cwd
+      } else {
+        relative.string
+      }
+    }
   }
 
-  """
-  Build the engine-free client codegen helper.
-  """
+  """Run built-in Go codegen and discard its manifest files."""
+  let generatedModuleCode(ws: Workspace!): Directory! {
+    let scopePath = normalizePath(ws.cwd)
+    let sourcePath = if (scopePath == ".") { "/" } else { "/" + scopePath }
+    let generatedRoot = ws
+      .withWorkdir(".")
+      .moduleSource(sourcePath)
+      .generatedContextDirectory
+    let generated = if (scopePath == ".") {
+      generatedRoot
+    } else {
+      generatedRoot.directory(scopePath)
+    }
+    let withoutTOML = if (generated.exists("dagger-module.toml")) {
+      generated.withoutFile("dagger-module.toml")
+    } else {
+      generated
+    }
+    if (withoutTOML.exists("dagger.json")) {
+      withoutTOML.withoutFile("dagger.json")
+    } else {
+      withoutTOML
+    }
+  }
+
+  """Build the engine-free standalone client generator."""
   let codegenBuilder: Container! {
     container
       .from("golang:1.25-alpine")
@@ -298,153 +183,55 @@ type GoSdk {
       .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "."])
   }
 
-  """
-  Serialize the bound-module provenance the codegen helper embeds in the
-  generated serve bootstrap.
-  """
+  """Serialize the target-module location used by the generated bootstrap."""
   let boundModuleJSON(kindJSON: String!, path: String!, ref: String!, pin: String!): String! {
     "{\"kind\":" + kindJSON + ",\"path\":" + JSON.encode(path) + ",\"ref\":" + JSON.encode(ref) + ",\"pin\":" + JSON.encode(pin) + "}"
   }
 
-  """
-  Run client codegen: schema + meta in, generated client out. The existing
-  client directory seeds the output so user files survive and an existing
-  go.mod keeps its module name and replace directives (only the
-  dagger.io/dagger pin is refreshed).
-  """
-  let clientDirectory(
-    schemaJSON: String!,
-    moduleName: String!,
-    engineVersion: String!,
-    kindJSON: String!,
-    path: String!,
-    ref: String!,
-    pin: String!,
-    existing: Directory!,
-  ): Directory! {
-    let metaJson = "{\"moduleName\":" + JSON.encode(moduleName) + ",\"engineVersion\":" + JSON.encode(engineVersion) + ",\"module\":" + boundModuleJSON(kindJSON, path, ref, pin) + "}"
-    codegenBuilder
-      .withNewFile("/schema.json", schemaJSON)
-      .withNewFile("/meta.json", metaJson)
-      .withDirectory("/out", existing)
-      .withExec(["codegen", "--introspection-json-path", "/schema.json", "--client-meta-path", "/meta.json", "--output", "/out"])
+  """Generate one standalone target client in its final scope-relative path."""
+  let generateStandaloneClient(ws: Workspace!, target: ModuleSource!): Workspace! {
+    let targetName = target.moduleOriginalName
+    let outputPath = "internal/dagger/clients/" + targetName
+    let metaJSON = "{\"moduleName\":" + JSON.encode(targetName) +
+      ",\"engineVersion\":" + JSON.encode(target.engineVersion) +
+      ",\"module\":" + boundModuleJSON(
+        JSON.encode(target.kind),
+        target.sourceRootSubpath,
+        target.asString,
+        target.pin,
+      ) + "}"
+    let generated = codegenBuilder
+      .withFile("/schema.json", target.clientSchemaIntrospectionJSON)
+      .withNewFile("/meta.json", metaJSON)
+      .withDirectory("/out", ws.directory("."))
+      .withExec([
+        "codegen",
+        "--introspection-json-path", "/schema.json",
+        "--client-meta-path", "/meta.json",
+        "--output", "/out/" + outputPath,
+        "--module-root", "/out",
+      ])
       .directory("/out")
+
+    ws.withDirectory(".", generated)
   }
 
-  """
-  Existing contents of a workspace directory, empty when it doesn't exist yet.
-  """
-  let existingDir(ws: Workspace!, path: String!): Directory! {
-    let filtered = ws.directory("/", include: [path + "/**"])
-    if (filtered.exists(path)) {
-      filtered.directory(path)
+  """Render one templates/<name> starter for a new module."""
+  let renderedTemplate(name: String!, selected: String!): Directory! {
+    if (currentModule.source.exists("templates/" + selected) == false) {
+      raise "unknown init template: " + selected
     } else {
-      directory
+      container
+        .from("golang:1.25-alpine")
+        .withoutEntrypoint
+        .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+        .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+        .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
+        .withDirectory("/template", currentModule.source.directory("templates/" + selected))
+        .withWorkdir("/helper")
+        .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
+        .withExec(["render-template", name, "/template", "/rendered"])
+        .directory("/rendered")
     }
-  }
-
-  """
-  Whether a client's bound-module ref points into the workspace rather than
-  at a remote module.
-  """
-  let isLocalModuleRef(ref: String!): Boolean! {
-    ref.hasPrefix("/") or ref.hasPrefix(".") or (ref.contains(".") == false)
-  }
-
-  """
-  Generate a typed Go client for the module at `module`, written to `path`.
-  """
-  pub generateClient(ws: Workspace!, module: String!, path: String!): Changeset! {
-    let modSrc = ws.moduleSource("/" + module)
-    let generated = clientDirectory(
-      modSrc.clientSchemaIntrospectionJSON.contents,
-      modSrc.moduleOriginalName,
-      modSrc.engineVersion,
-      JSON.encode(modSrc.kind),
-      module,
-      modSrc.asString,
-      modSrc.pin,
-      existingDir(ws, path),
-    )
-    ws.withNewDirectory("/" + path, generated).changes(ws)
-  }
-
-  """
-  Regenerate every Go client registered on this SDK that is visible from the
-  client's current location.
-
-  Scoped by cwd like `generate`: a returned changeset may only carry paths under
-  the caller's location, so regenerating from a subdirectory — or nested under
-  the engine's per-dependency generation, where the cwd is the dependency —
-  skips clients that live elsewhere in the workspace.
-  """
-  pub generateAllClient(ws: Workspace!): Changeset! @generate {
-    let cwd = normalizePath(ws.cwd)
-    ws.sdk(name: currentModule.name).clients.{{name, source}}
-      .filter { client => pathContains(cwd, normalizePath(client.name)) }
-      .reduce(ws) { stagedWs, client =>
-        let generated = if (isLocalModuleRef(client.source)) {
-          # A local module's cached source can miss live edits, so re-resolve
-          # it fresh from the workspace; git modules are pinned/immutable.
-          let src = ws.moduleSource("/" + client.source)
-          clientDirectory(
-            src.clientSchemaIntrospectionJSON.contents,
-            src.moduleOriginalName,
-            src.engineVersion,
-            JSON.encode(src.kind),
-            client.source,
-            src.asString,
-            src.pin,
-            existingDir(ws, client.name),
-          )
-        } else {
-          let m = moduleSource(refString: client.source)
-          clientDirectory(
-            m.clientSchemaIntrospectionJSON.contents,
-            m.moduleOriginalName,
-            m.engineVersion,
-            JSON.encode(m.kind),
-            # Git: unused (ref/pin drive the serve).
-            client.source,
-            m.asString,
-            m.pin,
-            existingDir(ws, client.name),
-          )
-        }
-        stagedWs.withNewDirectory("/" + client.name, generated)
-      }
-      .changes(ws)
-  }
-
-  """
-  Render the templates/<template> starter with the requested module name.
-  """
-  let renderedTemplate(name: String!, template: String!): Directory! {
-    container
-      .from("golang:1.25-alpine")
-      .withoutEntrypoint
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
-      .withDirectory("/template", currentModule.source.directory("templates/" + template))
-      .withWorkdir("/helper")
-      .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
-      .withExec(["render-template", name, "/template", "/rendered"])
-      .directory("/rendered")
-  }
-
-  """
-  Generate every managed Go SDK module visible from the client's current
-  location: running from a subdirectory generates only the project you're in
-  and the projects beneath it.
-
-  Modules with the generate skip marker are skipped.
-  """
-  generate(ws: Workspace!): Changeset! @generate {
-    changeset.withChangesets(
-      modules(ws)
-        .filter { !_.skipGenerate(ws) }
-        .map { mod => mod.generate(ws) },
-    )
   }
 }

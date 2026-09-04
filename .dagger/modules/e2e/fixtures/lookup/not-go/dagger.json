@@ -1,7 +1,0 @@
-{
-  "name": "not-go",
-  "engineVersion": "latest",
-  "sdk": {
-    "source": "dang"
-  }
-}

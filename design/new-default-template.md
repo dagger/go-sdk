@@ -1,7 +1,7 @@
 # New default Go init template
 
-> **Status: implemented.** See `templates/default/`, the `initModule` wiring in
-> `go-sdk.dang`, and the `e-2-e:template-check` test.
+> **Status: implemented.** See `templates/default/`, the `generateScope` wiring
+> in `go-sdk.dang`, and the `e-2-e:module-init-check` test.
 
 This is the Go counterpart of the TypeScript SDK's
 [new default template](https://github.com/dagger/typescript-sdk/pull/10); the
@@ -106,23 +106,9 @@ wants the old output.
 
 ## Implementation notes
 
-Changes in [`go-sdk.dang`](../go-sdk.dang):
-
-- Replace `initModule`'s `legacyTemplate: Boolean! = false` with
-  `template: String! = defaultTemplate`. The CLI flag goes from
-  `--legacy-template` to `--template <name>`, which is what the TypeScript SDK
-  already accepts and what the `templates` field has always advertised. An
-  unknown name is rejected up front rather than silently rendering nothing, and
-  an empty name means the default (the `templates/` directory itself exists, so
-  it would otherwise render every starter as a subdirectory).
-- Generalize `renderedLegacyTemplate` (renamed `renderedTemplate`) so it renders
-  any named starter rather than hardcoding `templates/legacy`.
-- Drop the inline Dang-interpolated `main.go` that used to serve as the default.
-  It existed to avoid pulling a Go container just to substitute one identifier,
-  but the new default needs `{{ .ModuleImport }}` as well, so init goes through
-  `render-template` either way. Making `empty` a real template file too keeps
-  every starter on one path. `util.dang`'s `ToCamel`, its only caller, goes with
-  it.
+[`go-sdk.dang`](../go-sdk.dang) exposes the templates through `templates`.
+`generateScope` selects the configured template and rejects an unknown name.
+All templates use the same `renderedTemplate` helper.
 
 `render-template` substitutes `{{ .ModuleName }}` (raw), `{{ .ModuleType }}`
 (camel-cased, the struct name), and `{{ .ModuleImport }}` (`dagger/<kebab-name>`,
