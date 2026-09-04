@@ -106,9 +106,8 @@ wants the old output.
 
 ## Implementation notes
 
-[`go-sdk.dang`](../go-sdk.dang) exposes the templates through `templates`.
-`generateScope` selects the configured template and rejects an unknown name.
-All templates use the same `renderedTemplate` helper.
+[`go-sdk.dang`](../go-sdk.dang) selects the configured template and rejects an
+unknown name. All templates use the same `renderedTemplate` helper.
 
 `render-template` substitutes `{{ .ModuleName }}` (raw), `{{ .ModuleType }}`
 (camel-cased, the struct name), and `{{ .ModuleImport }}` (`dagger/<kebab-name>`,

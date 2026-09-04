@@ -33,7 +33,7 @@ type GoSdk {
   ): Workspace! {
     let hadManifest = exists(ws, "dagger-module.toml") or exists(ws, "dagger.json")
     let initialized = if (isModule and !hadManifest) {
-      ws.withDirectory(".", renderedTemplate(name, selectedTemplate))
+      ws.withDirectory(".", renderedTemplate(name, template))
     } else {
       ws
     }
@@ -51,25 +51,6 @@ type GoSdk {
     } else {
       generateStandaloneClients(initialized, clients)
     }
-  }
-
-  """Return init templates tracked by this module."""
-  templates: [Template!]! {
-    if (currentModule.source.exists("templates")) {
-      let root = currentModule.source.directory("templates")
-      root.entries.map { name =>
-        Template(
-          name: name.trimSuffix("/"),
-          source: root.directory(name),
-        )
-      }
-    } else {
-      []
-    }
-  }
-
-  let selectedTemplate: String! {
-    if (template == "") { "default" } else { template }
   }
 
   let normalizePath(p: String!): String! {
@@ -183,8 +164,7 @@ type GoSdk {
   let generateStandaloneClient(ws: Workspace!, target: ModuleSource!): Workspace! {
     let targetName = target.moduleOriginalName
     let outputPath = "internal/dagger/clients/" + targetName
-    let metaJSON = "{\"moduleName\":" + JSON.encode(targetName) +
-      ",\"engineVersion\":" + JSON.encode(target.engineVersion) +
+    let metaJSON = "{\"engineVersion\":" + JSON.encode(target.engineVersion) +
       ",\"module\":" + boundModuleJSON(
         JSON.encode(target.kind),
         target.sourceRootSubpath,

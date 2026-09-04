@@ -7,9 +7,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
-	"strings"
 	"text/template"
 
 	"github.com/iancoleman/strcase"
@@ -25,8 +23,6 @@ const (
 	// ClientGenFile is the path to write the codegen for the dagger API
 	ClientGenFile = "dagger.gen.go"
 )
-
-var goVersion = strings.TrimPrefix(runtime.Version(), "go")
 
 type GoGenerator struct {
 	Config generator.Config

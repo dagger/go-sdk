@@ -1,6 +1,6 @@
-// Command codegen generates Go client code from a pre-computed introspection
-// schema. A standalone client gets its own go.mod. Package mode writes into an
-// existing Go module and updates the parent go.mod instead.
+// Command codegen generates a Go client package from a pre-computed
+// introspection schema. It writes into an existing Go module and updates that
+// module's go.mod.
 //
 // It is intentionally engine-free: the schema and the bound module's metadata
 // are supplied as files, so no nested engine session is opened.
@@ -35,7 +35,6 @@ func main() {
 // client.moduleSource and writes to --client-meta-path. It mirrors the subset
 // the client generator needs (see generator.ClientGeneratorConfig).
 type clientMeta struct {
-	ModuleName    string                `json:"moduleName"`
 	EngineVersion string                `json:"engineVersion"`
 	Module        generator.BoundModule `json:"module"`
 }
@@ -57,14 +56,20 @@ func validateBoundModuleKind(m generator.BoundModule) error {
 func run() error {
 	var (
 		introspectionPath = flag.String("introspection-json-path", "", "path to the introspection schema JSON")
-		clientMetaPath    = flag.String("client-meta-path", "", "path to the client meta JSON (name, engineVersion, bound module)")
+		clientMetaPath    = flag.String("client-meta-path", "", "path to the client meta JSON (engine version and bound module)")
 		outputDir         = flag.String("output", ".", "output directory for the generated client")
-		moduleRoot        = flag.String("module-root", "", "root of the existing Go module that owns the generated package")
+		moduleRoot        = flag.String("module-root", "", "root of the Go module that owns the generated package")
 	)
 	flag.Parse()
 
 	if *introspectionPath == "" {
 		return fmt.Errorf("--introspection-json-path is required")
+	}
+	if *clientMetaPath == "" {
+		return fmt.Errorf("--client-meta-path is required")
+	}
+	if *moduleRoot == "" {
+		return fmt.Errorf("--module-root is required")
 	}
 
 	introspectionJSON, err := os.ReadFile(*introspectionPath)
@@ -79,38 +84,29 @@ func run() error {
 		return fmt.Errorf("introspection json has no __schema")
 	}
 
-	clientConfig := &generator.ClientGeneratorConfig{}
-	if *clientMetaPath != "" {
-		metaJSON, err := os.ReadFile(*clientMetaPath)
-		if err != nil {
-			return fmt.Errorf("read client meta json: %w", err)
-		}
-		var meta clientMeta
-		if err := json.Unmarshal(metaJSON, &meta); err != nil {
-			return fmt.Errorf("unmarshal client meta json: %w", err)
-		}
-		clientConfig.ModuleName = meta.ModuleName
-		clientConfig.EngineVersion = meta.EngineVersion
-		clientConfig.BoundModule = meta.Module
-
-		if err := validateBoundModuleKind(meta.Module); err != nil {
-			return err
-		}
+	metaJSON, err := os.ReadFile(*clientMetaPath)
+	if err != nil {
+		return fmt.Errorf("read client meta json: %w", err)
+	}
+	var meta clientMeta
+	if err := json.Unmarshal(metaJSON, &meta); err != nil {
+		return fmt.Errorf("unmarshal client meta json: %w", err)
+	}
+	if err := validateBoundModuleKind(meta.Module); err != nil {
+		return err
 	}
 
+	packageImport, err := packageImportPath(*moduleRoot, *outputDir)
+	if err != nil {
+		return err
+	}
 	cfg := generator.Config{
-		OutputDir:    *outputDir,
-		ClientConfig: clientConfig,
+		OutputDir:     *outputDir,
+		PackageImport: packageImport,
+		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
 	}
-	if *moduleRoot != "" {
-		packageImport, err := packageImportPath(*moduleRoot, *outputDir)
-		if err != nil {
-			return err
-		}
-		cfg.PackageImport = packageImport
-		if err := updateModuleGoMod(*moduleRoot, clientConfig.EngineVersion); err != nil {
-			return err
-		}
+	if err := updateModuleGoMod(*moduleRoot, meta.EngineVersion); err != nil {
+		return err
 	}
 
 	generator.SetSchemaParents(resp.Schema)
