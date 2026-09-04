@@ -112,28 +112,6 @@ type E2e {
     null
   }
 
-  """The generate skip marker protects codegen but not generated manifests."""
-  moduleSkipCheck(ws: Workspace!): Void @check {
-    let scopePath = fixtureRoot + "/skip/app"
-    let input = ws
-      .withNewFile(scopePath + "/dagger-module.toml", "name = \"module-skip\"\nengineVersion = \"latest\"\ndisableDefaultFunctionCaching = true\n\n[runtime]\nsource = \"go\"\n")
-      .withNewFile(scopePath + "/internal/dagger/clients/keep.txt", "keep me\n")
-      .withWorkdir(scopePath)
-    let generated = goSdk.generateScope(
-      ws: input,
-      isModule: true,
-      name: "module-skip",
-      clients: [],
-    )
-
-    assert(exists(generated, "internal/dagger/clients/keep.txt"), "skip marker removed existing files")
-    assert(exists(generated, "dagger.gen.go") == false, "skip marker generated module code")
-    assert(exists(generated, "dagger.json"), "manifest builder did not create the legacy manifest")
-    assertContains(generated.file("dagger-module.toml").contents, "engineVersion = \"v", "manifest engine version was not regenerated")
-    assert(generated.file("dagger-module.toml").contents.contains("disableDefaultFunctionCaching") == false, "manifest preserved an old setting")
-    null
-  }
-
   """A client-only scope writes one target package under internal/dagger/clients."""
   standaloneClientCheck(ws: Workspace!): Void @check {
     let scopePath = fixtureRoot + "/go-scope"

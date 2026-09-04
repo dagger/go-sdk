@@ -2,10 +2,11 @@
 Manage Dagger modules and module clients that use the Go SDK.
 """
 type GoSdk {
-  """Marker filename that disables regeneration for an existing module scope."""
-  skipGenerateFilename: String! = ".dagger-go-sdk-skip-generate"
+  """
+  Starter template used when a new module scope is initialized.
 
-  """Starter template used when a new module scope is initialized."""
+  Valid values are `default`, `empty`, and `legacy`.
+  """
   template: String! = "default"
 
   """Return the nearest Go scope that contains Workspace.cwd."""
@@ -41,18 +42,12 @@ type GoSdk {
       let manifest = generatedManifest(initialized, name, clients)
       let configured = initialized.withDirectory(".", manifest.directory)
 
-      # A new module must always get its initial generated files. For an
-      # existing module, preserve the current skip-marker behavior.
-      if (hadManifest and hasGenerateSkip(configured)) {
-        configured
-      } else {
-        # ModuleSource supplies only the built-in Go code generator. Remove
-        # its manifest output and write the configured builder output last.
-        let generated = configured
-          .withDirectory(".", generatedModuleCode(configured))
-          .withDirectory(".", manifest.directory)
-        generateStandaloneClients(generated, clients)
-      }
+      # ModuleSource supplies only the built-in Go code generator. Remove
+      # its manifest output and write the configured builder output last.
+      let generated = configured
+        .withDirectory(".", generatedModuleCode(configured))
+        .withDirectory(".", manifest.directory)
+      generateStandaloneClients(generated, clients)
     } else {
       generateStandaloneClients(initialized, clients)
     }
@@ -88,10 +83,6 @@ type GoSdk {
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
-  }
-
-  let hasGenerateSkip(ws: Workspace!): Boolean! {
-    ws.findUp(skipGenerateFilename) != null
   }
 
   """Generate standalone clients at the nearest Go scope without changing cwd."""

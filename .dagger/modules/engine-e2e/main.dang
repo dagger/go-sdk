@@ -30,7 +30,6 @@ type EngineE2e {
       "dagger", "-m", ".dagger/modules/e2e",
       "check",
       "e-2-e:module-client-check",
-      "e-2-e:module-skip-check",
       "e-2-e:standalone-client-preservation-check",
     ])
 
