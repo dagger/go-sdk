@@ -22,13 +22,13 @@ type E2e {
     ws.directory(".", include: [path]).exists(path)
   }
 
-  """Scope detection returns the nearest parent Go module."""
-  detectScopeCheck(ws: Workspace!): Void @check {
+  """Client root discovery returns the nearest parent Go module."""
+  findClientRootCheck(ws: Workspace!): Void @check {
     let scopePath = fixtureRoot + "/client/existing"
     let nested = ws.withWorkdir(scopePath)
 
-    let detected = goSdk.detectScope(nested)
-    assert(detected == scopePath, "detectScope returned " + detected + ", expected " + scopePath)
+    let root = goSdk.findClientRoot(nested)
+    assert(root == scopePath, "findClientRoot returned " + root + ", expected " + scopePath)
     null
   }
 

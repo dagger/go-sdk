@@ -9,8 +9,8 @@ type GoSdk {
   """
   template: String! = "default"
 
-  """Return the nearest Go scope that contains Workspace.cwd."""
-  detectScope(ws: Workspace!): String! {
+  """Find the nearest Go module root for client generation from Workspace.cwd."""
+  findClientRoot(ws: Workspace!): String! {
     let goMod = ws.findUp("go.mod")
     if (goMod == null) {
       ""
@@ -73,7 +73,7 @@ type GoSdk {
   ): Workspace! {
     let originalScope = normalizePath(ws.cwd)
     clients.reduce(ws) { current, target =>
-      let goScope = detectScope(current)
+      let goScope = findClientRoot(current)
       if (goScope == "") {
         raise "cannot generate Go clients without a go.mod"
       } else {
