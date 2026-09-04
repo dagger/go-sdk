@@ -149,6 +149,28 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 	})
 }
 
+func TestGenerateClient_PackageMode(t *testing.T) {
+	outputDir := t.TempDir()
+	gen := &GoGenerator{Config: generator.Config{
+		OutputDir:     outputDir,
+		PackageImport: "example.com/app/internal/dagger/clients/hello",
+		ClientConfig: &generator.ClientGeneratorConfig{
+			ModuleName:  "hello",
+			BoundModule: generator.BoundModule{Kind: "GIT_SOURCE", Ref: "github.com/foo/hello", Pin: "abcdef"},
+		},
+	}}
+	state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v0.21.0")
+	require.NoError(t, err)
+
+	_, err = fs.Stat(state.Overlay, "go.mod")
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	require.Contains(
+		t,
+		readOverlay(t, state, "dag/dag.gen.go"),
+		`dagger "example.com/app/internal/dagger/clients/hello"`,
+	)
+}
+
 // TestGenerateClient_GoMod checks the offline go.mod handling: a fresh client
 // dir gets a go.mod pinning dagger.io/dagger at the engine version; an
 // existing go.mod keeps its module name and local replace directives while the

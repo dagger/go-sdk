@@ -17,8 +17,8 @@ import (
 
 // GenerateClient generates a standalone Go client for the given (client)
 // schema: dagger.gen.go with the core bindings, one <module>.gen.go for the
-// bound module, a dag/ convenience package and a go.mod pinning
-// dagger.io/dagger at the engine version.
+// bound module, and a dag/ convenience package. Standalone mode also writes a
+// go.mod. Package mode uses the parent Go module.
 //
 // The go.mod handling is deliberately offline-friendly: a fresh client dir
 // gets a deterministic go.mod (no `go mod tidy`, no parent go.mod editing);
@@ -29,29 +29,32 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 
 	mfs := memfs.New()
 
-	// Read the client dir's go.mod, if any.
-	goModPath := filepath.Join(g.Config.OutputDir, "go.mod")
-	existingGoModData, readErr := os.ReadFile(goModPath)
-	isInstall := errors.Is(readErr, os.ErrNotExist)
-	if readErr != nil && !isInstall {
-		return nil, fmt.Errorf("failed to read go.mod: %w", readErr)
-	}
-
-	var existingGoMod *modfile.File
-	if !isInstall {
-		var err error
-		existingGoMod, err = modfile.Parse("go.mod", existingGoModData, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse client go.mod: %w", err)
-		}
-	}
-
 	// The generated client is a library package named "dagger". Its import
 	// path is the client module path: an existing go.mod wins, otherwise the
-	// bound module's name (lowercased) names the fresh module.
-	packageImport := strings.ToLower(g.Config.ClientConfig.ModuleName)
-	if existingGoMod != nil && existingGoMod.Module != nil {
-		packageImport = existingGoMod.Module.Mod.Path
+	// bound module's name (lowercased) names the fresh module. Package mode
+	// supplies the import path and keeps the parent Go module as the owner of
+	// go.mod.
+	packageImport := g.Config.PackageImport
+	var existingGoMod *modfile.File
+	var isInstall bool
+	if packageImport == "" {
+		goModPath := filepath.Join(g.Config.OutputDir, "go.mod")
+		existingGoModData, readErr := os.ReadFile(goModPath)
+		isInstall = errors.Is(readErr, os.ErrNotExist)
+		if readErr != nil && !isInstall {
+			return nil, fmt.Errorf("failed to read go.mod: %w", readErr)
+		}
+		if !isInstall {
+			var err error
+			existingGoMod, err = modfile.Parse("go.mod", existingGoModData, nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse client go.mod: %w", err)
+			}
+		}
+		packageImport = strings.ToLower(g.Config.ClientConfig.ModuleName)
+		if existingGoMod != nil && existingGoMod.Module != nil {
+			packageImport = existingGoMod.Module.Mod.Path
+		}
 	}
 	if packageImport == "" {
 		return nil, fmt.Errorf("cannot name the client module: no module name in client metadata and no go.mod in %q", g.Config.OutputDir)
@@ -64,19 +67,21 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 		return nil, fmt.Errorf("generate code: %w", err)
 	}
 
-	var goModBody []byte
-	var err error
-	if isInstall {
-		goModBody, err = g.freshClientGoMod(packageImport)
-	} else {
-		goModBody, err = g.updatedClientGoMod(existingGoMod)
-	}
-	if err != nil {
-		return nil, err
-	}
+	if g.Config.PackageImport == "" {
+		var goModBody []byte
+		var err error
+		if isInstall {
+			goModBody, err = g.freshClientGoMod(packageImport)
+		} else {
+			goModBody, err = g.updatedClientGoMod(existingGoMod)
+		}
+		if err != nil {
+			return nil, err
+		}
 
-	if err := mfs.WriteFile("go.mod", goModBody, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write client go.mod: %w", err)
+		if err := mfs.WriteFile("go.mod", goModBody, 0600); err != nil {
+			return nil, fmt.Errorf("failed to write client go.mod: %w", err)
+		}
 	}
 
 	return &generator.GeneratedState{

@@ -6,6 +6,10 @@ type Config struct {
 	// like go.mod.
 	OutputDir string
 
+	// PackageImport generates client code as a package inside an existing Go
+	// module. When set, GenerateClient does not create a go.mod in OutputDir.
+	PackageImport string
+
 	// IntrospectionJSON is an optional pre-computed introspection json string.
 	IntrospectionJSON string
 
