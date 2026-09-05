@@ -39,14 +39,14 @@ type GoSdk {
     }
 
     if (isModule) {
-      let manifest = generatedManifest(initialized, name, clients)
-      let configured = initialized.withDirectory(".", manifest.directory)
+      let manifests = generatedManifestDirectory(initialized, name, clients)
+      let configured = initialized.withDirectory(".", manifests)
 
       # ModuleSource supplies only the built-in Go code generator. Remove
       # its manifest output and write the configured builder output last.
       let generated = configured
         .withDirectory(".", generatedModuleCode(configured))
-        .withDirectory(".", manifest.directory)
+        .withDirectory(".", manifests)
       generateStandaloneClients(generated, clients)
     } else {
       generateStandaloneClients(initialized, clients)
@@ -84,11 +84,11 @@ type GoSdk {
   }
 
   """Create both manifests from the scope inputs and SDK defaults."""
-  let generatedManifest(
+  let generatedManifestDirectory(
     ws: Workspace!,
     name: String!,
     clients: [ModuleSource!]!,
-  ): ModuleManifest! {
+  ): Directory! {
     let base = moduleManifest
       .withName(name)
       .withLegacyGoRuntime
@@ -99,7 +99,7 @@ type GoSdk {
         source: dependencySource(ws, target),
         pin: target.pin,
       )
-    }
+    }.directory
   }
 
   """Return the target address to store in both module manifests."""
