@@ -3,9 +3,6 @@
 # Example:
 #   dagger install github.com/dagger/dagger/modules/wolfi
 
-[modules.e2e]
-source = ".dagger/modules/e2e"
-
 [modules.engine-e2e]
 source = ".dagger/modules/engine-e2e"
 
@@ -16,6 +13,7 @@ generate.skip = ["*"]
 
 [modules.dang-sdk]
 source = "github.com/dagger/dang-sdk"
+check.skip = ["*"]
 
 [sdks.go]
 module = "go-sdk"

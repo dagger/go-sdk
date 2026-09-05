@@ -27,10 +27,7 @@ type EngineE2e {
     assert(listed.stdout.contains("go"), "development Go SDK was not listed")
 
     let checked = listed.withExec([
-      "dagger", "-m", ".dagger/modules/e2e",
-      "check",
-      "e-2-e:module-client-check",
-      "e-2-e:standalone-client-preservation-check",
+      "dagger", "-m", ".dagger/modules/e2e", "check",
     ])
 
     let initialized = checked
