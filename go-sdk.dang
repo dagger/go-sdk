@@ -9,11 +9,11 @@ type GoSdk {
   """
   template: String! = "default"
 
-  """Find the nearest Go module root for client generation from Workspace.cwd."""
-  findClientRoot(ws: Workspace!): String! {
+  """Find the nearest Go module root from Workspace.cwd. Return null if no go.mod exists."""
+  findClientRoot(ws: Workspace!): String {
     let goMod = ws.findUp("go.mod")
     if (goMod == null) {
-      ""
+      null
     } else {
       configDir(goMod, "go.mod")
     }
@@ -74,7 +74,7 @@ type GoSdk {
     let originalScope = normalizePath(ws.cwd)
     clients.reduce(ws) { current, target =>
       let goScope = findClientRoot(current)
-      if (goScope == "") {
+      if (goScope == null) {
         raise "cannot generate Go clients without a go.mod"
       } else {
         generateStandaloneClient(current.withWorkdir(goScope), target)
@@ -89,7 +89,7 @@ type GoSdk {
     name: String!,
     clients: [ModuleSource!]!,
   ): Directory! {
-    let base = moduleManifest
+    let base = sdkHelpers.moduleManifest
       .withName(name)
       .withLegacyGoRuntime
 

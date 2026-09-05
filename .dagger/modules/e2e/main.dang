@@ -28,7 +28,11 @@ type E2e {
     let nested = ws.withWorkdir(scopePath)
 
     let root = goSdk.findClientRoot(nested)
-    assert(root == scopePath, "findClientRoot returned " + root + ", expected " + scopePath)
+    assert(root == scopePath, "findClientRoot returned an unexpected root")
+    assert(
+      goSdk.findClientRoot(ws.withWorkdir(fixtureRoot + "/client/app")) == null,
+      "findClientRoot returned a root without a go.mod",
+    )
     null
   }
 
