@@ -2,12 +2,11 @@ package generator
 
 type Config struct {
 	// OutputDir is the path to put the generated code.
-	// This allows generating extra files aside the client bindings
-	// like go.mod.
 	OutputDir string
 
-	// IntrospectionJSON is an optional pre-computed introspection json string.
-	IntrospectionJSON string
+	// PackageImport is the import path for the generated package inside its Go
+	// module.
+	PackageImport string
 
 	// ModuleConfig is the specific config to generate a module.
 	//
@@ -56,14 +55,7 @@ type BoundModule struct {
 
 // Specific configuration for client generation.
 type ClientGeneratorConfig struct {
-	// The name of the module to generate for.
-	ModuleName string
-
 	// BoundModule is the single module the generated client serves; it drives
 	// the generated serveBoundModule bootstrap.
 	BoundModule BoundModule
-
-	// The engine version from dagger.json, used to pin the dagger.io/dagger dependency.
-	// This is only populated when generating from a module source (not in tests).
-	EngineVersion string
 }

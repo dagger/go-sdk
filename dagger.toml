@@ -3,8 +3,8 @@
 # Example:
 #   dagger install github.com/dagger/dagger/modules/wolfi
 
-[modules.e2e]
-source = ".dagger/modules/e2e"
+[modules.engine-e2e]
+source = ".dagger/modules/engine-e2e"
 
 [modules.go-sdk]
 source = "."
@@ -13,33 +13,7 @@ generate.skip = ["*"]
 
 [modules.dang-sdk]
 source = "github.com/dagger/dang-sdk"
+check.skip = ["*"]
 
-[modules.dang-sdk.as-sdk]
-
-[[modules.dang-sdk.as-sdk.modules]]
-path = "."
-
-[modules.sdk-sdk]
-source = "github.com/dagger/sdk-sdk"
-
-[modules.go-sdk.as-sdk]
-name = "go"
-
-[[modules.go-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/generate/app"
-
-[[modules.go-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/lookup/app"
-
-[[modules.go-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/deps/app"
-
-[[modules.go-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/skip/app"
-
-[[modules.go-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/managed-toml/app"
-
-[[modules.go-sdk.as-sdk.clients]]
-path = ".dagger/modules/e2e/fixtures/client/out"
-module = ".dagger/modules/e2e/fixtures/client/app"
+[sdks.go]
+module = "go-sdk"

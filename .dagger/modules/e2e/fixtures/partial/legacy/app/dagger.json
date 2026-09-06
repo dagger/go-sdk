@@ -1,7 +1,0 @@
-{
-  "name": "partial-legacy-app",
-  "engineVersion": "v0.20.8",
-  "sdk": {
-    "source": "go"
-  }
-}

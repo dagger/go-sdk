@@ -1,7 +1,13 @@
 {
   "name": "go-sdk",
-  "engineVersion": "v1.0.0-beta.11",
+  "engineVersion": "v1.0.0",
   "sdk": {
     "source": "dang"
-  }
+  },
+  "dependencies": [
+    {
+      "name": "sdk-helpers",
+      "source": "github.com/dagger/sdk-helpers"
+    }
+  ]
 }

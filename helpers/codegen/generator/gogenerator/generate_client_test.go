@@ -2,8 +2,6 @@ package gogenerator
 
 import (
 	"io/fs"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -74,8 +72,9 @@ func buildClientSchema() *introspection.Schema {
 func generateClient(t *testing.T, clientConfig *generator.ClientGeneratorConfig, outputDir string) *generator.GeneratedState {
 	t.Helper()
 	gen := &GoGenerator{Config: generator.Config{
-		OutputDir:    outputDir,
-		ClientConfig: clientConfig,
+		OutputDir:     outputDir,
+		PackageImport: "example.com/client",
+		ClientConfig:  clientConfig,
 	}}
 	state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v0.21.0")
 	require.NoError(t, err)
@@ -98,7 +97,6 @@ func readOverlay(t *testing.T, state *generator.GeneratedState, path string) str
 func TestGenerateClient_ServeBoundModule(t *testing.T) {
 	t.Run("local module resolves against the workspace by a root-relative path", func(t *testing.T) {
 		state := generateClient(t, &generator.ClientGeneratorConfig{
-			ModuleName:  "hello",
 			BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: ".dagger/modules/hello"},
 		}, t.TempDir())
 
@@ -117,7 +115,6 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 
 	t.Run("git module serves from its canonical ref + pin", func(t *testing.T) {
 		state := generateClient(t, &generator.ClientGeneratorConfig{
-			ModuleName:  "hello",
 			BoundModule: generator.BoundModule{Kind: "GIT_SOURCE", Ref: "github.com/foo/hello@main", Pin: "abcdef"},
 		}, t.TempDir())
 
@@ -130,7 +127,6 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 
 	t.Run("bound module splits into its own gen file", func(t *testing.T) {
 		state := generateClient(t, &generator.ClientGeneratorConfig{
-			ModuleName:  "hello",
 			BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: ".dagger/modules/hello"},
 		}, t.TempDir())
 
@@ -149,57 +145,23 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 	})
 }
 
-// TestGenerateClient_GoMod checks the offline go.mod handling: a fresh client
-// dir gets a go.mod pinning dagger.io/dagger at the engine version; an
-// existing go.mod keeps its module name and local replace directives while the
-// dagger.io/dagger requirement updates (unless custom-replaced).
-func TestGenerateClient_GoMod(t *testing.T) {
-	clientConfig := func() *generator.ClientGeneratorConfig {
-		return &generator.ClientGeneratorConfig{
-			ModuleName:    "Hello",
-			EngineVersion: "v0.19.2",
-			BoundModule:   generator.BoundModule{Kind: "LOCAL_SOURCE", Path: "mods/hello"},
-		}
-	}
+func TestGenerateClient_PackageMode(t *testing.T) {
+	outputDir := t.TempDir()
+	gen := &GoGenerator{Config: generator.Config{
+		OutputDir:     outputDir,
+		PackageImport: "example.com/app/internal/dagger/clients/hello",
+		ClientConfig: &generator.ClientGeneratorConfig{
+			BoundModule: generator.BoundModule{Kind: "GIT_SOURCE", Ref: "github.com/foo/hello", Pin: "abcdef"},
+		},
+	}}
+	state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v0.21.0")
+	require.NoError(t, err)
 
-	t.Run("fresh dir gets go.mod with the engine pin", func(t *testing.T) {
-		state := generateClient(t, clientConfig(), t.TempDir())
-
-		goMod := readOverlay(t, state, "go.mod")
-		require.Contains(t, goMod, "module hello\n")
-		require.Contains(t, goMod, "go 1.")
-		require.Contains(t, goMod, "require dagger.io/dagger v0.19.2")
-	})
-
-	t.Run("existing go.mod keeps module name and replaces, bumps the pin", func(t *testing.T) {
-		dir := t.TempDir()
-		existing := "module github.com/acme/app-client\n\ngo 1.24.0\n\nrequire dagger.io/dagger v0.18.0\n\nrequire example.com/extra v1.2.3\n\nreplace example.com/extra => ../extra\n"
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(existing), 0o600))
-
-		state := generateClient(t, clientConfig(), dir)
-
-		goMod := readOverlay(t, state, "go.mod")
-		require.Contains(t, goMod, "module github.com/acme/app-client\n")
-		require.Contains(t, goMod, "dagger.io/dagger v0.19.2")
-		require.NotContains(t, goMod, "dagger.io/dagger v0.18.0")
-		require.Contains(t, goMod, "example.com/extra v1.2.3")
-		require.Contains(t, goMod, "replace example.com/extra => ../extra")
-
-		// The generated dag package imports the client by its go.mod path.
-		dag := readOverlay(t, state, "dag/dag.gen.go")
-		require.Contains(t, dag, `dagger "github.com/acme/app-client"`)
-	})
-
-	t.Run("custom dagger.io/dagger replace wins over the engine pin", func(t *testing.T) {
-		dir := t.TempDir()
-		existing := "module hello\n\ngo 1.24.0\n\nrequire dagger.io/dagger v0.18.0\n\nreplace dagger.io/dagger => ../../sdk/go\n"
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(existing), 0o600))
-
-		state := generateClient(t, clientConfig(), dir)
-
-		goMod := readOverlay(t, state, "go.mod")
-		require.Contains(t, goMod, "dagger.io/dagger v0.18.0")
-		require.NotContains(t, goMod, "v0.19.2")
-		require.Contains(t, goMod, "replace dagger.io/dagger => ../../sdk/go")
-	})
+	_, err = fs.Stat(state.Overlay, "go.mod")
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	require.Contains(
+		t,
+		readOverlay(t, state, "dag/dag.gen.go"),
+		`dagger "example.com/app/internal/dagger/clients/hello"`,
+	)
 }
