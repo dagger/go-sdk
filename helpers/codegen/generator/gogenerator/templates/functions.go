@@ -99,12 +99,19 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"IsStandaloneClient":      funcs.isStandaloneClient,
 		"ModuleRelPath":           funcs.moduleRelPath,
 		"BoundModule":             funcs.boundModule,
+		"LegacyModulePath":        funcs.legacyModulePath,
 		"IsExtendableType":        funcs.isExtendableType,
 		"FullSchemaTypes":         funcs.fullSchemaTypes,
 		"HasIDField":              funcs.hasIDField,
 		"IsLegacyIDAlias":         funcs.isLegacyIDAlias,
 		"json":                    funcs.json,
 	}
+}
+
+// legacyModulePath converts a workspace-root-relative module path back to the
+// cwd-relative form accepted by Query.moduleSource in pre-workspace schemas.
+func (funcs goTemplateFuncs) legacyModulePath(m generator.BoundModule) string {
+	return strings.TrimPrefix(m.Path, "/")
 }
 
 // legacyGoSDKCompatCutoverVersion is the first engine version whose Go SDK
