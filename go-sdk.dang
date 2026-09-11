@@ -111,8 +111,11 @@ type GoSdk {
       let generated = clients.reduce(base) { current, target =>
         generateStandaloneClient(current, target)
       }
+      let tidied = generated
+        .withWorkdir("/out")
+        .withExec(["go", "mod", "tidy"])
       scoped
-        .withDirectory(".", generated.directory("/out"))
+        .withDirectory(".", tidied.directory("/out"))
         .withWorkdir(originalScope)
     }
   }
