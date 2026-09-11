@@ -139,6 +139,16 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		require.NotContains(t, core, "IncludeDependencies")
 	})
 
+	t.Run("legacy Void serve result is discarded", func(t *testing.T) {
+		state := generateClientForVersion(t, &generator.ClientGeneratorConfig{
+			BoundModule: generator.BoundModule{Kind: "GIT_SOURCE", Ref: "github.com/foo/hello@main", Pin: "abcdef"},
+		}, t.TempDir(), "v0.9.11")
+
+		core := readOverlay(t, state, "dagger.gen.go")
+		require.Contains(t, core, "_, err := client.")
+		require.Contains(t, core, "Serve(ctx)\n\treturn err")
+	})
+
 	t.Run("bound module splits into its own gen file", func(t *testing.T) {
 		state := generateClient(t, &generator.ClientGeneratorConfig{
 			BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: ".dagger/modules/hello"},
