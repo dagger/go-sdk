@@ -2,6 +2,9 @@
 Manage Dagger modules and module clients that use the Go SDK.
 """
 type GoSdk {
+  """Version of dagger.io/dagger used by generated standalone clients."""
+  clientVersion: String! = "v1.0.0-beta.11"
+
   """
   Starter template used when a new module scope is initialized.
 
@@ -178,6 +181,7 @@ type GoSdk {
     let targetName = target.moduleOriginalName
     let outputPath = "internal/dagger/clients/" + targetName
     let metaJSON = "{\"engineVersion\":" + JSON.encode(target.engineVersion) +
+      ",\"clientVersion\":" + JSON.encode(clientVersion) +
       ",\"module\":" + boundModuleJSON(
         JSON.encode(target.kind),
         target.sourceRootSubpath,

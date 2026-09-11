@@ -32,11 +32,11 @@ func main() {
 	}
 }
 
-// clientMeta is the bound module's metadata the SDK reads off client.module /
-// client.moduleSource and writes to --client-meta-path. It mirrors the subset
-// the client generator needs (see generator.ClientGeneratorConfig).
+// clientMeta combines the bound module's schema compatibility metadata with
+// the Go client runtime version selected by this SDK.
 type clientMeta struct {
 	EngineVersion string                `json:"engineVersion"`
+	ClientVersion string                `json:"clientVersion"`
 	Module        generator.BoundModule `json:"module"`
 }
 
@@ -106,7 +106,7 @@ func run() error {
 		PackageImport: packageImport,
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
 	}
-	if err := updateModuleGoMod(*moduleRoot, meta.EngineVersion); err != nil {
+	if err := updateModuleGoMod(*moduleRoot, meta.ClientVersion); err != nil {
 		return err
 	}
 
@@ -175,8 +175,8 @@ func moduleVersionExists(dir, modulePath, version string) bool {
 	return strings.TrimSpace(string(out)) == ""
 }
 
-func updateModuleGoMod(moduleRoot, engineVersion string) error {
-	if engineVersion == "" {
+func updateModuleGoMod(moduleRoot, clientVersion string) error {
+	if clientVersion == "" {
 		return nil
 	}
 	goModPath := filepath.Join(moduleRoot, "go.mod")
@@ -194,20 +194,17 @@ func updateModuleGoMod(moduleRoot, engineVersion string) error {
 		}
 	}
 	for _, require := range file.Require {
-		if require.Mod.Path == "dagger.io/dagger" && semver.Compare(require.Mod.Version, engineVersion) >= 0 {
+		if require.Mod.Path == "dagger.io/dagger" && semver.Compare(require.Mod.Version, clientVersion) >= 0 {
 			return nil
 		}
 	}
-	// An engine release does not imply a published dagger.io/dagger of the same
-	// version: a development engine reports the next, unreleased version. Pinning
-	// that leaves a requirement nothing can resolve, and every later go command
-	// in the module fails on it — including the `go get dagger.io/dagger@<commit>`
-	// the engine's own module codegen runs, which is what would have supplied a
-	// usable version.
-	if !moduleVersionExists(moduleRoot, "dagger.io/dagger", engineVersion) {
+	// A configured client version may be a development version without a
+	// published dagger.io/dagger counterpart. Do not leave the consumer module
+	// with an unresolvable requirement.
+	if !moduleVersionExists(moduleRoot, "dagger.io/dagger", clientVersion) {
 		return nil
 	}
-	if err := file.AddRequire("dagger.io/dagger", engineVersion); err != nil {
+	if err := file.AddRequire("dagger.io/dagger", clientVersion); err != nil {
 		return fmt.Errorf("update dagger.io/dagger requirement: %w", err)
 	}
 	updated, err := file.Format()
