@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/version"
 	"os"
 	"os/exec"
 	"path"
@@ -60,8 +61,18 @@ func run() error {
 		clientMetaPath    = flag.String("client-meta-path", "", "path to the client meta JSON (engine version and bound module)")
 		outputDir         = flag.String("output", ".", "output directory for the generated client")
 		moduleRoot        = flag.String("module-root", "", "root of the Go module that owns the generated package")
+		goVersionPath     = flag.String("go-version-path", "", "print the Go language version required by a go.mod")
+		minimumGoVersion  = flag.String("minimum-go-version", "", "minimum Go language version to print")
 	)
 	flag.Parse()
+	if *goVersionPath != "" {
+		goVersion, err := requiredGoVersion(*goVersionPath, *minimumGoVersion)
+		if err != nil {
+			return err
+		}
+		fmt.Println(goVersion)
+		return nil
+	}
 
 	if *introspectionPath == "" {
 		return fmt.Errorf("--introspection-json-path is required")
@@ -125,6 +136,45 @@ func run() error {
 	}
 
 	return nil
+}
+
+// requiredGoVersion returns the Go language version of the newer of the go
+// and toolchain directives. The language version maps to the corresponding
+// golang:<major>.<minor> image tag.
+func requiredGoVersion(goModPath, minimum string) (string, error) {
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		return "", fmt.Errorf("read module go.mod: %w", err)
+	}
+	file, err := modfile.Parse(goModPath, data, nil)
+	if err != nil {
+		return "", fmt.Errorf("parse module go.mod: %w", err)
+	}
+	if file.Go == nil || !version.IsValid("go"+file.Go.Version) {
+		return "", fmt.Errorf("module go.mod has no valid go directive")
+	}
+
+	selected := "go" + file.Go.Version
+	if minimum != "" {
+		minimum = "go" + strings.TrimPrefix(minimum, "go")
+		if !version.IsValid(minimum) {
+			return "", fmt.Errorf("invalid minimum Go version %q", minimum)
+		}
+		if version.Compare(minimum, selected) > 0 {
+			selected = minimum
+		}
+	}
+	if file.Toolchain != nil && file.Toolchain.Name != "default" {
+		toolchain := file.Toolchain.Name
+		if !version.IsValid(toolchain) {
+			return "", fmt.Errorf("module go.mod has invalid toolchain directive %q", toolchain)
+		}
+		if version.Compare(toolchain, selected) > 0 {
+			selected = toolchain
+		}
+	}
+
+	return strings.TrimPrefix(version.Lang(selected), "go"), nil
 }
 
 func packageImportPath(moduleRoot, outputDir string) (string, error) {
