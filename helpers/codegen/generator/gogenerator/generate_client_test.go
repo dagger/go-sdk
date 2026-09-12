@@ -70,13 +70,17 @@ func buildClientSchema() *introspection.Schema {
 }
 
 func generateClient(t *testing.T, clientConfig *generator.ClientGeneratorConfig, outputDir string) *generator.GeneratedState {
+	return generateClientForVersion(t, clientConfig, outputDir, "v1.0.0")
+}
+
+func generateClientForVersion(t *testing.T, clientConfig *generator.ClientGeneratorConfig, outputDir, schemaVersion string) *generator.GeneratedState {
 	t.Helper()
 	gen := &GoGenerator{Config: generator.Config{
 		OutputDir:     outputDir,
 		PackageImport: "example.com/client",
 		ClientConfig:  clientConfig,
 	}}
-	state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v0.21.0")
+	state, err := gen.GenerateClient(t.Context(), buildClientSchema(), schemaVersion)
 	require.NoError(t, err)
 	return state
 }
@@ -113,6 +117,16 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		require.NotContains(t, core, "ConfigExists")
 	})
 
+	t.Run("legacy local module resolves through Query from the client cwd", func(t *testing.T) {
+		state := generateClientForVersion(t, &generator.ClientGeneratorConfig{
+			BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: ".dagger/modules/hello"},
+		}, t.TempDir(), "v0.17.1")
+
+		core := readOverlay(t, state, "dagger.gen.go")
+		require.NotContains(t, core, "CurrentWorkspace().")
+		require.Contains(t, core, `ModuleSource(".dagger/modules/hello").`)
+	})
+
 	t.Run("git module serves from its canonical ref + pin", func(t *testing.T) {
 		state := generateClient(t, &generator.ClientGeneratorConfig{
 			BoundModule: generator.BoundModule{Kind: "GIT_SOURCE", Ref: "github.com/foo/hello@main", Pin: "abcdef"},
@@ -123,6 +137,16 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		require.Contains(t, core, `ModuleSource("github.com/foo/hello@main", ModuleSourceOpts{RefPin: "abcdef"}).`)
 		require.NotContains(t, core, "CurrentWorkspace")
 		require.NotContains(t, core, "IncludeDependencies")
+	})
+
+	t.Run("legacy Void serve result is discarded", func(t *testing.T) {
+		state := generateClientForVersion(t, &generator.ClientGeneratorConfig{
+			BoundModule: generator.BoundModule{Kind: "GIT_SOURCE", Ref: "github.com/foo/hello@main", Pin: "abcdef"},
+		}, t.TempDir(), "v0.9.11")
+
+		core := readOverlay(t, state, "dagger.gen.go")
+		require.Contains(t, core, "_, err := client.")
+		require.Contains(t, core, "Serve(ctx)\n\treturn err")
 	})
 
 	t.Run("bound module splits into its own gen file", func(t *testing.T) {

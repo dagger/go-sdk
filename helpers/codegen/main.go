@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/version"
 	"os"
 	"os/exec"
 	"path"
@@ -32,11 +33,11 @@ func main() {
 	}
 }
 
-// clientMeta is the bound module's metadata the SDK reads off client.module /
-// client.moduleSource and writes to --client-meta-path. It mirrors the subset
-// the client generator needs (see generator.ClientGeneratorConfig).
+// clientMeta combines the bound module's schema compatibility metadata with
+// the Go client runtime version selected by this SDK.
 type clientMeta struct {
 	EngineVersion string                `json:"engineVersion"`
+	ClientVersion string                `json:"clientVersion"`
 	Module        generator.BoundModule `json:"module"`
 }
 
@@ -60,8 +61,18 @@ func run() error {
 		clientMetaPath    = flag.String("client-meta-path", "", "path to the client meta JSON (engine version and bound module)")
 		outputDir         = flag.String("output", ".", "output directory for the generated client")
 		moduleRoot        = flag.String("module-root", "", "root of the Go module that owns the generated package")
+		goVersionPath     = flag.String("go-version-path", "", "print the Go language version required by a go.mod")
+		minimumGoVersion  = flag.String("minimum-go-version", "", "minimum Go language version to print")
 	)
 	flag.Parse()
+	if *goVersionPath != "" {
+		goVersion, err := requiredGoVersion(*goVersionPath, *minimumGoVersion)
+		if err != nil {
+			return err
+		}
+		fmt.Println(goVersion)
+		return nil
+	}
 
 	if *introspectionPath == "" {
 		return fmt.Errorf("--introspection-json-path is required")
@@ -106,7 +117,7 @@ func run() error {
 		PackageImport: packageImport,
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
 	}
-	if err := updateModuleGoMod(*moduleRoot, meta.EngineVersion); err != nil {
+	if err := updateModuleGoMod(*moduleRoot, meta.ClientVersion); err != nil {
 		return err
 	}
 
@@ -125,6 +136,45 @@ func run() error {
 	}
 
 	return nil
+}
+
+// requiredGoVersion returns the Go language version of the newer of the go
+// and toolchain directives. The language version maps to the corresponding
+// golang:<major>.<minor> image tag.
+func requiredGoVersion(goModPath, minimum string) (string, error) {
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		return "", fmt.Errorf("read module go.mod: %w", err)
+	}
+	file, err := modfile.Parse(goModPath, data, nil)
+	if err != nil {
+		return "", fmt.Errorf("parse module go.mod: %w", err)
+	}
+	if file.Go == nil || !version.IsValid("go"+file.Go.Version) {
+		return "", fmt.Errorf("module go.mod has no valid go directive")
+	}
+
+	selected := "go" + file.Go.Version
+	if minimum != "" {
+		minimum = "go" + strings.TrimPrefix(minimum, "go")
+		if !version.IsValid(minimum) {
+			return "", fmt.Errorf("invalid minimum Go version %q", minimum)
+		}
+		if version.Compare(minimum, selected) > 0 {
+			selected = minimum
+		}
+	}
+	if file.Toolchain != nil && file.Toolchain.Name != "default" {
+		toolchain := file.Toolchain.Name
+		if !version.IsValid(toolchain) {
+			return "", fmt.Errorf("module go.mod has invalid toolchain directive %q", toolchain)
+		}
+		if version.Compare(toolchain, selected) > 0 {
+			selected = toolchain
+		}
+	}
+
+	return strings.TrimPrefix(version.Lang(selected), "go"), nil
 }
 
 func packageImportPath(moduleRoot, outputDir string) (string, error) {
@@ -175,8 +225,8 @@ func moduleVersionExists(dir, modulePath, version string) bool {
 	return strings.TrimSpace(string(out)) == ""
 }
 
-func updateModuleGoMod(moduleRoot, engineVersion string) error {
-	if engineVersion == "" {
+func updateModuleGoMod(moduleRoot, clientVersion string) error {
+	if clientVersion == "" {
 		return nil
 	}
 	goModPath := filepath.Join(moduleRoot, "go.mod")
@@ -194,20 +244,17 @@ func updateModuleGoMod(moduleRoot, engineVersion string) error {
 		}
 	}
 	for _, require := range file.Require {
-		if require.Mod.Path == "dagger.io/dagger" && semver.Compare(require.Mod.Version, engineVersion) >= 0 {
+		if require.Mod.Path == "dagger.io/dagger" && semver.Compare(require.Mod.Version, clientVersion) >= 0 {
 			return nil
 		}
 	}
-	// An engine release does not imply a published dagger.io/dagger of the same
-	// version: a development engine reports the next, unreleased version. Pinning
-	// that leaves a requirement nothing can resolve, and every later go command
-	// in the module fails on it — including the `go get dagger.io/dagger@<commit>`
-	// the engine's own module codegen runs, which is what would have supplied a
-	// usable version.
-	if !moduleVersionExists(moduleRoot, "dagger.io/dagger", engineVersion) {
+	// A configured client version may be a development version without a
+	// published dagger.io/dagger counterpart. Do not leave the consumer module
+	// with an unresolvable requirement.
+	if !moduleVersionExists(moduleRoot, "dagger.io/dagger", clientVersion) {
 		return nil
 	}
-	if err := file.AddRequire("dagger.io/dagger", engineVersion); err != nil {
+	if err := file.AddRequire("dagger.io/dagger", clientVersion); err != nil {
 		return fmt.Errorf("update dagger.io/dagger requirement: %w", err)
 	}
 	updated, err := file.Format()

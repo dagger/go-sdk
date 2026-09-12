@@ -2,6 +2,12 @@
 Manage Dagger modules and module clients that use the Go SDK.
 """
 type GoSdk {
+  """Version of dagger.io/dagger used by generated standalone clients."""
+  clientVersion: String! = "v1.0.0-beta.11"
+
+  """Minimum Go language version required by clientVersion."""
+  clientGoVersion: String! = "1.26"
+
   """
   Starter template used when a new module scope is initialized.
 
@@ -99,17 +105,21 @@ type GoSdk {
       raise "cannot generate Go clients without a go.mod"
     } else {
       let scoped = ws.withWorkdir(goScope)
-      let base = codegenBuilder.withDirectory(
-        "/out",
-        scoped.directory(".", exclude: ["**/.git"]),
-      )
+      let base = clientCodegenBase(scoped.file("go.mod"))
+        .withDirectory(
+          "/out",
+          scoped.directory(".", exclude: ["**/.git"]),
+        )
       # Keep prior client outputs and go.mod updates in the same container.
       # Only the completed batch needs to be merged into the workspace.
       let generated = clients.reduce(base) { current, target =>
         generateStandaloneClient(current, target)
       }
+      let tidied = generated
+        .withWorkdir("/out")
+        .withExec(["go", "mod", "tidy"])
       scoped
-        .withDirectory(".", generated.directory("/out"))
+        .withDirectory(".", tidied.directory("/out"))
         .withWorkdir(originalScope)
     }
   }
@@ -168,6 +178,25 @@ type GoSdk {
       .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "."])
   }
 
+  """Run consumer Go commands with the toolchain required by its go.mod."""
+  let clientCodegenBase(goMod: File!): Container! {
+    let goVersion = codegenBuilder
+      .withFile("/consumer.go.mod", goMod)
+      .withExec([
+        "codegen",
+        "--go-version-path", "/consumer.go.mod",
+        "--minimum-go-version", clientGoVersion,
+      ])
+      .stdout
+      .trimSuffix("\n")
+    container
+      .from("golang:" + goVersion + "-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withFile("/usr/local/bin/codegen", codegenBuilder.file("/usr/local/bin/codegen"))
+  }
+
   """Serialize the target-module location used by the generated bootstrap."""
   let boundModuleJSON(kindJSON: String!, path: String!, ref: String!, pin: String!): String! {
     "{\"kind\":" + kindJSON + ",\"path\":" + JSON.encode(path) + ",\"ref\":" + JSON.encode(ref) + ",\"pin\":" + JSON.encode(pin) + "}"
@@ -178,6 +207,7 @@ type GoSdk {
     let targetName = target.moduleOriginalName
     let outputPath = "internal/dagger/clients/" + targetName
     let metaJSON = "{\"engineVersion\":" + JSON.encode(target.engineVersion) +
+      ",\"clientVersion\":" + JSON.encode(clientVersion) +
       ",\"module\":" + boundModuleJSON(
         JSON.encode(target.kind),
         target.sourceRootSubpath,
