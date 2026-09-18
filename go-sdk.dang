@@ -64,7 +64,7 @@ type GoSdk {
       checkEntrypointScope(ws, hadManifest, clients)
     }
     let initialized = if (isModule and !hadManifest) {
-      ws.withDirectory(".", renderedTemplate(name, template))
+      ws.withDirectory(".", renderedTemplate(ws, name, template))
     } else {
       ws
     }
@@ -254,13 +254,7 @@ type GoSdk {
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
     let goRoot = findClientRoot(ws) ?? scopePath
-    let moduleRoot = if (goRoot == scopePath) {
-      "."
-    } else if (goRoot == ".") {
-      scopePath
-    } else {
-      scopePath.trimPrefix(goRoot + "/")
-    }
+    let moduleRoot = moduleSubpath(goRoot, scopePath)
     let prefix = if (moduleRoot == ".") { "" } else { moduleRoot + "/" }
     let inputs = moduleCodegenBuilder
       .withDirectory("/src", ws.withWorkdir(goRoot).directory(".", exclude: ["**/.git"]))
@@ -321,6 +315,17 @@ type GoSdk {
 
   """Directory of the generated Dang entrypoint, relative to the module."""
   let entrypointPath: String! = "internal/dagger/entrypoint"
+
+  """Path of a module below its Go root, both relative to the workspace root."""
+  let moduleSubpath(goRoot: String!, scopePath: String!): String! {
+    if (goRoot == scopePath) {
+      "."
+    } else if (goRoot == ".") {
+      scopePath
+    } else {
+      scopePath.trimPrefix(goRoot + "/")
+    }
+  }
 
   let rootedPath(p: String!): String! {
     if (p == ".") { "/" } else { "/" + p }
@@ -391,16 +396,11 @@ type GoSdk {
   The Go runtime needs package main. A module with a Dang entrypoint is an
   importable package named after the module.
   """
-  let renderedTemplate(name: String!, selected: String!): Directory! {
+  let renderedTemplate(ws: Workspace!, name: String!, selected: String!): Directory! {
     if (currentModule.source.exists("templates/" + selected) == false) {
       raise "unknown init template: " + selected
     } else {
-      let render = if (dangEntrypoint) {
-        ["render-template", "--importable-package", name, "/template", "/rendered"]
-      } else {
-        ["render-template", name, "/template", "/rendered"]
-      }
-      container
+      let builder = container
         .from("golang:1.25-alpine")
         .withoutEntrypoint
         .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
@@ -409,8 +409,26 @@ type GoSdk {
         .withDirectory("/template", currentModule.source.directory("templates/" + selected))
         .withWorkdir("/helper")
         .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
-        .withExec(render)
-        .directory("/rendered")
+      let rendered = if (dangEntrypoint) {
+        # The starter imports the embedded client through the Go module that
+        # the generator uses: the nearest go.mod, or a new one in the module.
+        let goRoot = findClientRoot(ws)
+        if (goRoot == null) {
+          builder.withExec(["render-template", "--importable-package", name, "/template", "/rendered"])
+        } else {
+          builder
+            .withFile("/go.mod", ws.withWorkdir(goRoot).file("go.mod"))
+            .withExec([
+              "render-template", "--importable-package",
+              "--go-mod", "/go.mod",
+              "--module-subpath", moduleSubpath(goRoot, normalizePath(ws.cwd)),
+              name, "/template", "/rendered",
+            ])
+        }
+      } else {
+        builder.withExec(["render-template", name, "/template", "/rendered"])
+      }
+      rendered.directory("/rendered")
     }
   }
 }

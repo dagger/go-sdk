@@ -45,6 +45,48 @@ func TestRunPackageName(t *testing.T) {
 	}
 }
 
+func TestRunImportFromEnclosingGoModule(t *testing.T) {
+	templateDir := filepath.Join("..", "..", "templates", "default")
+	goMod := filepath.Join(t.TempDir(), "go.mod")
+	if err := os.WriteFile(goMod, []byte("module example.com/app // the app\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for subpath, want := range map[string]string{
+		".":          `"example.com/app/internal/dagger"`,
+		"mods/hello": `"example.com/app/mods/hello/internal/dagger"`,
+	} {
+		out := t.TempDir()
+		if err := run([]string{"--importable-package", "--go-mod", goMod, "--module-subpath", subpath, "hello", templateDir, out}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(out, "main.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), want) {
+			t.Errorf("subpath %s: starter does not import %s:\n%s", subpath, want, data)
+		}
+	}
+
+	if err := run([]string{"--importable-package", "--go-mod", goMod, "--module-subpath", "../x", "hello", templateDir, t.TempDir()}); err == nil {
+		t.Error("a module outside the Go module was accepted")
+	}
+}
+
+func TestRunDefaultImport(t *testing.T) {
+	out := t.TempDir()
+	if err := run([]string{"--importable-package", "hello-world", filepath.Join("..", "..", "templates", "default"), out}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"dagger/hello-world/internal/dagger"`) {
+		t.Errorf("starter does not import the module's own go.mod path:\n%s", data)
+	}
+}
+
 func packageClause(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

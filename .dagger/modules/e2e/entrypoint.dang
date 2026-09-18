@@ -266,6 +266,41 @@ type EntrypointChecks {
   }
 
   """
+  The default starter imports the embedded client through the enclosing Go
+  module, so a new module below an existing go.mod builds.
+  """
+  goRootDefaultTemplateCheck(ws: Workspace!): Void @check {
+    let scopePath = goScopePath + "/mods/entrypoint-starter"
+    let generated = goSdk(dangEntrypoint: true).generateScope(
+      ws: ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath),
+      isModule: true,
+      name: "entrypoint-starter",
+      clients: [],
+    )
+
+    assert("the starter does not import through the enclosing Go module") {
+      generated.file("main.go").contents.contains("\"example.com/go-scope/mods/entrypoint-starter/internal/dagger\"")
+    }
+    assert("a nested go.mod was created") {
+      exists(generated, "go.mod") == false
+    }
+
+    let built = container
+      .from("golang:1.26-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/workspace", generated.withWorkdir(goScopePath).directory("."))
+      .withWorkdir("/workspace/mods/entrypoint-starter")
+      .withExec(["go", "vet", "./..."], expect: ReturnType.ANY)
+    # A wrong import fails to build the starter and its dispatch command.
+    assert("the starter did not build: " + built.stderr) {
+      built.exitCode == 0
+    }
+    null
+  }
+
+  """
   dangEntrypoint refuses what a manifest with an entrypoint cannot carry,
   and a module with a Dang entrypoint is not moved back to the Go runtime.
   """
