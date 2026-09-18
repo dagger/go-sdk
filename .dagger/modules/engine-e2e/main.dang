@@ -3,9 +3,23 @@ Checks the Go SDK against the Dagger development engine.
 """
 type EngineE2e {
   """
-  Main commit shared by the engine-dev dependency and target engine.
+  Commit shared by the engine-dev dependency and target engine: v1.0.0-beta.14,
+  the first release that loads manifest v2 entrypoints. Keep it aligned with
+  the engine-dev dependency in dagger-module.toml.
   """
-  let engineCommit: String! = "0d031c08ef3e379c6f4eb7f8f5cad4638a168863"
+  let engineCommit: String! = "06660c3cde2d9da65d8b009531efd04cfc5578ed"
+
+  """
+  The client container the development CLI is installed into. It matches the
+  playground base of dagger/dagger's dagger-dev module.
+  """
+  let clientBase: Container! {
+    container
+      .from("alpine:3.22")
+      .withExec(["apk", "add", "--no-cache", "git"])
+      .withEnvVariable("HOME", "/root")
+      .withWorkdir("/root")
+  }
 
   """
   Build the pinned main engine and use this checkout as its Go SDK.
@@ -22,7 +36,7 @@ type EngineE2e {
       .ref(engineCommit)
       .asWorkspace
     let client = engineDev(ws: engineSource)
-      .playground
+      .installClient(client: clientBase)
       .withMountedDirectory("./go-sdk", sdkSource)
       .withWorkdir("./go-sdk")
       .withExec(["git", "init", "--quiet"])
@@ -78,6 +92,30 @@ type EngineE2e {
 
     assert("generated module did not run") {
       release.trim != ""
+    }
+
+    let entrypointPath = ".dagger/modules/sdk-entrypoint"
+    let entrypoint = thin
+      .withExec([
+        "dagger", "--auto-apply", "module", "init", "go",
+        "--name", "sdk-entrypoint",
+        "--path", entrypointPath,
+        "--dang-entrypoint",
+      ])
+      .withExec(["grep", "-qx", "\\[entrypoint\\]", entrypointPath + "/dagger-module.toml"])
+      .withExec(["test", "!", "-e", entrypointPath + "/dagger.json"])
+      .withExec(["test", "-f", entrypointPath + "/internal/dagger/entrypoint/main.dang"])
+      .withExec(["test", "-f", entrypointPath + "/cmd/sdk-entrypoint-dispatch/main.go"])
+      .withExec([
+        "dagger", "-m", entrypointPath,
+        "call", "container", "file",
+        "--path", "/etc/alpine-release",
+        "contents",
+      ])
+      .stdout
+
+    assert("module with a Dang entrypoint did not run") {
+      entrypoint.trim != ""
     }
     null
   }
