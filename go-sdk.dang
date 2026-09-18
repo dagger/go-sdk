@@ -26,6 +26,14 @@ type GoSdk {
   """
   dualClients: Boolean! = false
 
+  """
+  Generate a Dang entrypoint and a static dispatch command, so the engine
+  loads the module's types without running it. The module must be an
+  importable Go package, not package main. Needs an engine that loads
+  manifest version 2 (Dagger v1.0.0-beta.14 or later).
+  """
+  dangEntrypoint: Boolean! = false
+
   """Find the nearest Go module root from Workspace.cwd. Return null if no go.mod exists."""
   findClientRoot(ws: Workspace!): String {
     let goMod = ws.findUp("go.mod")
@@ -41,7 +49,9 @@ type GoSdk {
 
   Module scopes use the built-in Go module generator. With dualClients, they
   also generate standalone clients in their nearest Go scope. Non-module
-  scopes always generate standalone clients.
+  scopes always generate standalone clients. With dangEntrypoint, module
+  scopes get a Dang entrypoint and a manifest that names it instead of a
+  runtime.
   """
   generateScope(
     ws: Workspace!,
@@ -50,13 +60,18 @@ type GoSdk {
     clients: [ModuleSource!]!,
   ): Workspace! {
     let hadManifest = exists(ws, "dagger-module.toml") or exists(ws, "dagger.json")
+    if (isModule) {
+      checkEntrypointScope(ws, hadManifest, clients)
+    }
     let initialized = if (isModule and !hadManifest) {
       ws.withDirectory(".", renderedTemplate(name, template))
     } else {
       ws
     }
 
-    if (isModule) {
+    if (isModule and dangEntrypoint) {
+      entrypointModule(initialized, name)
+    } else if (isModule) {
       let configured = generatedManifest(initialized, name, clients)
       let generated = configured.withDirectory(".", generatedModuleCode(configured))
       # generatedModuleCode excludes manifests, so the configured ones survive
@@ -156,6 +171,175 @@ type GoSdk {
     }
   }
 
+  """
+  Refuse what a Dang entrypoint cannot carry, before anything is written.
+
+  Without dangEntrypoint, refuse a module generated with one: the Go runtime
+  cannot load the importable package it uses.
+  """
+  let checkEntrypointScope(ws: Workspace!, hadManifest: Boolean!, clients: [ModuleSource!]!): Void {
+    if (dangEntrypoint) {
+      if (clients.length > 0) {
+        raise "a Dang entrypoint cannot use other modules yet: a manifest with an entrypoint has no dependencies; set dangEntrypoint = false"
+      }
+      if (!hadManifest and template == "legacy") {
+        raise "the legacy template is not available with a Dang entrypoint; choose another template or set dangEntrypoint = false"
+      }
+      if (fat) {
+        raise "a fat module is not available with a Dang entrypoint: dagger.json would point older engines at the Go runtime, which cannot load an importable package; set fat = false or dangEntrypoint = false"
+      }
+    } else if (hasLocalDangEntrypoint(ws)) {
+      raise "this module is generated with a Dang entrypoint, and the Go runtime cannot load its importable package; set dangEntrypoint = true, or change the package to main and remove the [entrypoint] table from dagger-module.toml"
+    }
+    null
+  }
+
+  """
+  Whether dagger-module.toml names a Dang entrypoint inside the module, as
+  dangEntrypoint generates it.
+  """
+  let hasLocalDangEntrypoint(ws: Workspace!): Boolean! {
+    if (exists(ws, "dagger-module.toml") == false) {
+      return false
+    }
+    # A table runs to the next table header.
+    let table = ws.file("dagger-module.toml").contents
+      .match("(?m)^[ \\t]*\\[entrypoint\\][ \\t]*(?:#.*)?$((?:\\n[ \\t]*(?:[^\\[\\s].*)?)*)")
+    if (table == null) {
+      return false
+    }
+    let body = table.captures[0] ?? ""
+    entrypointValue(body, "kind") == "dang" and isLocalSource(entrypointValue(body, "source"))
+  }
+
+  let entrypointValue(table: String!, key: String!): String! {
+    let m = table.match(Regexp("(?m)^\\s*" + key + "\\s*=\\s*\"([^\"]*)\""))
+    if (m == null) { "" } else { m.captures[0] ?? "" }
+  }
+
+  """
+  The engine's rule: a path prefix or a dot-free first segment is local, a
+  URL or a host name is not.
+  """
+  let isLocalSource(source: String!): Boolean! {
+    if (source.hasPrefix(".") or source.hasPrefix("/")) {
+      true
+    } else if (source == "" or source.contains(":")) {
+      false
+    } else {
+      (source.split("/")[0] ?? "").contains(".") == false
+    }
+  }
+
+  """
+  Generate a module that the engine loads through a Dang entrypoint.
+
+  The schema comes from a staged runtime manifest that does not reach the
+  result. The generator writes the embedded client, the static dispatch
+  command, and the entrypoint into the module's Go root. sdk-helpers then
+  writes the manifest that names the entrypoint and removes dagger.json.
+  """
+  let entrypointModule(ws: Workspace!, name: String!): Workspace! {
+    let scopePath = normalizePath(ws.cwd)
+    # A module whose manifest names an entrypoint and no dependencies loads
+    # through that entrypoint, which is not generated yet. A fresh runtime
+    # manifest gives the engine a module it can serve a schema for.
+    let staged = sdkHelpers.moduleManifest
+      .withName(name: name)
+      .withLegacyGoRuntime
+      .generate(ws, lock: false, legacyJson: false)
+    let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
+    let schemaVersion = source.engineVersion
+
+    # The generator updates go.mod and go.sum at the Go root, which can be
+    # above the module. Without one, it creates go.mod in the module.
+    let goRoot = findClientRoot(ws) ?? scopePath
+    let moduleRoot = if (goRoot == scopePath) {
+      "."
+    } else if (goRoot == ".") {
+      scopePath
+    } else {
+      scopePath.trimPrefix(goRoot + "/")
+    }
+    let prefix = if (moduleRoot == ".") { "" } else { moduleRoot + "/" }
+    let inputs = moduleCodegenBuilder
+      .withDirectory("/src", ws.withWorkdir(goRoot).directory(".", exclude: ["**/.git"]))
+      .withFile("/schema.json", source.introspectionSchemaJSON)
+    let codegen = runTool(inputs, [
+      "module-codegen",
+      "--module-root", "/src/" + moduleRoot,
+      "--module-name", name,
+      "--introspection-json-path", "/schema.json",
+      "--schema-version", schemaVersion,
+      "--dagger-version", schemaVersion,
+    ])
+    let generated = runTool(codegen, [
+      "entrypoint-contract",
+      "--entrypoint-dir", "/src/" + prefix + entrypointPath,
+      "--introspection-json-path", "/schema.json",
+    ]).directory("/src")
+    # Merge only what the generator owns, so the user's files are not
+    # written back.
+    let owned = directory.withDirectory(".", generated, include: [
+      "go.mod",
+      "go.sum",
+      prefix + "go.mod",
+      prefix + "go.sum",
+      prefix + "dagger.gen.go",
+      prefix + "internal/dagger/**",
+      prefix + "cmd/*-dispatch/**",
+    ])
+    let merged = ws
+      .withWorkdir(goRoot)
+      .withDirectory(".", owned)
+      .withWorkdir(scopePath)
+    sdkHelpers.moduleManifest
+      .withName(name: name)
+      .withDangEntrypoint(source: "./" + entrypointPath)
+      .generate(merged, lock: false, legacyJson: false)
+  }
+
+  """
+  Run one generator tool. A failure raises the tool's own message: an exec
+  error reports only the exit code, and the message is what tells the user
+  how to fix the module.
+  """
+  let runTool(ctr: Container!, args: [String!]!): Container! {
+    let ran = ctr.withExec(args, expect: ReturnType.ANY)
+    if (ran.exitCode != 0) {
+      # Each tool prints its error last, after its name.
+      let prefix = (args[0] ?? "") + ": "
+      raise prefix + ran.stderr.split(prefix).reduce("") { last, part => part }.trimSpace
+    }
+    ran
+  }
+
+  """Directory of the generated Dang entrypoint, relative to the module."""
+  let entrypointPath: String! = "internal/dagger/entrypoint"
+
+  let rootedPath(p: String!): String! {
+    if (p == ".") { "/" } else { "/" + p }
+  }
+
+  """
+  Build the module generator and the entrypoint contract check.
+
+  The contract check embeds Dang, whose parser needs cgo.
+  """
+  let moduleCodegenBuilder: Container! {
+    container
+      .from("golang:1.26-alpine")
+      .withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "build-base"])
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/helpers", currentModule.source.directory("helpers"))
+      .withWorkdir("/helpers/entrypoint-contract")
+      .withExec(["go", "build", "-o", "/usr/local/bin/entrypoint-contract", "."])
+      .withWorkdir("/helpers/module-codegen")
+      .withExec(["go", "build", "-o", "/usr/local/bin/module-codegen", "."])
+  }
+
   """Build the engine-free standalone client generator."""
   let codegenBuilder: Container! {
     container
@@ -196,11 +380,21 @@ type GoSdk {
       ])
   }
 
-  """Render one templates/<name> starter for a new module."""
+  """
+  Render one templates/<name> starter for a new module.
+
+  The Go runtime needs package main. A module with a Dang entrypoint is an
+  importable package named after the module.
+  """
   let renderedTemplate(name: String!, selected: String!): Directory! {
     if (currentModule.source.exists("templates/" + selected) == false) {
       raise "unknown init template: " + selected
     } else {
+      let render = if (dangEntrypoint) {
+        ["render-template", "--importable-package", name, "/template", "/rendered"]
+      } else {
+        ["render-template", name, "/template", "/rendered"]
+      }
       container
         .from("golang:1.25-alpine")
         .withoutEntrypoint
@@ -210,7 +404,7 @@ type GoSdk {
         .withDirectory("/template", currentModule.source.directory("templates/" + selected))
         .withWorkdir("/helper")
         .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
-        .withExec(["render-template", name, "/template", "/rendered"])
+        .withExec(render)
         .directory("/rendered")
     }
   }
