@@ -1,0 +1,346 @@
+"""
+Run the Go SDK with dangEntrypoint.
+"""
+type EntrypointChecks {
+  let fixtureRoot: String! = ".dagger/modules/e2e/fixtures"
+  let outputRoot: String! = ".dagger/modules/e2e/out"
+  # A Go module without a manifest. Each check writes the manifest it needs.
+  let appPath: String! = fixtureRoot + "/generate/app"
+  let clientTargetPath: String! = fixtureRoot + "/client/dep"
+  let goScopePath: String! = fixtureRoot + "/go-scope"
+
+  let exists(ws: Workspace!, path: String!): Boolean! {
+    ws.directory(".", include: [path]).exists(path)
+  }
+
+  """The manifest dangEntrypoint writes: the name and the entrypoint only."""
+  let entrypointManifest(name: String!): String! {
+    "name = " + JSON.encode(name) +
+      "\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+  }
+
+  """
+  A new module gets an importable starter, the entrypoint manifest, the
+  embedded client, the dispatch command, and the Dang entrypoint.
+  Regeneration reads the entrypoint manifest and changes nothing.
+  """
+  moduleInitCheck(ws: Workspace!): Void @check {
+    let scopePath = outputRoot + "/entrypoint-init"
+    let input = ws
+      .withNewFile(scopePath + "/user.txt", "keep me\n")
+      .withWorkdir(scopePath)
+    let generated = goSdk(dangEntrypoint: true).generateScope(
+      ws: input,
+      isModule: true,
+      name: "entrypoint-init",
+      clients: [],
+    )
+
+    assert("the manifest is not the entrypoint manifest") {
+      generated.file("dagger-module.toml").contents == entrypointManifest("entrypoint-init")
+    }
+    assert("dagger.json was created") {
+      exists(generated, "dagger.json") == false
+    }
+    assert("the starter is not an importable package") {
+      generated.file("main.go").contents.hasPrefix("package entrypoint_init\n")
+    }
+    assert("go.mod was not created") {
+      exists(generated, "go.mod")
+    }
+    assert("the module dispatcher was not generated") {
+      generated.file("dagger.gen.go").contents.contains("func DaggerDispatch(")
+    }
+    assert("the embedded client was not generated") {
+      exists(generated, "internal/dagger/dagger.gen.go")
+    }
+    assert("the embedded client was generated twice") {
+      exists(generated, "internal/dagger/internal") == false
+    }
+    assert("the dispatch command was not generated") {
+      exists(generated, "cmd/entrypoint-init-dispatch/main.go")
+    }
+    assert("the Dang entrypoint was not generated") {
+      generated.file("internal/dagger/entrypoint/main.dang").contents.contains("type Entrypoint implements ModuleEntrypoint")
+    }
+    assert("an existing file was not preserved") {
+      generated.file("user.txt").contents == "keep me\n"
+    }
+    assert("generation changed the current directory") {
+      generated.cwd == input.cwd
+    }
+
+    let regenerated = goSdk(dangEntrypoint: true).generateScope(
+      ws: generated,
+      isModule: true,
+      name: "entrypoint-init",
+      clients: [],
+    )
+    assert("regeneration was not stable") {
+      regenerated.changes(generated).isEmpty
+    }
+    null
+  }
+
+  """
+  An existing Go runtime module moves to a Dang entrypoint. The entrypoint
+  describes its types, and the dispatch command serves the requests the
+  entrypoint sends, in engine mode and in developer mode.
+  """
+  generateCheck(ws: Workspace!): Void @check {
+    let legacyJSON = "{\n  \"name\": \"generate-app\",\n  \"engineVersion\": \"v1.0.0-beta.14\",\n  \"sdk\": {\n    \"source\": \"go\"\n  }\n}\n"
+    let input = ws
+      .withNewFile(appPath + "/dagger.json", legacyJSON)
+      .withWorkdir(appPath)
+    let generated = goSdk(dangEntrypoint: true).generateScope(
+      ws: input,
+      isModule: true,
+      name: "generate-app",
+      clients: [],
+    )
+
+    assert("the manifest is not the entrypoint manifest") {
+      generated.file("dagger-module.toml").contents == entrypointManifest("generate-app")
+    }
+    assert("dagger.json was not removed") {
+      exists(generated, "dagger.json") == false
+    }
+    assert("the module source changed") {
+      generated.file("main.go").contents == input.file("main.go").contents
+    }
+
+    let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
+    assert("the entrypoint does not take fnArgs as a JSON object") {
+      entrypoint.contains("fnArgs: JSON!,")
+    }
+    assert("the entrypoint does not pass fnArgs to the dispatch command") {
+      entrypoint.contains("fnArgs: fnArgs,")
+    }
+    assert("the entrypoint still uses the argument list") {
+      entrypoint.contains("FunctionCallArgValue") == false
+    }
+    assert("the constructor does not use the empty function name") {
+      entrypoint.contains("function(\"\", typeDef.withObject(\"GenerateApp\"))")
+    }
+    assert("the default value is not JSON text") {
+      entrypoint.contains("defaultValue: (\"\\\"Hello\\\"\" :: Dagger.JSON!)")
+    }
+    assert("the entrypoint does not build the dispatch command in the module") {
+      entrypoint.contains("\"./cmd/generate-app-dispatch\"")
+    }
+
+    let dispatcher = container
+      .from("golang:1.26-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/module", generated.directory("."))
+      .withWorkdir("/module")
+      .withExec(["go", "vet", "./..."])
+      .withExec(["go", "build", "-o", "/usr/local/bin/dispatch", "./cmd/generate-app-dispatch"])
+
+    let developer = dispatcher
+      .withExec(["dispatch", "call", "repeat", "--value", "x", "--count", "2"])
+      .stdout
+    assert("developer mode returned " + developer) {
+      developer == "[\"x\",\"x\"]\n"
+    }
+    let developerReceiver = dispatcher
+      .withExec(["dispatch", "call", "greet", "--name", "World", "--receiver-json", "{\"Prefix\":\"Hey\"}"])
+      .stdout
+    assert("developer mode with a receiver returned " + developerReceiver) {
+      developerReceiver == "Hey, World\n"
+    }
+
+    let engine = container
+      .from("alpine:3.22")
+      .withFile("/usr/local/bin/dispatch", dispatcher.file("/usr/local/bin/dispatch"), permissions: 755)
+    let constructed = engineCall(engine, "", null, "{\"prefix\":\"Hi\"}")
+    assert("the constructor returned " + constructed) {
+      constructed == "{\"Prefix\":\"Hi\"}"
+    }
+    let greeted = engineCall(engine, "Greet", constructed, "{\"name\":\"World\"}")
+    assert("the receiver state was not used: " + greeted) {
+      greeted == "\"Hi, World\""
+    }
+    let repeated = engineCall(engine, "Repeat", "{}", "{\"value\":\"x\",\"count\":2}")
+    assert("the list codec returned " + repeated) {
+      repeated == "[\"x\",\"x\"]"
+    }
+    let optional = engineCall(engine, "Optional", "{}", "{\"value\":null}")
+    assert("the optional codec returned " + optional) {
+      optional == "null"
+    }
+    let status = engineCall(engine, "Status", "{}", "{}")
+    assert("the enum codec returned " + status) {
+      status == "\"Ready\""
+    }
+    let voided = engineCall(engine, "Void", "{}", "{}")
+    assert("the void codec returned " + voided) {
+      voided == "null"
+    }
+    let echoed = engineCall(engine, "DaggerEcho", "{}", "{\"value\":\"nested\"}")
+    assert("the nested Dagger call returned " + echoed) {
+      echoed == "\"nested\""
+    }
+    let containerID = engineCall(engine, "Container", "{}", "{\"value\":\"resource\"}")
+    let read = engineCall(engine, "ReadContainer", "{}", "{\"container\":" + containerID + "}")
+    assert("the core object ID did not round trip: " + read) {
+      read == "\"resource\""
+    }
+
+    let failed = engine.withExec(
+      ["dispatch", "engine-call"],
+      stdin: callRequest("Fail", "{}", "{}"),
+      experimentalPrivilegedNesting: true,
+      expect: ReturnType.ANY,
+    )
+    assert("a Go error did not fail the call") {
+      failed.exitCode != 0
+    }
+    assert("the Go error was not reported") {
+      failed.stderr.contains("fixture failure")
+    }
+    null
+  }
+
+  """
+  The module's Go root is the nearest go.mod above it. The generator updates
+  that go.mod, and the entrypoint builds the dispatch command from there.
+  """
+  goRootCheck(ws: Workspace!): Void @check {
+    let scopePath = goScopePath + "/entrypoint-nested"
+    let generated = goSdk(dangEntrypoint: true, template: "empty").generateScope(
+      ws: ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath),
+      isModule: true,
+      name: "entrypoint-nested",
+      clients: [],
+    )
+
+    assert("a nested go.mod was created") {
+      exists(generated, "go.mod") == false
+    }
+    assert("the entrypoint does not build in the module directory") {
+      generated.file("internal/dagger/entrypoint/main.dang").contents.contains(".withWorkdir(\"/workspace/entrypoint-nested\")")
+    }
+    let goRoot = generated.withWorkdir(goScopePath)
+    assert("the Go root lost its module path") {
+      goRoot.file("go.mod").contents.hasPrefix("module example.com/go-scope\n")
+    }
+
+    let constructed = container
+      .from("golang:1.26-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/workspace", goRoot.directory("."))
+      .withWorkdir("/workspace/entrypoint-nested")
+      .withExec(["go", "run", "./cmd/entrypoint-nested-dispatch", "call", "entrypoint-nested"])
+      .stdout
+    assert("the nested module did not dispatch: " + constructed) {
+      constructed == "{}\n"
+    }
+    null
+  }
+
+  """
+  dangEntrypoint refuses what a manifest with an entrypoint cannot carry,
+  and a module with a Dang entrypoint is not moved back to the Go runtime.
+  """
+  refusalsCheck(ws: Workspace!): Void @check {
+    let app = ws.withWorkdir(appPath)
+
+    let withClient = goSdk(dangEntrypoint: true).generateScope(
+      ws: app,
+      isModule: true,
+      name: "generate-app",
+      clients: [ws.moduleSource("/" + clientTargetPath)],
+    ).file("dagger.gen.go").contents rescue {
+      err: Error => err.message
+    }
+    assert("a client was accepted: " + firstLine(withClient)) {
+      withClient.contains("set dangEntrypoint = false")
+    }
+
+    let legacyPath = outputRoot + "/entrypoint-legacy"
+    let legacy = goSdk(dangEntrypoint: true, template: "legacy").generateScope(
+      ws: ws.withNewDirectory(legacyPath, directory).withWorkdir(legacyPath),
+      isModule: true,
+      name: "entrypoint-legacy",
+      clients: [],
+    ).file("dagger.gen.go").contents rescue {
+      err: Error => err.message
+    }
+    assert("the legacy template was accepted: " + firstLine(legacy)) {
+      legacy.contains("legacy template")
+    }
+
+    let fat = goSdk(dangEntrypoint: true, fat: true).generateScope(
+      ws: app,
+      isModule: true,
+      name: "generate-app",
+      clients: [],
+    ).file("dagger.gen.go").contents rescue {
+      err: Error => err.message
+    }
+    assert("a fat module was accepted: " + firstLine(fat)) {
+      fat.contains("set fat = false")
+    }
+
+    # The generator refuses package main, and the SDK raises its message.
+    let mainPath = outputRoot + "/entrypoint-main"
+    let packageMain = goSdk(dangEntrypoint: true).generateScope(
+      ws: ws
+        .withNewFile(mainPath + "/dagger-module.toml", "name = \"entrypoint-main\"\n")
+        .withNewFile(mainPath + "/main.go", "package main\n\ntype EntrypointMain struct{}\n")
+        .withWorkdir(mainPath),
+      isModule: true,
+      name: "entrypoint-main",
+      clients: [],
+    ).file("dagger.gen.go").contents rescue {
+      err: Error => err.message
+    }
+    assert("package main was accepted: " + firstLine(packageMain)) {
+      packageMain.contains("change package main to package entrypoint_main")
+    }
+
+    let switched = goSdk.generateScope(
+      ws: app.withNewFile("dagger-module.toml", entrypointManifest("generate-app")),
+      isModule: true,
+      name: "generate-app",
+      clients: [],
+    ).file("dagger.gen.go").contents rescue {
+      err: Error => err.message
+    }
+    assert("a Dang entrypoint module was moved to the Go runtime: " + firstLine(switched)) {
+      switched.contains("set dangEntrypoint = true")
+    }
+    null
+  }
+
+  let firstLine(text: String!): String! {
+    text.split("\n")[0] ?? ""
+  }
+
+  """A call request as the generated entrypoint encodes it."""
+  let callRequest(fnName: String!, receiverValue: String, fnArgs: String!): String! {
+    JSON.encode({{
+      receiverType: "GenerateApp",
+      receiverValue: receiverValue,
+      fnName: fnName,
+      fnArgs: fnArgs,
+    }})
+  }
+
+  """Run one engine-mode call and return its JSON result."""
+  let engineCall(ctr: Container!, fnName: String!, receiverValue: String, fnArgs: String!): String! {
+    ctr
+      .withExec(
+        ["dispatch", "engine-call"],
+        stdin: callRequest(fnName, receiverValue, fnArgs),
+        experimentalPrivilegedNesting: true,
+      )
+      .stdout
+      .trimSuffix("\n")
+  }
+}
