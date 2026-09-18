@@ -1,9 +1,12 @@
 package templates
 
 import (
+	"go/parser"
+	"go/token"
 	"go/types"
 	"testing"
 
+	. "github.com/dave/jennifer/jen" //nolint:staticcheck
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,4 +87,12 @@ func TestDangFunctionDefaultValueIsJSONText(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, source, `defaultValue: ("\"alpine:3.21\"" :: Dagger.JSON!)`)
 	require.NotContains(t, source, "JSON.decode")
+}
+
+func TestDispatchForObjectWithoutFunctions(t *testing.T) {
+	source := v2InvokeSrc(map[string][]Code{}, []*parsedObjectType{{name: "Empty"}})
+	_, err := parser.ParseFile(token.NewFileSet(), "dispatch.go", "package empty\n\n"+source, 0)
+	require.NoError(t, err)
+	require.Contains(t, source, `return &Empty{}, nil`)
+	require.Contains(t, source, `fmt.Errorf("unknown function %s", fnName)`)
 }

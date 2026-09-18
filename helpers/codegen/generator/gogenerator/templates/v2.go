@@ -198,6 +198,13 @@ func v2InvokeSrc(functionCases map[string][]Code, objects []*parsedObjectType) s
 			functionCases[obj.name] = nil
 		}
 		if obj.constructor == nil {
+			// An object without functions has no cases yet, so it also
+			// needs the default case that the function cases end with.
+			if len(functionCases[obj.name]) == 0 {
+				functionCases[obj.name] = []Code{Default().Block(
+					Return(Nil(), Qual("fmt", "Errorf").Call(Lit("unknown function %s"), Id(fnNameVar))),
+				)}
+			}
 			functionCases[obj.name] = append([]Code{
 				Case(Lit("")).Block(Return(Op("&").Id(obj.name).Values(), Nil())),
 			}, functionCases[obj.name]...)
