@@ -119,7 +119,10 @@ status and writes the error to standard error. `call` returns the output as
 
 The entrypoint finds `go.mod` above the module through the workspace. It
 mounts only that Go root and builds `./cmd/<module>-dispatch` in the module
-subdirectory.
+subdirectory. Before it builds, it checks that the workspace directory holds
+`cmd/<module>-dispatch/main.go` and a `dagger-module.toml` with the module's
+name. The engine sets that directory to the module only for a module in the
+workspace, so the check fails for git and directory module sources.
 
 The command also has a developer mode:
 
@@ -137,7 +140,9 @@ Dagger API needs a session, for example `dagger run go run ...`.
 `generateScope` runs these steps when `dangEntrypoint` is true:
 
 1. Refuse what a manifest with an entrypoint cannot carry.
-2. Render the starter for a new module, with an importable package name.
+2. Render the starter for a new module, with an importable package name. The
+   starter imports the embedded client through the nearest `go.mod`, or
+   through `dagger/<module>` when there is none, as the generator does.
 3. Stage a runtime manifest from sdk-helpers, and read the schema and engine
    version from that staged module. The SDK does not reuse an existing
    entrypoint manifest here. With an entrypoint and no dependencies, the engine
@@ -152,6 +157,8 @@ Dagger API needs a session, for example `dagger run go run ...`.
 5. Type-check the entrypoint with `entrypoint-contract`, which installs the
    engine's `ModuleEntrypoint` interface next to it.
 6. Merge only the generated files, `go.mod`, and `go.sum` into the workspace.
+   The generator lists the generated bindings it removed, and the SDK removes
+   them from the workspace too.
 7. Write the manifest with sdk-helpers, and remove `dagger.json`.
 
 The staged runtime manifest does not reach the result. When a generator step
@@ -166,10 +173,20 @@ anything:
 - The `legacy` template for a new module.
 - `fat`. A fat `dagger.json` points older engines at the Go runtime, which
   cannot load an importable package.
-- `package main`. The generator names the package to use instead.
+- Manifest settings that the new manifest would drop: `include`,
+  `disableDefaultFunctionCaching`, a `source` other than `.`, the `codegen`,
+  `clients`, and `dependencies` tables, and a runtime other than Go. The SDK
+  reads `dagger-module.toml` and `dagger.json` for them.
+- `package main`. The generator names the package to use instead, and it
+  leaves the module unchanged.
+- A file at a generated path that is not generated code:
+  `dagger.gen.go`, `cmd/<module>-dispatch/main.go`, or
+  `internal/dagger/entrypoint/main.dang`. The generator writes these files
+  only when they are missing or start with a generated-code header.
 
 Without `dangEntrypoint`, `generateScope` refuses a module whose manifest names
-a local Dang entrypoint. The Go runtime needs `package main`, so the SDK does
+a Dang entrypoint whose source is not clearly a remote module. It parses the
+manifest as TOML, so any quote style or table form counts. The Go runtime needs `package main`, so the SDK does
 not switch such a module back silently. The message says to set
 `dangEntrypoint = true`, or to change the package to `main` and remove the
 `[entrypoint]` table.
@@ -212,8 +229,12 @@ without an engine schema helper call.
   entrypoint loader.
 - A module cannot use other modules, because manifest v2 has no dependency
   list.
-- A new module's starter imports `dagger/<module>/internal/dagger`. That
-  import path is wrong when the module is inside an existing Go module.
+- The engine can load such a module only from the local workspace. For a git
+  or directory module source, the engine passes the caller's workspace, which
+  does not hold the module's files. The entrypoint still returns the module's
+  types, but a call fails with `the Go Dang entrypoint can only load a module
+  from the local workspace; git and directory module sources are not
+  supported yet`. The fix belongs in the engine's entrypoint contract.
 - The dispatch request format is private to this SDK.
 
 ## Verification
