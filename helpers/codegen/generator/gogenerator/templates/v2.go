@@ -9,6 +9,7 @@ import (
 	"go/format"
 	"go/token"
 	"go/types"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -291,7 +292,25 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	b.WriteString("      goMod.trimSuffix(\"/go.mod\")\n")
 	b.WriteString("    }\n")
 	b.WriteString("  }\n\n")
+	// The engine points the workspace at the module only for a module in the
+	// workspace. A git or directory source keeps the caller's working
+	// directory, where go.mod would name some other Go module.
+	dispatchMain := "cmd/" + strcase.ToKebab(moduleName) + "-dispatch/main.go"
+	namePattern := `(?m)^\s*name\s*=\s*["']` + regexp.QuoteMeta(moduleName) + `["']\s*(#.*)?$`
+	b.WriteString("  let checkModule(workspace: Workspace!): Void {\n")
+	fmt.Fprintf(&b, "    let found = workspace.directory(\".\", include: [\"dagger-module.toml\", %s])\n", strconv.Quote(dispatchMain))
+	fmt.Fprintf(&b, "    let own = if (found.exists(%s) and found.exists(\"dagger-module.toml\")) {\n", strconv.Quote(dispatchMain))
+	fmt.Fprintf(&b, "      found.file(\"dagger-module.toml\").contents.containsMatch(%s)\n", strconv.Quote(namePattern))
+	b.WriteString("    } else {\n")
+	b.WriteString("      false\n")
+	b.WriteString("    }\n")
+	b.WriteString("    if (own == false) {\n")
+	b.WriteString("      raise \"the Go Dang entrypoint can only load a module from the local workspace; git and directory module sources are not supported yet\"\n")
+	b.WriteString("    }\n")
+	b.WriteString("    null\n")
+	b.WriteString("  }\n\n")
 	b.WriteString("  let dispatch(workspace: Workspace!): File! {\n")
+	b.WriteString("    checkModule(workspace)\n")
 	b.WriteString("    let root = goRoot(workspace)\n")
 	b.WriteString("    let source = if (root == \"\") { workspace.directory(\"/\") } else { workspace.directory(root) }\n")
 	b.WriteString("    container\n")

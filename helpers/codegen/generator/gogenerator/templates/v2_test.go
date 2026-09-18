@@ -4,6 +4,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strings"
 	"testing"
 
 	. "github.com/dave/jennifer/jen" //nolint:staticcheck
@@ -62,6 +63,17 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.Contains(t, text, "fnArgs: fnArgs,")
 	require.Contains(t, text, "(result :: JSON!)")
 	require.NotContains(t, text, "FunctionCallArgValue")
+}
+
+func TestEntrypointChecksItsModuleBeforeBuilding(t *testing.T) {
+	source, err := (&v2Module{}).renderEntrypointSource("hello-world", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+
+	text := string(source)
+	require.Contains(t, text, `found.exists("cmd/hello-world-dispatch/main.go")`)
+	require.Contains(t, text, `containsMatch("(?m)^\\s*name\\s*=\\s*[\"']hello-world[\"']\\s*(#.*)?$")`)
+	require.Contains(t, text, "git and directory module sources are not supported yet")
+	require.Less(t, strings.Index(text, "checkModule(workspace)\n"), strings.Index(text, "goRoot(workspace)\n"))
 }
 
 func TestDispatchSourceDecodesArgumentObject(t *testing.T) {
