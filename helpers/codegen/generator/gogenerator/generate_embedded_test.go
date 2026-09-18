@@ -35,4 +35,6 @@ func TestGenerateEmbeddedClientUsesModuleBootstrap(t *testing.T) {
 
 	_, err = fs.Stat(state.Overlay, "go.mod")
 	require.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = fs.Stat(state.Overlay, "internal/dagger/internal")
+	require.ErrorIs(t, err, fs.ErrNotExist)
 }

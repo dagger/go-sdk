@@ -38,14 +38,16 @@ func TestNewGoSDKInterfaceSurface(t *testing.T) {
 	}, nil, nil, 0)
 	tree, err := buildTemplateTree(funcs)
 	require.NoError(t, err)
-	tmpl := tree.Lookup("internal/dagger/dagger.gen.go.tmpl")
+	tmpl := tree.Lookup("dagger.gen.go.tmpl")
 	require.NotNil(t, tmpl)
 
 	data := struct {
+		PackageName   string
 		Schema        *introspection.Schema
 		SchemaVersion string
 		Types         []*introspection.Type
 	}{
+		PackageName:   "dagger",
 		Schema:        schema,
 		SchemaVersion: "v0.21.0-dev",
 		Types:         schema.Visit(),
