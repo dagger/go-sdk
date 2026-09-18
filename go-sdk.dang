@@ -272,6 +272,7 @@ type GoSdk {
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
       "--dagger-version", schemaVersion,
+      "--removed-list", "/removed.txt",
     ])
     let generated = runTool(codegen, [
       "entrypoint-contract",
@@ -293,10 +294,14 @@ type GoSdk {
       .withWorkdir(goRoot)
       .withDirectory(".", owned)
       .withWorkdir(scopePath)
+    # The merge only adds files. The generated files the generator removed
+    # are removed here, relative to the module.
+    let removed = codegen.file("/removed.txt").contents.split("\n").filter { p => p != "" }
+    let pruned = removed.reduce(merged) { current, p => current.withoutFile(p) }
     sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
-      .generate(merged, lock: false, legacyJson: false)
+      .generate(pruned, lock: false, legacyJson: false)
   }
 
   """
