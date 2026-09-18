@@ -316,16 +316,13 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
     receiverType: String!,
     receiverValue: JSON,
     fnName: String!,
-    fnArgs: [FunctionCallArgValue!]!,
+    fnArgs: JSON!,
   ): JSON! {
-    let args = fnArgs.reduce([]) { values, arg =>
-      values + [{{ name: arg.name, value: arg.value }}]
-    }
     let request = JSON.encode({{
       receiverType: receiverType,
       receiverValue: receiverValue,
       fnName: fnName,
-      fnArgs: args,
+      fnArgs: fnArgs,
     }})
     let result = container
       .from("alpine:3.22")
@@ -336,7 +333,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
         experimentalPrivilegedNesting: true,
       )
       .stdout
-    JSON.decode(result)
+    (result :: JSON!)
   }
 }
 `)
@@ -643,16 +640,13 @@ import (
 	module %q
 )
 
-type callArg struct {
-	Name string `+"`json:\"name\"`"+`
-	Value json.RawMessage `+"`json:\"value\"`"+`
-}
-
+// callRequest is the ModuleEntrypoint.call input. The entrypoint passes each
+// JSON value as JSON text in a string; a JSON value is accepted too.
 type callRequest struct {
-	ReceiverType string `+"`json:\"receiverType,omitempty\"`"+`
-	ReceiverValue json.RawMessage `+"`json:\"receiverValue,omitempty\"`"+`
+	ReceiverType string `+"`json:\"receiverType\"`"+`
+	ReceiverValue json.RawMessage `+"`json:\"receiverValue\"`"+`
 	FnName string `+"`json:\"fnName\"`"+`
-	FnArgs []callArg `+"`json:\"fnArgs,omitempty\"`"+`
+	FnArgs json.RawMessage `+"`json:\"fnArgs\"`"+`
 }
 
 type argumentSpec struct { Required bool; Default string; Encoding string }
@@ -695,9 +689,26 @@ func engineCall(ctx context.Context, input io.Reader, output io.Writer) error {
 }
 
 func dispatch(ctx context.Context, req callRequest) (any, error) {
-	args := make(map[string][]byte, len(req.FnArgs))
-	for _, arg := range req.FnArgs { args[arg.Name] = arg.Value }
-	return module.DaggerDispatch(ctx, req.ReceiverValue, req.ReceiverType, req.FnName, args)
+	receiver, err := jsonValue("receiverValue", req.ReceiverValue)
+	if err != nil { return nil, err }
+	fnArgs, err := jsonValue("fnArgs", req.FnArgs)
+	if err != nil { return nil, err }
+	values := map[string]json.RawMessage{}
+	if err := json.Unmarshal(fnArgs, &values); err != nil { return nil, fmt.Errorf("fnArgs is not a JSON object: %%w", err) }
+	args := make(map[string][]byte, len(values))
+	for name, value := range values { args[name] = value }
+	return module.DaggerDispatch(ctx, receiver, req.ReceiverType, req.FnName, args)
+}
+
+// jsonValue returns the JSON value in a request field. A JSON string holds
+// JSON text, so it is decoded once. A missing field reads as null.
+func jsonValue(field string, raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 || string(raw) == "null" { return json.RawMessage("null"), nil }
+	if raw[0] != '"' { return raw, nil }
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil { return nil, fmt.Errorf("decode %%s: %%w", field, err) }
+	if !json.Valid([]byte(text)) { return nil, fmt.Errorf("%%s is not valid JSON text", field) }
+	return json.RawMessage(text), nil
 }
 
 func developerCall(ctx context.Context, argv []string, output io.Writer) error {
@@ -725,17 +736,14 @@ func developerCall(ctx context.Context, argv []string, output io.Writer) error {
 		if arg.Default != "" { values[name] = json.RawMessage(arg.Default); continue }
 		if arg.Required { return fmt.Errorf("required argument --%%s is not set", name) }
 	}
-	names := make([]string, 0, len(values))
-	for name := range values { names = append(names, name) }
-	sort.Strings(names)
-	req := callRequest{ReceiverType: spec.Receiver, ReceiverValue: receiver, FnName: spec.FnName}
-	for _, name := range names { req.FnArgs = append(req.FnArgs, callArg{Name: name, Value: values[name]}) }
-	result, err := dispatch(ctx, req)
+	fnArgs, err := json.Marshal(values)
+	if err != nil { return err }
+	result, err := dispatch(ctx, callRequest{ReceiverType: spec.Receiver, ReceiverValue: receiver, FnName: spec.FnName, FnArgs: fnArgs})
 	if err != nil { return err }
 	encoded, err := json.Marshal(result)
 	if err != nil { return err }
 	var text string
-	if json.Unmarshal(encoded, &text) == nil { _, err = fmt.Fprintln(output, text) } else { _, err = fmt.Fprintln(output, string(encoded)) }
+	if string(encoded) != "null" && json.Unmarshal(encoded, &text) == nil { _, err = fmt.Fprintln(output, text) } else { _, err = fmt.Fprintln(output, string(encoded)) }
 	return err
 }
 

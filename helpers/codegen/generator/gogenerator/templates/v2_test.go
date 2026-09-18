@@ -55,4 +55,18 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.NotContains(t, text, "pub main(")
 	require.Contains(t, text, `workspace.findUp("go.mod")`)
 	require.Contains(t, text, `.withWorkdir("/workspace/modules/hello")`)
+	require.Contains(t, text, "fnArgs: JSON!,")
+	require.Contains(t, text, "fnArgs: fnArgs,")
+	require.Contains(t, text, "(result :: JSON!)")
+	require.NotContains(t, text, "FunctionCallArgValue")
+}
+
+func TestDispatchSourceDecodesArgumentObject(t *testing.T) {
+	source, err := (&v2Module{}).renderDispatchSource("hello", "example.com/hello")
+	require.NoError(t, err)
+
+	text := string(source)
+	require.Contains(t, text, "FnArgs        json.RawMessage `json:\"fnArgs\"`")
+	require.Contains(t, text, `jsonValue("fnArgs", req.FnArgs)`)
+	require.NotContains(t, text, "callArg")
 }

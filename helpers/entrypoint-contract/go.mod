@@ -4,7 +4,7 @@ go 1.25.3
 
 require (
 	github.com/stretchr/testify v1.11.1
-	github.com/vito/dang/v2 v2.1.3
+	github.com/vito/dang/v2 v2.1.4
 )
 
 require (

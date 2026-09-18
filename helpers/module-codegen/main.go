@@ -24,8 +24,6 @@ func run() error {
 	flag.StringVar(&cfg.SchemaVersion, "schema-version", "", "engine schema version")
 	flag.StringVar(&cfg.DaggerVersion, "dagger-version", "", "dagger.io/dagger version")
 	flag.StringVar(&cfg.GoImage, "go-image", "golang:1.26-alpine", "Go image used by the generated entrypoint")
-	flag.BoolVar(&cfg.CoreOnly, "core-only", false, "remove module-contributed types from the input schema")
-	flag.BoolVar(&cfg.RemoveLegacyManifest, "remove-legacy-manifest", false, "remove dagger.json after writing the v2 manifest")
 	flag.Parse()
 
 	if cfg.ModuleRoot == "" {

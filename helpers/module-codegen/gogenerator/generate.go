@@ -17,23 +17,21 @@ import (
 
 	"github.com/iancoleman/strcase"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/semver"
 
 	"codegen/generator"
 	clientgen "codegen/generator/gogenerator"
 	"codegen/generator/gogenerator/templates"
 	"codegen/introspection"
-	"module-codegen/manifest"
 )
 
 type GenerateConfig struct {
-	ModuleRoot           string
-	ModuleName           string
-	SchemaPath           string
-	SchemaVersion        string
-	DaggerVersion        string
-	GoImage              string
-	CoreOnly             bool
-	RemoveLegacyManifest bool
+	ModuleRoot    string
+	ModuleName    string
+	SchemaPath    string
+	SchemaVersion string
+	DaggerVersion string
+	GoImage       string
 }
 
 func Generate(ctx context.Context, cfg GenerateConfig) error {
@@ -68,9 +66,6 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	resp, err := readSchema(cfg.SchemaPath, cfg.SchemaVersion)
 	if err != nil {
 		return err
-	}
-	if cfg.CoreOnly {
-		resp.Schema = resp.Schema.Exclude(resp.Schema.DependencyNames()...)
 	}
 	cfg.SchemaVersion = resp.SchemaVersion
 	generator.SetSchemaParents(resp.Schema)
@@ -136,20 +131,6 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	entrypointDir := filepath.Join(root, "internal", "dagger", "entrypoint")
 	if err := writeFile(filepath.Join(entrypointDir, "main.dang"), artifacts.EntrypointSource); err != nil {
 		return err
-	}
-	moduleManifest := manifest.New(cfg.ModuleName).
-		WithEntrypoint(manifest.DangKind, "./internal/dagger/entrypoint")
-	manifestFile, err := moduleManifest.AsFile()
-	if err != nil {
-		return fmt.Errorf("render module manifest: %w", err)
-	}
-	if err := writeFile(filepath.Join(root, "dagger-module.toml"), manifestFile); err != nil {
-		return err
-	}
-	if cfg.RemoveLegacyManifest {
-		if err := os.Remove(filepath.Join(root, "dagger.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove legacy manifest: %w", err)
-		}
 	}
 	if err := goModTidy(ctx, root); err != nil {
 		return err
@@ -297,6 +278,16 @@ func pinDagger(path, version string) error {
 			return nil
 		}
 	}
+	for _, require := range mod.Require {
+		if require.Mod.Path == "dagger.io/dagger" && semver.Compare(require.Mod.Version, version) >= 0 {
+			return nil
+		}
+	}
+	// A development engine reports an unreleased version. Pinning it would
+	// leave a requirement that go mod tidy cannot resolve.
+	if !moduleVersionExists(filepath.Dir(path), "dagger.io/dagger", version) {
+		return nil
+	}
 	if err := mod.AddRequire("dagger.io/dagger", version); err != nil {
 		return err
 	}
@@ -305,6 +296,18 @@ func pinDagger(path, version string) error {
 		return err
 	}
 	return writeFile(path, body)
+}
+
+// moduleVersionExists reports whether the module proxy can resolve a version.
+// A failure to reach the proxy reads as "cannot pin", like the client helper.
+func moduleVersionExists(dir, modulePath, version string) bool {
+	cmd := exec.Command("go", "list", "-m", "-e", "-f", "{{if .Error}}unresolved{{end}}", modulePath+"@"+version)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == ""
 }
 
 func removeLegacyGeneratedFile(root string) error {

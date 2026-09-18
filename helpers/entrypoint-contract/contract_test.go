@@ -16,9 +16,9 @@ const validEntrypoint = `type Entrypoint implements ModuleEntrypoint {
     receiverType: String!,
     receiverValue: JSON,
     fnName: String!,
-    fnArgs: [FunctionCallArgValue!]!,
+    fnArgs: JSON!,
   ): JSON! {
-    JSON.decode("null")
+    ("null" :: JSON!)
   }
 }
 `
@@ -35,7 +35,28 @@ func TestCheckRejectsInterfaceMismatch(t *testing.T) {
 	dir := t.TempDir()
 	invalid := `type Entrypoint implements ModuleEntrypoint {
   pub types(workspace: Workspace!): [TypeDef!]! { [] }
-  pub call(workspace: Workspace!): JSON! { JSON.decode("null") }
+  pub call(workspace: Workspace!): JSON! { ("null" :: JSON!) }
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.dang"), []byte(invalid), 0o600))
+
+	err := Check(context.Background(), dir, filepath.Join("..", "codegen", "introspection", "testdata", "schema.json"))
+	require.ErrorContains(t, err, "does not satisfy ModuleEntrypoint")
+}
+
+func TestCheckRejectsArgumentList(t *testing.T) {
+	dir := t.TempDir()
+	invalid := `type Entrypoint implements ModuleEntrypoint {
+  pub types(workspace: Workspace!): [TypeDef!]! { [] }
+  pub call(
+    workspace: Workspace!,
+    receiverType: String!,
+    receiverValue: JSON,
+    fnName: String!,
+    fnArgs: [FunctionCallArgValue!]!,
+  ): JSON! {
+    ("null" :: JSON!)
+  }
 }
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.dang"), []byte(invalid), 0o600))

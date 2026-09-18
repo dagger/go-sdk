@@ -11,22 +11,24 @@ import (
 	"github.com/vito/dang/v2/pkg/introspection"
 )
 
+// moduleEntrypointContract is the engine's ModuleEntrypoint interface, copied
+// verbatim from moduleEntrypointInterface in dagger/dagger
+// core/sdk/dang/v2/entrypoint.go (v1.0.0-beta.14).
 const moduleEntrypointContract = `interface ModuleEntrypoint {
-  pub types(workspace: Workspace!): [TypeDef!]!
-
-  pub call(
-    workspace: Workspace!,
-    receiverType: String!,
-    receiverValue: JSON,
-    fnName: String!,
-    fnArgs: [FunctionCallArgValue!]!,
+  types(workspace: Workspace!): [TypeDef!]!
+  call(
+    workspace: Workspace!
+    receiverType: String!
+    receiverValue: JSON
+    fnName: String!
+    fnArgs: JSON!
   ): JSON!
 }
 `
 
-// Check type-checks a generated Dang entrypoint against the manifest-v2
-// interface and the selected Dagger schema. It is a userland stand-in for the
-// future built-in Dang entrypoint loader.
+// Check type-checks a generated Dang entrypoint against the ModuleEntrypoint
+// interface and the selected Dagger schema, the way the engine's Dang
+// entrypoint loader installs that interface next to the entrypoint source.
 func Check(ctx context.Context, entrypointDir, schemaPath string) error {
 	schema, err := loadSchema(schemaPath)
 	if err != nil {
