@@ -19,6 +19,7 @@ func TestNullableObjectFieldFunction(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		schemaVersion string
+		clientConfig  *generator.ClientGeneratorConfig
 		want          string
 	}{
 		{
@@ -31,10 +32,17 @@ func TestNullableObjectFieldFunction(t *testing.T) {
 			schemaVersion: "v1.0.0-beta.9",
 			want:          "func (r *GitRepository) LatestVersion() *GitRef",
 		},
+		{
+			name:          "standalone client",
+			schemaVersion: "v1.0.0-beta.10",
+			clientConfig:  &generator.ClientGeneratorConfig{},
+			want:          "func (r *GitRepository) LatestVersion() *GitRef",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			funcs := goTemplateFuncs{
 				CommonFunctions: generator.NewCommonFunctions(test.schemaVersion, &FormatTypeFunc{}),
+				cfg:             generator.Config{ClientConfig: test.clientConfig},
 				schemaVersion:   test.schemaVersion,
 			}
 

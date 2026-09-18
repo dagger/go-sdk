@@ -515,8 +515,11 @@ func (funcs goTemplateFuncs) isInterfaceRef(t *introspection.TypeRef) bool {
 	return false
 }
 
+// isNullableObject reports whether a nullable object is returned with a
+// context and an error, as the engine's Go SDK does. Standalone clients keep
+// returning a lazy object, so their API does not change.
 func (funcs goTemplateFuncs) isNullableObject(t *introspection.TypeRef) bool {
-	return funcs.supportsNullableObjects() && t != nil && t.IsOptional() && (t.IsObject() || funcs.isInterfaceRef(t))
+	return !funcs.isStandaloneClient() && funcs.supportsNullableObjects() && t != nil && t.IsOptional() && (t.IsObject() || funcs.isInterfaceRef(t))
 }
 
 // isListOfInterface returns true if the type ref is a list whose element is an interface.
