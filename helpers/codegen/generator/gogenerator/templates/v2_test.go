@@ -70,3 +70,18 @@ func TestDispatchSourceDecodesArgumentObject(t *testing.T) {
 	require.Contains(t, text, `jsonValue("fnArgs", req.FnArgs)`)
 	require.NotContains(t, text, "callArg")
 }
+
+func TestDangFunctionDefaultValueIsJSONText(t *testing.T) {
+	source, err := renderDangFunction(&funcTypeSpec{
+		name: "Build",
+		argSpecs: []paramSpec{{
+			name:            "image",
+			typeSpec:        &parsedPrimitiveType{goType: types.Typ[types.String]},
+			defaultValue:    "alpine:3.21",
+			hasDefaultValue: true,
+		}},
+	})
+	require.NoError(t, err)
+	require.Contains(t, source, `defaultValue: ("\"alpine:3.21\"" :: Dagger.JSON!)`)
+	require.NotContains(t, source, "JSON.decode")
+}

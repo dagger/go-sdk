@@ -472,7 +472,9 @@ func renderDangFunctionNamed(spec *funcTypeSpec, name string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			args = append(args, "defaultValue: JSON.decode("+strconv.Quote(defaultValue)+")")
+			// A cast keeps the JSON text. JSON.decode would materialize the
+			// decoded value instead, which the engine cannot read back.
+			args = append(args, "defaultValue: ("+strconv.Quote(defaultValue)+" :: Dagger.JSON!)")
 		}
 		if arg.defaultPath != "" {
 			args = append(args, "defaultPath: "+strconv.Quote(arg.defaultPath))
