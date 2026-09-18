@@ -188,6 +188,13 @@ type GoSdk {
       if (fat) {
         raise "a fat module is not available with a Dang entrypoint: dagger.json would point older engines at the Go runtime, which cannot load an importable package; set fat = false or dangEntrypoint = false"
       }
+      refuseManifestSettings("dagger-module.toml", decodedManifest(ws), "runtime")
+      let legacyJSON = if (exists(ws, "dagger.json")) {
+        Dagger.json.withContents(ws.file("dagger.json").contents :: Dagger.JSON!)
+      } else {
+        null
+      }
+      refuseManifestSettings("dagger.json", legacyJSON, "sdk")
     } else if (hasLocalDangEntrypoint(ws)) {
       raise "this module is generated with a Dang entrypoint, and the Go runtime cannot load its importable package; set dangEntrypoint = true, or change the package to main and remove the [entrypoint] table from dagger-module.toml"
     }
@@ -195,39 +202,100 @@ type GoSdk {
   }
 
   """
-  Whether dagger-module.toml names a Dang entrypoint inside the module, as
-  dangEntrypoint generates it.
+  Refuse what a manifest sets that a manifest with an entrypoint drops:
+  sdk-helpers writes that manifest from the name and the entrypoint only.
   """
-  let hasLocalDangEntrypoint(ws: Workspace!): Boolean! {
-    if (exists(ws, "dagger-module.toml") == false) {
-      return false
+  let refuseManifestSettings(fileName: String!, manifest: Dagger.JSONValue, runtimeKey: String!): Void {
+    if (manifest == null) {
+      return null
     }
-    # A table runs to the next table header.
-    let table = ws.file("dagger-module.toml").contents
-      .match("(?m)^[ \\t]*\\[entrypoint\\][ \\t]*(?:#.*)?$((?:\\n[ \\t]*(?:[^\\[\\s].*)?)*)")
-    if (table == null) {
-      return false
+    let objections = manifestObjections(manifest, runtimeKey)
+    if (objections.length > 0) {
+      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false"
     }
-    let body = table.captures[0] ?? ""
-    entrypointValue(body, "kind") == "dang" and isLocalSource(entrypointValue(body, "source"))
+    null
   }
 
-  let entrypointValue(table: String!, key: String!): String! {
-    let m = table.match(Regexp("(?m)^\\s*" + key + "\\s*=\\s*\"([^\"]*)\""))
-    if (m == null) { "" } else { m.captures[0] ?? "" }
+  """
+  The settings of a decoded manifest that a manifest with an entrypoint has
+  no place for. runtimeKey is `runtime` in dagger-module.toml and `sdk` in
+  dagger.json. A Go runtime is what dangEntrypoint replaces, so it is kept.
+  """
+  let manifestObjections(manifest: Dagger.JSONValue!, runtimeKey: String!): [String!]! {
+    let fields = manifest.fields
+    let keys = ["include", "disableDefaultFunctionCaching"].filter { key =>
+      fields.contains(key)
+    }
+    # A module is rooted at its own directory, which is what `source = "."`
+    # says. Any other source is what the manifest cannot carry.
+    let source = if (fields.contains("source") and normalizePath(manifest.field(["source"]).asString) != ".") {
+      ["source"]
+    } else {
+      [] :: [String!]!
+    }
+    let tables = ["codegen", "clients", "dependencies"].filter { key =>
+      fields.contains(key)
+    }
+    let runtime = if (fields.contains(runtimeKey) and runtimeSource(manifest.field([runtimeKey])) != "go") {
+      [runtimeKey]
+    } else {
+      [] :: [String!]!
+    }
+    keys + source + tables + runtime
+  }
+
+  """
+  Whether dagger-module.toml names a Dang entrypoint that could be the one
+  dangEntrypoint generates. Only a source that is clearly a remote module
+  reference is left to the Go runtime path.
+  """
+  let hasLocalDangEntrypoint(ws: Workspace!): Boolean! {
+    # sdk-helpers reports a manifest that is not TOML when it loads it.
+    let manifest = decodedManifest(ws) rescue {
+      err: Error => null
+    }
+    if (manifest == null or manifest.fields.contains("entrypoint") == false) {
+      return false
+    }
+    let entrypoint = manifest.field(["entrypoint"])
+    stringField(entrypoint, "kind") == "dang" and isRemoteSource(stringField(entrypoint, "source")) == false
+  }
+
+  """
+  dagger-module.toml parsed as TOML, the way sdk-helpers reads it, or null
+  when the module has none.
+  """
+  let decodedManifest(ws: Workspace!): Dagger.JSONValue {
+    if (exists(ws, "dagger-module.toml") == false) {
+      return null
+    }
+    let contents = ws.file("dagger-module.toml").contents
+    Dagger.json.withContents(JSON.encode(TOML.decode(contents)) :: Dagger.JSON!)
+  }
+
+  """The source of a runtime table or sdk field, which dagger.json may give as a string."""
+  let runtimeSource(value: Dagger.JSONValue!): String! {
+    value.asString rescue {
+      err: Error => stringField(value, "source")
+    }
+  }
+
+  """A string field of a JSON object, or empty when the field is missing."""
+  let stringField(value: Dagger.JSONValue!, key: String!): String! {
+    if (value.fields.contains(key)) { value.field([key]).asString } else { "" }
   }
 
   """
   The engine's rule: a path prefix or a dot-free first segment is local, a
-  URL or a host name is not.
+  URL or a host name is not. An empty source is not clearly remote.
   """
-  let isLocalSource(source: String!): Boolean! {
-    if (source.hasPrefix(".") or source.hasPrefix("/")) {
-      true
-    } else if (source == "" or source.contains(":")) {
+  let isRemoteSource(source: String!): Boolean! {
+    if (source == "" or source.hasPrefix(".") or source.hasPrefix("/")) {
       false
+    } else if (source.contains(":")) {
+      true
     } else {
-      (source.split("/")[0] ?? "").contains(".") == false
+      (source.split("/")[0] ?? "").contains(".")
     }
   }
 

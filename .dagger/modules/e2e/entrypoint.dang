@@ -111,8 +111,12 @@ type EntrypointChecks {
   """
   generateCheck(ws: Workspace!): Void @check {
     let legacyJSON = "{\n  \"name\": \"generate-app\",\n  \"engineVersion\": \"v1.0.0-beta.14\",\n  \"sdk\": {\n    \"source\": \"go\"\n  }\n}\n"
+    # A Go runtime and the module's own source are what the new manifest
+    # replaces, so they are not refused, in either quote style.
+    let legacyTOML = "name = \"generate-app\"\nsource = './'\n\n[runtime]\n  source = 'go'\n"
     let input = ws
       .withNewFile(appPath + "/dagger.json", legacyJSON)
+      .withNewFile(appPath + "/dagger-module.toml", legacyTOML)
       .withWorkdir(appPath)
     let generated = goSdk(dangEntrypoint: true).generateScope(
       ws: input,
@@ -361,16 +365,57 @@ type EntrypointChecks {
       packageMain.contains("change package main to package entrypoint_main")
     }
 
-    let switched = goSdk.generateScope(
-      ws: app.withNewFile("dagger-module.toml", entrypointManifest("generate-app")),
+    # Settings a manifest with an entrypoint would drop are refused, before
+    # anything is written.
+    let droppedTOML = "name = \"generate-app\"\ninclude = [\"extra\"]\ndisableDefaultFunctionCaching = true\nsource = \"src\"\n\n" +
+      "[runtime]\n  source = \"python\"\n\n[codegen]\n  automaticGitignore = false\n\n" +
+      "[[clients]]\n  generator = \"go\"\n  directory = \"client\"\n\n" +
+      "[[dependencies]]\n  name = \"dep\"\n  source = \"../dep\"\n"
+    let dropped = goSdk(dangEntrypoint: true).generateScope(
+      ws: app.withNewFile("dagger-module.toml", droppedTOML),
       isModule: true,
       name: "generate-app",
       clients: [],
     ).file("dagger.gen.go").contents rescue {
       err: Error => err.message
     }
-    assert("a Dang entrypoint module was moved to the Go runtime: " + firstLine(switched)) {
-      switched.contains("set dangEntrypoint = true")
+    assert("dropped manifest settings were accepted: " + firstLine(dropped)) {
+      dropped.contains("dagger-module.toml has settings a Dang entrypoint cannot carry (include, disableDefaultFunctionCaching, source, codegen, clients, dependencies, runtime); remove them or set dangEntrypoint = false")
+    }
+
+    let droppedJSON = "{\"name\": \"generate-app\", \"sdk\": \"go\", \"dependencies\": [{\"name\": \"dep\", \"source\": \"../dep\"}]}\n"
+    let droppedLegacy = goSdk(dangEntrypoint: true).generateScope(
+      ws: app.withNewFile("dagger.json", droppedJSON),
+      isModule: true,
+      name: "generate-app",
+      clients: [],
+    ).file("dagger.gen.go").contents rescue {
+      err: Error => err.message
+    }
+    assert("dropped dagger.json settings were accepted: " + firstLine(droppedLegacy)) {
+      droppedLegacy.contains("dagger.json has settings a Dang entrypoint cannot carry (dependencies)")
+    }
+
+    # Any local Dang entrypoint keeps the module off the Go runtime, however
+    # the TOML spells it.
+    let entrypointTables = [
+      entrypointManifest("generate-app"),
+      "name = 'generate-app'\n\n[entrypoint]\n  kind = 'dang'\n  source = './internal/dagger/entrypoint'\n",
+      "name = \"generate-app\"\nentrypoint = { kind = \"dang\", source = \"internal/dagger/entrypoint\" }\n",
+      "name = \"generate-app\"\n\n[entrypoint]\n  kind = \"dang\"\n",
+    ]
+    entrypointTables.map { manifest =>
+      let switched = goSdk.generateScope(
+        ws: app.withNewFile("dagger-module.toml", manifest),
+        isModule: true,
+        name: "generate-app",
+        clients: [],
+      ).file("dagger.gen.go").contents rescue {
+        err: Error => err.message
+      }
+      assert("a Dang entrypoint module was moved to the Go runtime: " + firstLine(switched) + "\n" + manifest) {
+        switched.contains("set dangEntrypoint = true")
+      }
     }
     null
   }
