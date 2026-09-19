@@ -117,9 +117,28 @@ type {{ $field | FieldOptionsStructName }} struct {
 	if err := q.Bind(&id).Execute(ctx); err != nil {
 		return nil, err
 	}
-	return &{{ $field.ParentObject.Name }} {
-		query: selectNode(q.Root(), id, "{{ $field.ParentObject.Name }}"),
+	return &{{ $field | IDHandleClient }}{
+		query: selectNode(q.Root(), id, "{{ $field | IDHandleType }}"),
 	}, nil
+
+	{{- else if IsNullableObject $field.TypeRef }}
+	q = q.Select("id")
+	var objectID *ID
+	if err := q.Bind(&objectID).Execute(ctx); err != nil {
+		return nil, err
+	}
+	if objectID == nil {
+		return nil, nil
+	}
+	{{- if IsInterfaceRef $field.TypeRef }}
+	return &{{ $typeName | InterfaceClientName }}{
+		query: selectNode(q.Root(), *objectID, "{{ $typeName }}"),
+	}, nil
+	{{- else }}
+	return &{{ $typeName }}{
+		query: selectNode(q.Root(), *objectID, "{{ $typeName }}"),
+	}, nil
+	{{- end }}
 
 	{{- else if IsInterfaceRef $field.TypeRef }}
 	{{- /* Interface return: wrap in the interface's query-builder struct */ -}}
@@ -253,4 +272,3 @@ func (r *{{ $.Name | FormatName }}) As{{ $iface.Name | FormatName }}() {{ $iface
 	}
 }
 {{ end -}}
-
