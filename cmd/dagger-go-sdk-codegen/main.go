@@ -3,6 +3,12 @@
 // Usage:
 //
 //	dagger-go-sdk-codegen client [flags]
+//	dagger-go-sdk-codegen core [flags]
+//
+// The core subcommand generates the core bindings of dagger.io/dagger: the
+// dagger.io/dagger/core package, and optionally the deprecated
+// dagger.io/dagger/dag package. By default it connects to the Dagger engine
+// with dagger.Connect and reads the live schema.
 //
 // The client subcommand generates a standalone client package for one module
 // from a pre-computed introspection schema. It writes into an existing Go
@@ -18,12 +24,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"dagger.io/dagger"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	gogenerator "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
@@ -35,6 +43,7 @@ const usage = `Usage: dagger-go-sdk-codegen <command> [flags]
 
 Commands:
   client  Generate a standalone client package for one module
+  core    Generate the core bindings of dagger.io/dagger
 
 Run "dagger-go-sdk-codegen <command> -h" for the flags of a command.
 `
@@ -54,6 +63,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "client":
 		return runClient(args[1:])
+	case "core":
+		return runCore(args[1:])
 	case "-h", "-help", "--help", "help":
 		fmt.Fprint(os.Stdout, usage)
 		return nil
@@ -98,6 +109,9 @@ func runClient(args []string) error {
 			return nil
 		}
 		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
 
 	if *introspectionPath == "" {
@@ -162,6 +176,163 @@ func runClient(args []string) error {
 	}
 
 	return nil
+}
+
+const coreUsage = `Usage: dagger-go-sdk-codegen core [flags]
+
+Generate the core bindings of dagger.io/dagger: the Go types for the core
+Dagger API, in the dagger.io/dagger/core package.
+
+The command connects to the Dagger engine with dagger.Connect and reads the
+live API schema. To select an engine, set DAGGER_SESSION_PORT and
+DAGGER_SESSION_TOKEN (for example, run the command inside "dagger run" or in
+a container that has a Dagger session). If they are not set, dagger.Connect
+starts an engine.
+
+--output must be the dagger.io/dagger/core package directory, and
+--dag-output the dagger.io/dagger/dag package directory. The command finds
+the go.mod of the dagger.io/dagger module from these directories.
+
+Flags:
+`
+
+func runCore(args []string) error {
+	flags := flag.NewFlagSet("core", flag.ContinueOnError)
+	flags.SetOutput(os.Stdout)
+	flags.Usage = func() {
+		fmt.Fprint(flags.Output(), coreUsage)
+		flags.PrintDefaults()
+	}
+	var (
+		outputDir         = flags.String("output", ".", "directory of the dagger.io/dagger/core package")
+		dagOutputDir      = flags.String("dag-output", "", "directory of the deprecated dagger.io/dagger/dag package (optional; if empty, do not generate it)")
+		introspectionPath = flags.String("introspection-json-path", "", "optional: read the schema from this introspection JSON file, not from the engine.\nThis is an escape hatch for advanced use. Most users do not need it.")
+	)
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+
+	if err := checkPackageDir(*outputDir, "dagger.io/dagger/core"); err != nil {
+		return fmt.Errorf("--output: %w", err)
+	}
+	if *dagOutputDir != "" {
+		if err := checkPackageDir(*dagOutputDir, "dagger.io/dagger/dag"); err != nil {
+			return fmt.Errorf("--dag-output: %w", err)
+		}
+	}
+
+	ctx := context.Background()
+	schema, schemaVersion, err := loadSchema(ctx, *introspectionPath)
+	if err != nil {
+		return err
+	}
+	generator.SetSchemaParents(schema)
+
+	gen := &gogenerator.GoGenerator{Config: generator.Config{
+		OutputDir:     *outputDir,
+		PackageImport: "dagger.io/dagger/core",
+		CoreLibrary:   true,
+	}}
+	state, err := gen.GenerateCore(ctx, schema, schemaVersion)
+	if err != nil {
+		return fmt.Errorf("generate core bindings: %w", err)
+	}
+
+	outputs := map[string]string{gogenerator.CoreGenFile: *outputDir}
+	if *dagOutputDir != "" {
+		outputs[gogenerator.DagGenFile] = *dagOutputDir
+	}
+	for src, dir := range outputs {
+		data, err := fs.ReadFile(state.Overlay, src)
+		if err != nil {
+			return fmt.Errorf("read generated %s: %w", src, err)
+		}
+		dest := filepath.Join(dir, path.Base(src))
+		if err := os.WriteFile(dest, data, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", dest, err)
+		}
+	}
+	return nil
+}
+
+// loadSchema reads the API schema from an introspection JSON file if path is
+// set. Otherwise it connects to the Dagger engine and introspects it.
+func loadSchema(ctx context.Context, path string) (*introspection.Schema, string, error) {
+	if path == "" {
+		dag, err := dagger.Connect(ctx)
+		if err != nil {
+			return nil, "", fmt.Errorf("connect to engine: %w", err)
+		}
+		defer dag.Close()
+		schema, version, err := introspection.Introspect(ctx, dag)
+		if err != nil {
+			return nil, "", err
+		}
+		if schema == nil {
+			return nil, "", fmt.Errorf("engine returned no schema")
+		}
+		return schema, version, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("read introspection json: %w", err)
+	}
+	var resp introspection.Response
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, "", fmt.Errorf("unmarshal introspection json: %w", err)
+	}
+	if resp.Schema == nil {
+		return nil, "", fmt.Errorf("introspection json has no __schema")
+	}
+	return resp.Schema, resp.SchemaVersion, nil
+}
+
+// checkPackageDir makes sure that dir exists and is the directory of the Go
+// package with import path want. It finds the owning go.mod by searching up
+// from dir.
+func checkPackageDir(dir, want string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	root, err := findModuleRoot(dir)
+	if err != nil {
+		return err
+	}
+	got, err := packageImportPath(root, dir)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("%s is package %s, not %s", dir, got, want)
+	}
+	return nil
+}
+
+// findModuleRoot returns the nearest directory at or above dir that contains
+// a go.mod file.
+func findModuleRoot(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			return d, nil
+		}
+		if filepath.Dir(d) == d {
+			return "", fmt.Errorf("no go.mod found at or above %s", abs)
+		}
+	}
 }
 
 func packageImportPath(moduleRoot, outputDir string) (string, error) {

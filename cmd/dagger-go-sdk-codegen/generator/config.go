@@ -16,6 +16,11 @@ type Config struct {
 
 	// ClientConfig is the specific config to generate standalone client.
 	ClientConfig *ClientGeneratorConfig
+
+	// CoreLibrary generates the core bindings of dagger.io/dagger: the
+	// dagger.io/dagger/core package, and the deprecated dagger.io/dagger/dag
+	// package that forwards to it.
+	CoreLibrary bool
 }
 
 // Specific configuration for module generation.

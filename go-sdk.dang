@@ -159,7 +159,7 @@ type GoSdk {
   """Build the engine-free standalone client generator."""
   let codegenBuilder: Container! {
     container
-      .from("golang:1.25-alpine")
+      .from("golang:1.26-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
