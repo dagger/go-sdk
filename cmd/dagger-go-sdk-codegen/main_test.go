@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 )
 
 func TestValidateBoundModuleKind(t *testing.T) {

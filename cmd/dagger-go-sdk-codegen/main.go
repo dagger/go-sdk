@@ -1,15 +1,21 @@
-// Command codegen generates a Go client package from a pre-computed
-// introspection schema. It writes into an existing Go module and updates that
-// module's go.mod.
+// Command dagger-go-sdk-codegen generates Go bindings for the Dagger API.
 //
-// It is intentionally engine-free: the schema and the bound module's metadata
-// are supplied as files, so no nested engine session is opened.
+// Usage:
+//
+//	dagger-go-sdk-codegen client [flags]
+//
+// The client subcommand generates a standalone client package for one module
+// from a pre-computed introspection schema. It writes into an existing Go
+// module and updates that module's go.mod. It is engine-free: the schema and
+// the bound module's metadata are supplied as files, so no nested engine
+// session is opened.
 package main
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,17 +24,42 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codegen/generator"
-	gogenerator "codegen/generator/gogenerator"
-	"codegen/introspection"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	gogenerator "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
 )
 
+const usage = `Usage: dagger-go-sdk-codegen <command> [flags]
+
+Commands:
+  client  Generate a standalone client package for one module
+
+Run "dagger-go-sdk-codegen <command> -h" for the flags of a command.
+`
+
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "codegen:", err)
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "dagger-go-sdk-codegen:", err)
 		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	if len(args) == 0 {
+		fmt.Fprint(os.Stderr, usage)
+		return fmt.Errorf("missing command")
+	}
+	switch args[0] {
+	case "client":
+		return runClient(args[1:])
+	case "-h", "-help", "--help", "help":
+		fmt.Fprint(os.Stdout, usage)
+		return nil
+	default:
+		fmt.Fprint(os.Stderr, usage)
+		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
@@ -54,14 +85,20 @@ func validateBoundModuleKind(m generator.BoundModule) error {
 	}
 }
 
-func run() error {
+func runClient(args []string) error {
+	flags := flag.NewFlagSet("client", flag.ContinueOnError)
 	var (
-		introspectionPath = flag.String("introspection-json-path", "", "path to the introspection schema JSON")
-		clientMetaPath    = flag.String("client-meta-path", "", "path to the client meta JSON (engine version and bound module)")
-		outputDir         = flag.String("output", ".", "output directory for the generated client")
-		moduleRoot        = flag.String("module-root", "", "root of the Go module that owns the generated package")
+		introspectionPath = flags.String("introspection-json-path", "", "path to the introspection schema JSON")
+		clientMetaPath    = flags.String("client-meta-path", "", "path to the client meta JSON (engine version and bound module)")
+		outputDir         = flags.String("output", ".", "output directory for the generated client")
+		moduleRoot        = flags.String("module-root", "", "root of the Go module that owns the generated package")
 	)
-	flag.Parse()
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
 
 	if *introspectionPath == "" {
 		return fmt.Errorf("--introspection-json-path is required")

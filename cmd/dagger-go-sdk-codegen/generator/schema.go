@@ -1,7 +1,7 @@
 package generator
 
 import (
-	"codegen/introspection"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 var _schema *introspection.Schema

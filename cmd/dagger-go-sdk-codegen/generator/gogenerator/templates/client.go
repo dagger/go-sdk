@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 )
 
 func (funcs goTemplateFuncs) isModuleCode() bool {

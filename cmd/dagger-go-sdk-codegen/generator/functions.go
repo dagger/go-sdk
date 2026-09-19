@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"codegen/introspection"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"golang.org/x/mod/semver"
 )
 

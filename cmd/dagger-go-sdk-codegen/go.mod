@@ -1,4 +1,4 @@
-module codegen
+module github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen
 
 go 1.25.1
 

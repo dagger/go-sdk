@@ -3,7 +3,7 @@ package templates
 import (
 	"strings"
 
-	"codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 )
 
 // FormatTypeFunc is an implementation of generator.FormatTypeFuncs interface

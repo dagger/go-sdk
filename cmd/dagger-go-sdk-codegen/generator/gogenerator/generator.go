@@ -14,9 +14,9 @@ import (
 	"github.com/psanford/memfs"
 	"golang.org/x/tools/imports"
 
-	"codegen/generator"
-	"codegen/generator/gogenerator/templates"
-	"codegen/introspection"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 const (

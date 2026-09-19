@@ -163,9 +163,9 @@ type GoSdk {
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/helper", currentModule.source.directory("helpers/codegen"))
+      .withDirectory("/helper", currentModule.source.directory("cmd/dagger-go-sdk-codegen"))
       .withWorkdir("/helper")
-      .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "."])
+      .withExec(["go", "build", "-o", "/usr/local/bin/dagger-go-sdk-codegen", "."])
   }
 
   """Serialize the target-module location used by the generated bootstrap."""
@@ -188,7 +188,7 @@ type GoSdk {
       .withFile("/schema.json", target.clientSchemaIntrospectionJSON)
       .withNewFile("/meta.json", metaJSON)
       .withExec([
-        "codegen",
+        "dagger-go-sdk-codegen", "client",
         "--introspection-json-path", "/schema.json",
         "--client-meta-path", "/meta.json",
         "--output", "/out/" + outputPath,

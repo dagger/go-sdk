@@ -334,8 +334,8 @@ type E2e {
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/helpers", ws.directory("helpers"))
-      .withWorkdir("/helpers/codegen")
+      .withDirectory("/src", ws.directory("cmd/dagger-go-sdk-codegen"))
+      .withWorkdir("/src")
       .withExec(["go", "test", "./..."])
       .stdout
 
