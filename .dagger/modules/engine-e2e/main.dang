@@ -30,16 +30,26 @@ type EngineE2e {
       client.directory(".").exists("dagger.toml")
     }
 
-    let listed = client.withExec(["dagger", "sdk", "list"])
+    # The outer engine injects session credentials when the exec starts.
+    # Clear them at the process boundary so these commands use the pinned
+    # development engine configured by playground.
+    let listed = client.withExec([
+      "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+      "dagger", "sdk", "list",
+    ])
 
     assert("development Go SDK was not listed") {
       listed.stdout.contains("go")
     }
 
-    let checked = listed.withExec(["dagger", "check"])
+    let checked = listed.withExec([
+      "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+      "dagger", "check",
+    ])
 
     let initialized = checked
       .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-smoke",
         "--path", ".dagger/modules/sdk-smoke",
@@ -51,6 +61,7 @@ type EngineE2e {
 
     let fat = initialized
       .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-smoke",
         "--path", ".dagger/modules/sdk-smoke",
@@ -60,6 +71,7 @@ type EngineE2e {
 
     let thin = fat
       .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-smoke",
         "--path", ".dagger/modules/sdk-smoke",
@@ -69,6 +81,7 @@ type EngineE2e {
 
     let release = thin
       .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "-m", ".dagger/modules/sdk-smoke",
         "call", "container", "file",
         "--path", "/etc/alpine-release",
