@@ -135,19 +135,37 @@ type GoSdk {
   let generatedModuleCode(ws: Workspace!): Directory! {
     let scopePath = normalizePath(ws.cwd)
     let sourcePath = if (scopePath == ".") { "/" } else { "/" + scopePath }
-    let generatedRoot = ws
+    let source = ws
       .withWorkdir(".")
       .moduleSource(sourcePath)
-      .generatedContextDirectory
+    let generatedRoot = source.generatedContextDirectory
     let generated = if (scopePath == ".") {
       generatedRoot
     } else {
       generatedRoot.directory(scopePath)
     }
-    let withoutTOML = if (generated.exists("dagger-module.toml")) {
-      generated.withoutFile("dagger-module.toml")
+    # Keep source navigation stable between Git and Directory workspaces without
+    # reconstructing the workspace or changing its resolved dependencies.
+    let stable = if (source.kind == GIT_SOURCE) {
+      codegenBuilder
+        .withDirectory("/out", generated)
+        .withFile("/schema.json", source.introspectionSchemaJSON)
+        .withExec([
+          "dagger-go-sdk-codegen", "normalize-source-links",
+          "--introspection-json-path", "/schema.json",
+          "--output", "/out",
+          "--scope", scopePath,
+          "--workspace-repo-url", source.htmlRepoURL,
+          "--workspace-pin", source.pin,
+        ])
+        .directory("/out")
     } else {
       generated
+    }
+    let withoutTOML = if (stable.exists("dagger-module.toml")) {
+      stable.withoutFile("dagger-module.toml")
+    } else {
+      stable
     }
     if (withoutTOML.exists("dagger.json")) {
       withoutTOML.withoutFile("dagger.json")

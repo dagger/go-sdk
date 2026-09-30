@@ -1,0 +1,331 @@
+{
+  "__schemaVersion": "v1.0.0",
+  "__schema": {
+    "types": [
+      {
+        "kind": "OBJECT",
+        "name": "Go",
+        "description": "\nA Go project\n",
+        "fields": [
+          {
+            "name": "binary",
+            "description": "\nBuild a single main package, and return the compiled binary\n",
+            "type": {
+              "kind": "NON_NULL",
+              "ofType": {
+                "kind": "OBJECT",
+                "name": "File"
+              }
+            },
+            "args": [
+              {
+                "name": "pkg",
+                "description": "\nWhich package to build\n",
+                "defaultValue": null,
+                "type": {
+                  "kind": "NON_NULL",
+                  "ofType": {
+                    "kind": "SCALAR",
+                    "name": "String"
+                  }
+                },
+                "directives": [
+                  {
+                    "name": "sourceMap",
+                    "args": [
+                      {
+                        "name": "module",
+                        "value": "\"go\""
+                      },
+                      {
+                        "name": "filename",
+                        "value": "\".dagger/modules/go/main.go\""
+                      },
+                      {
+                        "name": "line",
+                        "value": "381"
+                      },
+                      {
+                        "name": "column",
+                        "value": "2"
+                      },
+                      {
+                        "name": "url",
+                        "value": "\"https://github.com/grouville/dagger/tree/34731d308d2c145e42161eba8078959c368efec0/.dagger/modules/go/main.go#L381\""
+                      }
+                    ]
+                  }
+                ],
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "noSymbols",
+                "description": "\nDisable symbol table\n",
+                "defaultValue": null,
+                "type": {
+                  "kind": "SCALAR",
+                  "name": "Boolean"
+                },
+                "directives": [
+                  {
+                    "name": "sourceMap",
+                    "args": [
+                      {
+                        "name": "module",
+                        "value": "\"go\""
+                      },
+                      {
+                        "name": "filename",
+                        "value": "\".dagger/modules/go/main.go\""
+                      },
+                      {
+                        "name": "line",
+                        "value": "384"
+                      },
+                      {
+                        "name": "column",
+                        "value": "2"
+                      },
+                      {
+                        "name": "url",
+                        "value": "\"https://github.com/grouville/dagger/tree/34731d308d2c145e42161eba8078959c368efec0/.dagger/modules/go/main.go#L384\""
+                      }
+                    ]
+                  }
+                ],
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "noDwarf",
+                "description": "\nDisable DWARF generation\n",
+                "defaultValue": null,
+                "type": {
+                  "kind": "SCALAR",
+                  "name": "Boolean"
+                },
+                "directives": [
+                  {
+                    "name": "sourceMap",
+                    "args": [
+                      {
+                        "name": "module",
+                        "value": "\"go\""
+                      },
+                      {
+                        "name": "filename",
+                        "value": "\".dagger/modules/go/main.go\""
+                      },
+                      {
+                        "name": "line",
+                        "value": "387"
+                      },
+                      {
+                        "name": "column",
+                        "value": "2"
+                      },
+                      {
+                        "name": "url",
+                        "value": "\"https://github.com/grouville/dagger/tree/34731d308d2c145e42161eba8078959c368efec0/.dagger/modules/go/main.go#L387\""
+                      }
+                    ]
+                  }
+                ],
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "platform",
+                "description": "\nTarget build platform\n",
+                "defaultValue": null,
+                "type": {
+                  "kind": "SCALAR",
+                  "name": "Platform"
+                },
+                "directives": [
+                  {
+                    "name": "sourceMap",
+                    "args": [
+                      {
+                        "name": "module",
+                        "value": "\"go\""
+                      },
+                      {
+                        "name": "filename",
+                        "value": "\".dagger/modules/go/main.go\""
+                      },
+                      {
+                        "name": "line",
+                        "value": "390"
+                      },
+                      {
+                        "name": "column",
+                        "value": "2"
+                      },
+                      {
+                        "name": "url",
+                        "value": "\"https://github.com/grouville/dagger/tree/34731d308d2c145e42161eba8078959c368efec0/.dagger/modules/go/main.go#L390\""
+                      }
+                    ]
+                  }
+                ],
+                "isDeprecated": false,
+                "deprecationReason": null
+              }
+            ],
+            "isDeprecated": false,
+            "deprecationReason": null,
+            "directives": [
+              {
+                "name": "sourceMap",
+                "args": [
+                  {
+                    "name": "module",
+                    "value": "\"go\""
+                  },
+                  {
+                    "name": "filename",
+                    "value": "\".dagger/modules/go/main.go\""
+                  },
+                  {
+                    "name": "line",
+                    "value": "378"
+                  },
+                  {
+                    "name": "column",
+                    "value": "1"
+                  },
+                  {
+                    "name": "url",
+                    "value": "\"https://github.com/grouville/dagger/tree/34731d308d2c145e42161eba8078959c368efec0/.dagger/modules/go/main.go#L378\""
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "generateDaggerRuntime",
+            "description": "",
+            "type": {
+              "kind": "NON_NULL",
+              "ofType": {
+                "kind": "OBJECT",
+                "name": "Go"
+              }
+            },
+            "args": [
+              {
+                "name": "start",
+                "description": "",
+                "defaultValue": null,
+                "type": {
+                  "kind": "NON_NULL",
+                  "ofType": {
+                    "kind": "SCALAR",
+                    "name": "String"
+                  }
+                },
+                "directives": [
+                  {
+                    "name": "sourceMap",
+                    "args": [
+                      {
+                        "name": "module",
+                        "value": "\"go\""
+                      },
+                      {
+                        "name": "filename",
+                        "value": "\".dagger/modules/go/main.go\""
+                      },
+                      {
+                        "name": "line",
+                        "value": "643"
+                      },
+                      {
+                        "name": "column",
+                        "value": "57"
+                      },
+                      {
+                        "name": "url",
+                        "value": "\"https://github.com/grouville/dagger/tree/34731d308d2c145e42161eba8078959c368efec0/.dagger/modules/go/main.go#L643\""
+                      }
+                    ]
+                  }
+                ],
+                "isDeprecated": false,
+                "deprecationReason": null
+              }
+            ],
+            "isDeprecated": false,
+            "deprecationReason": null,
+            "directives": [
+              {
+                "name": "sourceMap",
+                "args": [
+                  {
+                    "name": "module",
+                    "value": "\"go\""
+                  },
+                  {
+                    "name": "filename",
+                    "value": "\".dagger/modules/go/main.go\""
+                  },
+                  {
+                    "name": "line",
+                    "value": "643"
+                  },
+                  {
+                    "name": "column",
+                    "value": "1"
+                  },
+                  {
+                    "name": "url",
+                    "value": "\"https://github.com/grouville/dagger/tree/34731d308d2c145e42161eba8078959c368efec0/.dagger/modules/go/main.go#L643\""
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "interfaces": [
+          {
+            "kind": "INTERFACE",
+            "name": "Node",
+            "interfaces": null,
+            "possibleTypes": null,
+            "directives": null
+          }
+        ],
+        "possibleTypes": [],
+        "directives": [
+          {
+            "name": "sourceMap",
+            "args": [
+              {
+                "name": "module",
+                "value": "\"go\""
+              },
+              {
+                "name": "filename",
+                "value": "\".dagger/modules/go/main.go\""
+              },
+              {
+                "name": "line",
+                "value": "192"
+              },
+              {
+                "name": "column",
+                "value": "6"
+              },
+              {
+                "name": "url",
+                "value": "\"https://github.com/grouville/dagger/tree/34731d308d2c145e42161eba8078959c368efec0/.dagger/modules/go/main.go#L192\""
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+Captured excerpts of Go module bindings generated from Git and Directory workspaces by v1.0.0-beta.15. The source workspace is grouville/dagger at 34731d308d2c145e42161eba8078959c368efec0. The schema retains the actual sourceMap metadata for the declarations in these excerpts, including the method/argument URL collision at line 643 (columns 1 and 57).
