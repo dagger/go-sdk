@@ -5,6 +5,8 @@
 //	dagger-go-sdk-codegen client [flags]
 //	dagger-go-sdk-codegen core [flags]
 //
+//	dagger-go-sdk-codegen normalize-source-links [flags]
+//
 // The core subcommand generates the core bindings of dagger.io/dagger: the
 // dagger.io/dagger/core package, and optionally the deprecated
 // dagger.io/dagger/dag package. By default it connects to the Dagger engine
@@ -44,6 +46,7 @@ const usage = `Usage: dagger-go-sdk-codegen <command> [flags]
 Commands:
   client  Generate a standalone client package for one module
   core    Generate the core bindings of dagger.io/dagger
+  normalize-source-links  Restore local source positions in workspace module bindings
 
 Run "dagger-go-sdk-codegen <command> -h" for the flags of a command.
 `
@@ -65,6 +68,8 @@ func run(args []string) error {
 		return runClient(args[1:])
 	case "core":
 		return runCore(args[1:])
+	case "normalize-source-links":
+		return runNormalizeSourceLinks(args[1:])
 	case "-h", "-help", "--help", "help":
 		fmt.Fprint(os.Stdout, usage)
 		return nil
