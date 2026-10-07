@@ -8,9 +8,11 @@ the internal collection base through ordinary Go value copies.
 
 The standalone client generator in this repository consumes the engine's
 projected schema. Collections remain object types. Clients expose `Keys`,
-`Get`, `List`, `Subset`, and `Batch`; they do not expose the author's hidden state.
+`Get`, `List`, and `Subset`. They also expose `Batch` when the collection has
+functions other than its get function. They do not expose the author's hidden
+state.
 
-Run the client compatibility test from `helpers/codegen`:
+Run the client compatibility test from `cmd/dagger-go-sdk-codegen`:
 
 ```sh
 go test ./generator/gogenerator/... -run TestGenerateCollectionClient
