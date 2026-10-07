@@ -1,10 +1,15 @@
 package gogenerator
 
 import (
+	"encoding/json"
+	"go/types"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/tools/go/packages"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
@@ -164,4 +169,53 @@ func TestGenerateClient_PackageMode(t *testing.T) {
 		readOverlay(t, state, "dag/dag.gen.go"),
 		`dagger "example.com/app/internal/dagger/clients/hello"`,
 	)
+}
+
+// TestGenerateClient_DoesNotCallDaggerClientQueryBuilder type-checks a client
+// generated from the core schema, so it catches a call to
+// dagger.Client.QueryBuilder() through any expression. dagger/dagger#14186
+// removes that method.
+func TestGenerateClient_DoesNotCallDaggerClientQueryBuilder(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "core", "schema.json"))
+	require.NoError(t, err)
+	var resp introspection.Response
+	require.NoError(t, json.Unmarshal(data, &resp))
+	generator.SetSchemaParents(resp.Schema)
+
+	// The generated files go into an overlay inside this module, so that
+	// go/packages resolves dagger.io/dagger from this module's go.mod.
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	gen := &GoGenerator{Config: generator.Config{
+		OutputDir:     t.TempDir(),
+		PackageImport: "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/generatedclient",
+		ClientConfig:  &generator.ClientGeneratorConfig{},
+	}}
+	state, err := gen.GenerateClient(t.Context(), resp.Schema, resp.SchemaVersion)
+	require.NoError(t, err)
+
+	overlay := map[string][]byte{}
+	require.NoError(t, fs.WalkDir(state.Overlay, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		overlay[filepath.Join(wd, "generatedclient", path)] = []byte(readOverlay(t, state, path))
+		return nil
+	}))
+
+	pkgs, err := packages.Load(&packages.Config{
+		Mode:    packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo,
+		Overlay: overlay,
+	}, "./generatedclient/...")
+	require.NoError(t, err)
+	require.Len(t, pkgs, 2)
+	for _, pkg := range pkgs {
+		require.Emptyf(t, pkg.Errors, "%s does not type-check", pkg.PkgPath)
+		for expr, sel := range pkg.TypesInfo.Selections {
+			fn, ok := sel.Obj().(*types.Func)
+			if ok && fn.FullName() == "(*dagger.io/dagger.Client).QueryBuilder" {
+				t.Errorf("%s calls dagger.Client.QueryBuilder()", pkg.Fset.Position(expr.Pos()))
+			}
+		}
+	}
 }
