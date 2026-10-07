@@ -5,7 +5,7 @@ type EngineE2e {
   """
   Main commit shared by the engine-dev dependency and target engine.
   """
-  let engineCommit: String! = "0d031c08ef3e379c6f4eb7f8f5cad4638a168863"
+  let engineCommit: String! = "17ba33f01e2470ae7888c51b030afd2c1a1db4bb"
 
   """
   Build the pinned main engine and use this checkout as its Go SDK.
