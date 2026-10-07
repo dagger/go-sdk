@@ -7,6 +7,11 @@ type E2e {
   """
   manifest: ManifestChecks! { ManifestChecks }
 
+  """
+  Checks for modules generated with dangEntrypoint.
+  """
+  entrypoint: EntrypointChecks! { EntrypointChecks }
+
   let fixtureRoot: String! = ".dagger/modules/e2e/fixtures"
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
@@ -326,18 +331,22 @@ type E2e {
   }
 
   """
-  The client code generator unit tests pass.
+  The unit tests of every helper pass. The entrypoint contract check embeds
+  Dang, whose parser needs cgo.
   """
   helperTestsCheck(ws: Workspace!): Void @check {
-    let out = container
+    let base = container
       .from("golang:1.26-alpine")
       .withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "build-base"])
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/src", ws.directory("cmd/dagger-go-sdk-codegen"))
-      .withWorkdir("/src")
-      .withExec(["go", "test", "./..."])
-      .stdout
+      .withDirectory("/src", ws.directory("."))
+    let out = ["cmd/dagger-go-sdk-codegen", "helpers/module-codegen", "helpers/render-template", "helpers/entrypoint-contract"].reduce(base) { ctr, helper =>
+      ctr
+        .withWorkdir("/src/" + helper)
+        .withExec(["go", "test", "./..."])
+    }.stdout
 
     null
   }

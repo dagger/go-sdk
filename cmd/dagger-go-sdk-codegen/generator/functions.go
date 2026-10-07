@@ -270,6 +270,8 @@ func (c *CommonFunctions) CheckVersionCompatibility(minVersion string) bool {
 	return semver.Compare(c.schemaVersion, minVersion) >= 0
 }
 
+// SupportsNullableObjects reports whether object nullability is represented
+// by the schema version.
 func SupportsNullableObjects(schemaVersion string) bool {
 	if schemaVersion == "" || !semver.IsValid(schemaVersion) {
 		return true
