@@ -8,13 +8,17 @@ import (
 	"testing/fstest"
 )
 
-func TestGenerateRefusesPackageMain(t *testing.T) {
-	root := t.TempDir()
+func TestGenerateRefusesParentGoModuleBeforeWriting(t *testing.T) {
+	parent := t.TempDir()
+	writeTestFile(t, filepath.Join(parent, "go.mod"), "module example.com/project\n\ngo 1.26\n")
+	root := filepath.Join(parent, "module")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
 	writeTestFile(t, filepath.Join(root, "main.go"), "package main\n\ntype HelloWorld struct{}\n")
-
 	err := Generate(t.Context(), GenerateConfig{ModuleRoot: root, ModuleName: "hello-world"})
-	if err == nil || !strings.Contains(err.Error(), "change package main to package hello_world") {
-		t.Fatalf("Generate() error = %v, want the package main migration message", err)
+	if err == nil || !strings.Contains(err.Error(), "parent go.mod") {
+		t.Fatalf("Generate() error = %v", err)
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {

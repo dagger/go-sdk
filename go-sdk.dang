@@ -197,6 +197,10 @@ type GoSdk {
   """
   let checkEntrypointScope(ws: Workspace!, hadManifest: Boolean!, clients: [ModuleSource!]!): Void {
     if (dangEntrypoint) {
+      let enclosingRoot = findClientRoot(ws)
+      if (enclosingRoot != null and enclosingRoot != normalizePath(ws.cwd)) {
+        raise "Dang entrypoints need a go.mod in the module directory; keep dangEntrypoint = false for modules using a parent go.mod"
+      }
       if (clients.length > 0) {
         raise "a Dang entrypoint cannot use other modules yet: a manifest with an entrypoint has no dependencies; set dangEntrypoint = false"
       }
@@ -367,6 +371,7 @@ type GoSdk {
       prefix + "go.mod",
       prefix + "go.sum",
       prefix + "dagger.gen.go",
+      prefix + "dagger.dispatch.gen.go",
       prefix + "internal/dagger/**",
       prefix + "cmd/*-dispatch/**",
     ])

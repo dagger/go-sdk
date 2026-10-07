@@ -4,6 +4,9 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -57,23 +60,24 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.Contains(t, text, "type Entrypoint implements ModuleEntrypoint")
 	require.Contains(t, text, "receiverType: String!")
 	require.NotContains(t, text, "pub main(")
-	require.Contains(t, text, `workspace.findUp("go.mod")`)
-	require.Contains(t, text, `.withWorkdir("/workspace/modules/hello")`)
+	require.Contains(t, text, "currentModule.source")
+	require.Contains(t, text, `.withWorkdir("/workspace")`)
 	require.Contains(t, text, "fnArgs: JSON!,")
 	require.Contains(t, text, "fnArgs: fnArgs,")
 	require.Contains(t, text, "(result :: JSON!)")
 	require.NotContains(t, text, "FunctionCallArgValue")
 }
 
-func TestEntrypointChecksItsModuleBeforeBuilding(t *testing.T) {
+func TestEntrypointBuildsOnlyItsOwnSource(t *testing.T) {
 	source, err := (&v2Module{}).renderEntrypointSource("hello-world", ".", "golang:1.26-alpine")
 	require.NoError(t, err)
-
 	text := string(source)
-	require.Contains(t, text, `found.exists("cmd/hello-world-dispatch/main.go")`)
-	require.Contains(t, text, `containsMatch("(?m)^\\s*name\\s*=\\s*[\"']hello-world[\"']\\s*(#.*)?$")`)
-	require.Contains(t, text, "git and directory module sources are not supported yet")
-	require.Less(t, strings.Index(text, "checkModule(workspace)\n"), strings.Index(text, "goRoot(workspace)\n"))
+	require.Contains(t, text, "let source = currentModule.source")
+	require.NotContains(t, text, "workspace.directory")
+	require.NotContains(t, text, "workspace.findUp")
+	require.Contains(t, text, "callDigest: String,")
+	require.Contains(t, text, `.withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")`)
+	require.Contains(t, text, `.file("/dagger/result.json")`)
 }
 
 func TestDispatchSourceDecodesArgumentObject(t *testing.T) {
@@ -107,4 +111,45 @@ func TestDispatchForObjectWithoutFunctions(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, source, `return &Empty{}, nil`)
 	require.Contains(t, source, `fmt.Errorf("unknown function %s", fnName)`)
+}
+
+func TestDispatchCommandSeparatesLogsFromResult(t *testing.T) {
+	for _, packageName := range []string{"main", "hello"} {
+		t.Run(packageName, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26\n"), 0644))
+			fixture := "package " + packageName + `
+import("context";"fmt")
+func DaggerDispatch(context.Context, []byte, string, string, map[string][]byte) (any, error) {
+ fmt.Println("a user log")
+ return map[string]bool{"ok": true}, nil
+}
+`
+			require.NoError(t, os.WriteFile(filepath.Join(root, "module.go"), []byte(fixture), 0644))
+			generated, err := (&v2Module{}).renderDispatchSource("hello", "example.com/hello", packageName)
+			require.NoError(t, err)
+			dir := root
+			target := "."
+			if packageName != "main" {
+				dir = filepath.Join(root, "cmd", "hello-dispatch")
+				target = "./cmd/hello-dispatch"
+			}
+			require.NoError(t, os.MkdirAll(dir, 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "dispatch.go"), generated, 0644))
+			binary := filepath.Join(root, "dispatch")
+			build := exec.CommandContext(t.Context(), "go", "build", "-buildvcs=false", "-o", binary, target)
+			build.Dir = root
+			out, err := build.CombinedOutput()
+			require.NoError(t, err, string(out))
+			resultPath := filepath.Join(root, "output", "result.json")
+			call := exec.CommandContext(t.Context(), binary, "engine-call", resultPath)
+			call.Stdin = strings.NewReader(`{"receiverType":"Hello","fnName":"hi","fnArgs":{}}`)
+			out, err = call.CombinedOutput()
+			require.NoError(t, err, string(out))
+			require.Equal(t, "a user log\n", string(out))
+			result, err := os.ReadFile(resultPath)
+			require.NoError(t, err)
+			require.JSONEq(t, `{"ok":true}`, string(result))
+		})
+	}
 }

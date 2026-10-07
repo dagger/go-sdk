@@ -51,14 +51,21 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
+	dispatchPath := filepath.Join(root, "cmd", strcase.ToKebab(cfg.ModuleName)+"-dispatch", "main.go")
 	if packageName == "main" {
-		return fmt.Errorf("manifest v2 requires an importable Go package; change package main to package %s", defaultPackageName(cfg.ModuleName))
+		dispatchPath = filepath.Join(root, "dagger.dispatch.gen.go")
 	}
-	dispatchDir := filepath.Join(root, "cmd", strcase.ToKebab(cfg.ModuleName)+"-dispatch")
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); errors.Is(err, os.ErrNotExist) {
+		for parent := filepath.Dir(root); parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
+			if _, err := os.Stat(filepath.Join(parent, "go.mod")); err == nil {
+				return fmt.Errorf("Dang entrypoints need a go.mod in the module directory; keep the Go runtime for modules using a parent go.mod")
+			}
+		}
+	}
 	entrypointDir := filepath.Join(root, "internal", "dagger", "entrypoint")
 	owned := []string{
 		filepath.Join(root, "dagger.gen.go"),
-		filepath.Join(dispatchDir, "main.go"),
+		dispatchPath,
 		filepath.Join(entrypointDir, "main.dang"),
 	}
 	for _, path := range owned {
@@ -144,7 +151,7 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := writeFile(filepath.Join(root, "dagger.gen.go"), artifacts.ModuleSource); err != nil {
 		return err
 	}
-	if err := writeFile(filepath.Join(dispatchDir, "main.go"), artifacts.DispatchSource); err != nil {
+	if err := writeFile(dispatchPath, artifacts.DispatchSource); err != nil {
 		return err
 	}
 	if err := writeFile(filepath.Join(entrypointDir, "main.dang"), artifacts.EntrypointSource); err != nil {
