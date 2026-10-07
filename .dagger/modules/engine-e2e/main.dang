@@ -95,7 +95,7 @@ type EngineE2e {
       .stdout
 
     assert("generated module did not run") {
-      release.trim != ""
+      release.trimSpace != ""
     }
     null
   }
