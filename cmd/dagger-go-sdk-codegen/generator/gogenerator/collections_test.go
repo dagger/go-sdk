@@ -1,10 +1,12 @@
 package gogenerator
 
 import (
-	"codegen/generator"
-	"codegen/introspection"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 // Collections remain ordinary objects in the public schema. The standalone
