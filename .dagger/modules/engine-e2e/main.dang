@@ -21,8 +21,13 @@ type EngineE2e {
     let engineSource = git("https://github.com/dagger/dagger")
       .ref(engineCommit)
       .asWorkspace
+    let base = container
+      .from("alpine:3.22")
+      .withExec(["apk", "add", "--no-cache", "git"])
+      .withEnvVariable("HOME", "/root")
+      .withWorkdir("/root")
     let client = engineDev(ws: engineSource)
-      .playground
+      .installClient(client: base)
       .withMountedDirectory("./go-sdk", sdkSource)
       .withWorkdir("./go-sdk")
       .withExec(["git", "init", "--quiet"])
