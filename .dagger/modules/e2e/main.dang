@@ -11,9 +11,6 @@ type E2e {
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
-  # Dagger Go library source used by the generated-client compile check.
-  let daggerSourceRef: String! = "17ba33f01e2470ae7888c51b030afd2c1a1db4bb"
-
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
   }
@@ -253,6 +250,10 @@ type E2e {
   Two standalone target packages compile in one Go module.
   """
   standaloneClientCompilesCheck(ws: Workspace!): Void @check {
+    let daggerSourceRef = ws
+      .file("/.dagger/modules/e2e/engine-commit")
+      .contents
+      .trimSpace
     let scopePath = fixtureRoot + "/go-scope"
     let input = ws
       .withNewFile(scopePath + "/go.mod", "module example.com/compile\n\ngo 1.25\n")
