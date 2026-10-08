@@ -1,0 +1,119 @@
+"""Exercise the shared runtime before its first published SDK version."""
+type UnifiedChecks {
+  runtimeSdk: Directory!
+  let root: String! = ".dagger/modules/e2e/out/unified-app"
+  let fixtures: String! = ".dagger/modules/e2e/fixtures"
+
+  let prepared(ws: Workspace!): Workspace! {
+    ws.withDirectory(root + "/runtime-sdk", runtimeSdk)
+      .withNewFile("own.txt", "caller files")
+      .withNewFile(root + "/own.txt", "own module")
+      .withDirectory(root + "/dep", ws.directory("/" + fixtures + "/client/dep"))
+      .withNewFile(root + "/go.mod", "module example.com/unified\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.15\nreplace dagger.io/dagger => ./runtime-sdk\n")
+      .withFile(root + "/main.go", ws.file("/" + fixtures + "/unified/main.go"))
+      .withFile(root + "/probe/main.go", ws.file("/" + fixtures + "/unified/probe/main.go"))
+      .withNewFile(root + "/dagger-module.toml", "name = \"unified-app\"\n")
+      .withWorkdir(root)
+  }
+
+  let generated(ws: Workspace!): Workspace! {
+    let input = prepared(ws)
+    goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
+      ws: input, isModule: true, name: "unified-app",
+      clients: [input.withWorkdir(".").moduleSource("/" + root + "/dep").withEngineVersion("v0.18.0")],
+    )
+  }
+
+  let probe(ws: Workspace!, greeting: String!, repo: Service): String! {
+    let base = container.from("golang:1.26-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/workspace", ws.directory("/"))
+      .withWorkdir("/workspace/" + root)
+      .withEnvVariable("EXPECTED_GREETING", greeting)
+    let client = if (repo == null) { base } else {
+      base.withServiceBinding(repo.hostname, repo)
+        .withEnvVariable("MODULE_REF", "git://" + repo.hostname + "/repo.git#main:" + root)
+    }
+    let called = client.withExec(["go", "run", "-buildvcs=false", "./probe"],
+      experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    if (called.exitCode != 0) {
+      raise "unified Go probe failed:\n" + called.stdout + called.stderr
+    }
+    called.stdout
+  }
+
+  """Old targets, core handles, enums, collection projections and uncached calls."""
+  callsCheck(ws: Workspace!): Void @check {
+    let ready = generated(ws)
+    let out = probe(ready, "hello entrypoint")
+    assert("the unified entrypoint probe failed: " + out) { out.contains("unified entrypoint passed") }
+    let repeated = goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
+      ws: ready, isModule: true, name: "unified-app",
+      clients: [ready.withWorkdir(".").moduleSource("/" + root + "/dep").withEngineVersion("v0.18.0")],
+    )
+    assert("unified regeneration changed files") { repeated.changes(ready).isEmpty }
+    null
+  }
+
+  """A changed target takes effect without regenerating the caller bindings."""
+  changedTargetCheck(ws: Workspace!): Void @check {
+    let ready = generated(ws)
+    let before = probe(ready, "hello entrypoint")
+    let changed = ready.withNewFile("dep/main.go", "package main\n\ntype ClientDep struct{}\nfunc (*ClientDep) Greet(name string) string { return \"updated \" + name }\n")
+    let after = probe(changed, "updated entrypoint")
+    assert("target calls failed: " + before + after) {
+      before.contains("unified entrypoint passed") and after.contains("unified entrypoint passed")
+    }
+    null
+  }
+
+  """Missing target fields report stale bindings with regeneration advice."""
+  staleTargetCheck(ws: Workspace!): Void @check {
+    let changed = generated(ws).withNewFile("dep/main.go", "package main\n\ntype ClientDep struct{}\nfunc (*ClientDep) Renamed() string { return \"renamed\" }\n")
+    let refused = probe(changed, "unused") rescue { err: Error => err.message }
+    assert("a stale target did not report regeneration: " + refused) {
+      refused.contains("generated client") and refused.contains("regenerate")
+    }
+    null
+  }
+
+  """Removing a module client deletes its bindings while preserving user code."""
+  removedClientCheck(ws: Workspace!): Void @check {
+    let clientDir = "internal/dagger/clients/client-dep/"
+    let input = generated(ws)
+      .withNewFile("main.go", "package unified_app\n\ntype UnifiedApp struct{}\nfunc (*UnifiedApp) Local() string { return \"local\" }\n")
+      .withNewFile(clientDir + "user.go", "package client_dep\n\nfunc userHelper() {}\n")
+    let result = goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
+      ws: input, isModule: true, name: "unified-app", clients: [],
+    )
+    assert("removed client bindings survived") {
+      result.directory(".").exists(clientDir + "client-dep.gen.go") == false
+    }
+    assert("user code was removed") {
+      result.file(clientDir + "user.go").contents == input.file(clientDir + "user.go").contents
+    }
+    null
+  }
+
+  """The same generated module builds and calls clients from a Git source."""
+  gitCallsCheck(ws: Workspace!): Void @check {
+    let ready = generated(ws)
+    let repo = container.from("alpine:3.22").withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
+      .withDirectory("/srv/repo", ready.directory("/", exclude: [".git"]))
+      .withWorkdir("/srv/repo")
+      .withExec(["git", "init", "-b", "main"])
+      .withExec(["git", "config", "user.name", "SDK test"])
+      .withExec(["git", "config", "user.email", "sdk-test@example.com"])
+      .withExec(["git", "add", "."])
+      .withExec(["git", "commit", "-m", "generated module fixture"])
+      .withExec(["git", "clone", "--bare", ".", "/srv/repo.git"])
+      .withExposedPort(9418)
+      .withDefaultArgs(["git", "daemon", "--export-all", "--base-path=/srv", "/srv"])
+      .asService
+    let out = probe(ready, "hello entrypoint", repo: repo)
+    assert("the Git module probe failed: " + out) { out.contains("unified entrypoint passed") }
+    null
+  }
+}
