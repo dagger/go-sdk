@@ -316,7 +316,7 @@ func runCore(args []string) error {
 		return fmt.Errorf("generate core bindings: %w", err)
 	}
 
-	outputs := map[string]string{gogenerator.CoreGenFile: *outputDir}
+	outputs := map[string]string{gogenerator.CoreGenFile: *outputDir, gogenerator.CoreCodecsGenFile: *outputDir}
 	if *dagOutputDir != "" {
 		outputs[gogenerator.DagGenFile] = *dagOutputDir
 	}
