@@ -12,7 +12,7 @@ type E2e {
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
   # Dagger Go library source used by the generated-client compile check.
-  let daggerSourceRef: String! = "44f87a32cf6aceb807c02bebde03ccb0e3fd014e"
+  let daggerSourceRef: String! = "17ba33f01e2470ae7888c51b030afd2c1a1db4bb"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
