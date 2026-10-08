@@ -344,12 +344,18 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 
 func renderDangObject(spec *parsedObjectType) (string, error) {
 	base := "typeDef.withObject(" + strings.Join(append([]string{strconv.Quote(spec.name)}, objectOpts(spec.doc, spec.sourceMap, spec.deprecated)...), ", ") + ")"
+	if spec.isCollection {
+		base += "\n  .withCollection"
+	}
 	for _, method := range spec.methods {
 		fn, err := renderDangFunction(method)
 		if err != nil {
 			return "", err
 		}
 		base += "\n  .withFunction(\n" + indentDang(fn, 4) + "\n  )"
+		if method.isCollectionGet {
+			base += "\n  .withCollectionGet(" + strconv.Quote(method.name) + ")"
+		}
 	}
 	for _, field := range spec.fields {
 		if field.isPrivate {
@@ -362,6 +368,12 @@ func renderDangObject(spec *parsedObjectType) (string, error) {
 		args := []string{strconv.Quote(field.name), typeDef}
 		args = append(args, fieldOpts(field.doc, field.sourceMap, field.deprecated)...)
 		base += "\n  .withField(" + strings.Join(args, ", ") + ")"
+		if field.isCollectionKeys {
+			base += "\n  .withCollectionKeys(" + strconv.Quote(field.name) + ")"
+		}
+		if field.isCollectionDelta {
+			base += "\n  .withCollectionDelta(" + strconv.Quote(field.name) + ")"
+		}
 	}
 	if spec.constructor != nil {
 		fn, err := renderDangFunctionNamed(spec.constructor, "")

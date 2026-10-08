@@ -154,6 +154,14 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := writeFile(dispatchPath, artifacts.DispatchSource); err != nil {
 		return err
 	}
+	runtimeFiles, err := collectionBuildSources(ctx, root)
+	if err != nil {
+		return fmt.Errorf("prepare collection build: %w", err)
+	}
+	artifacts.EntrypointSource, err = writeCollectionBuild(root, artifacts.EntrypointSource, runtimeFiles)
+	if err != nil {
+		return err
+	}
 	if err := writeFile(filepath.Join(entrypointDir, "main.dang"), artifacts.EntrypointSource); err != nil {
 		return err
 	}
