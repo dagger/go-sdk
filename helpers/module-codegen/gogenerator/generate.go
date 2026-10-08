@@ -344,7 +344,7 @@ func ensureGoModule(root, moduleName string) (packageImport, goModPath string, _
 	if err := mod.AddModuleStmt("dagger/" + strcase.ToKebab(moduleName)); err != nil {
 		return "", "", err
 	}
-	if err := mod.AddGoStmt("1.26"); err != nil {
+	if err := mod.AddGoStmt("1.26.1"); err != nil {
 		return "", "", err
 	}
 	body, err := mod.Format()

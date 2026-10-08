@@ -238,8 +238,14 @@ type GoSdk {
         "--keep", clients.map { target => target.moduleOriginalName }.join(","),
         "--removed-list", "/removed-clients.txt",
         "--prefix", "internal/dagger/clients",
-      ]).withWorkdir("/out").withExec(["go", "mod", "tidy"])
-      let merged = scoped.withDirectory(".", pruned.directory("/out"))
+      ])
+      # An entrypoint's author source already imports its module client,
+      # which the next step has not generated yet. Its bootstrap and final
+      # tidies run after that package exists; keep pruning here for empty batches.
+      let completed = if (moduleUnified) { pruned } else {
+        pruned.withWorkdir("/out").withExec(["go", "mod", "tidy"])
+      }
+      let merged = scoped.withDirectory(".", completed.directory("/out"))
       let removed = pruned.file("/removed-clients.txt").contents.split("\n").filter { p => p != "" }
       removed.reduce(merged) { current, p => current.withoutFile(p) }.withWorkdir(originalScope)
     }
@@ -434,7 +440,7 @@ type GoSdk {
     let workspaceRoot = ws.withWorkdir(goRoot)
     let goVersion = if (exists(workspaceRoot, "go.mod")) {
       requiredGoVersion(workspaceRoot.file("go.mod"))
-    } else { "1.26" }
+    } else { "1.26.1" }
     let goImage = "golang:" + goVersion + "-alpine"
     let globalClientPolicy = if (globalClient == null) { "auto" } else { JSON.encode(globalClient) }
     let inputs = moduleCodegenBuilder(goImage)
@@ -552,7 +558,7 @@ type GoSdk {
   """Use the newer of the consumer Go directives and the generator's minimum."""
   let requiredGoVersion(goMod: File!): String! {
     codegenBuilder.withFile("/consumer.go.mod", goMod)
-      .withExec(["dagger-go-sdk-codegen", "go-version", "--go-mod", "/consumer.go.mod", "--minimum", "1.26"])
+      .withExec(["dagger-go-sdk-codegen", "go-version", "--go-mod", "/consumer.go.mod", "--minimum", "1.26.1"])
       .stdout.trimSpace
   }
 

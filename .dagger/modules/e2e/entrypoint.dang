@@ -387,6 +387,12 @@ type EntrypointChecks {
     assert("the parent go.mod changed") {
       generated.withWorkdir(goScopePath).file("go.mod").contents == input.withWorkdir(goScopePath).file("go.mod").contents
     }
+    let repeated = goSdk.generateScope(
+      ws: generated, isModule: true, name: "entrypoint-starter", clients: [],
+    )
+    assert("regeneration changed the starter's compiler or files") {
+      repeated.changes(generated).isEmpty
+    }
     let built = container.from("golang:1.26-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
