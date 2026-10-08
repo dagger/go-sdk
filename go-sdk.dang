@@ -11,7 +11,7 @@ type GoSdk {
 
   """
   Generate a fat module that also writes the legacy dagger.json manifest.
-  Generated modules require Dagger v1.0.0-beta.12 or later.
+  The SDK-module interface requires Dagger v1.0.0-beta.12 or later.
   """
   fat: Boolean! = false
 
