@@ -10,8 +10,8 @@ type GoSdk {
   template: String! = "default"
 
   """
-  Generate a fat module that includes dagger.json for older engines.
-  By default, generated modules require Dagger v1.0.0-beta.3 or later.
+  Generate a fat module that also writes the legacy dagger.json manifest.
+  Generated modules require Dagger v1.0.0-beta.12 or later.
   """
   fat: Boolean! = false
 
