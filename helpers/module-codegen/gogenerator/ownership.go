@@ -58,6 +58,10 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
+	cfg.globalClient, err = resolveGlobalClient(root, cfg.GlobalClient, old)
+	if err != nil {
+		return err
+	}
 	stage, err := os.MkdirTemp("", "dagger-module-generate-")
 	if err != nil {
 		return err
@@ -80,7 +84,7 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 		return err
 	}
 
-	removed, err := applyGeneratedTree(ctx, root, stage, old, stagedCfg.RemovedPath)
+	removed, err := applyGeneratedTree(ctx, root, stage, old, stagedCfg.RemovedPath, generator.Compatibility{GlobalClient: &cfg.globalClient})
 	if err != nil {
 		return err
 	}
@@ -108,7 +112,7 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	return nil
 }
 
-func applyGeneratedTree(ctx context.Context, root, stage string, old generator.Ownership, legacyRemovedPath string) ([]string, error) {
+func applyGeneratedTree(ctx context.Context, root, stage string, old generator.Ownership, legacyRemovedPath string, compatibility ...generator.Compatibility) ([]string, error) {
 	overlay := memfs.New()
 	err := fs.WalkDir(os.DirFS(stage), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -155,7 +159,12 @@ func applyGeneratedTree(ctx context.Context, root, stage string, old generator.O
 		return nil, err
 	}
 
-	removed, err := generator.WriteOwnedOverlay(ctx, overlay, root)
+	var removed []string
+	if len(compatibility) > 0 {
+		removed, err = generator.WriteOwnedOverlayWithCompatibility(ctx, overlay, root, compatibility[0])
+	} else {
+		removed, err = generator.WriteOwnedOverlay(ctx, overlay, root)
+	}
 	if err != nil {
 		return nil, err
 	}

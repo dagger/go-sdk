@@ -51,6 +51,13 @@ type EntrypointChecks {
     assert("the module dispatcher was not generated") {
       generated.file("dagger.gen.go").contents.contains("func DaggerDispatch(")
     }
+    assert("a new module has a global client") {
+      generated.file("dagger.gen.go").contents.contains("var dag ") == false and
+      generated.file("internal/dagger/dagger.gen.go").contents.contains("var dag ") == false
+    }
+    assert("the starter uses the removed global client") {
+      generated.file("main.go").contents.contains("dag.") == false
+    }
     assert("the embedded client was not generated") {
       exists(generated, "internal/dagger/dagger.gen.go")
     }
@@ -133,6 +140,15 @@ type EntrypointChecks {
     }
     assert("the module source changed") {
       generated.file("main.go").contents == input.file("main.go").contents
+    }
+    assert("migration removed the legacy module's global client") {
+      generated.file("dagger.gen.go").contents.contains("var dag ")
+    }
+    let compatibilityRepeated = goSdk(dangEntrypoint: true).generateScope(
+      ws: generated, isModule: true, name: "generate-app", clients: [],
+    )
+    assert("migration did not preserve its compatibility decision") {
+      compatibilityRepeated.changes(generated).isEmpty
     }
 
     let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
@@ -226,6 +242,54 @@ type EntrypointChecks {
     }
     assert("the Go error was not reported") {
       failed.stderr.contains("fixture failure")
+    }
+    null
+  }
+
+  """
+  Explicit removal overrides legacy detection. The SDK keeps author source
+  unchanged on failure, and remembers the choice after the author migrates.
+  """
+  globalClientCompatibilityCheck(ws: Workspace!): Void @check {
+    let input = ws
+      .withNewFile(appPath + "/dagger-module.toml", "name = \"generate-app\"\n\n[runtime]\nsource = \"go\"\n")
+      .withWorkdir(appPath)
+    let refused = goSdk(dangEntrypoint: true, globalClient: false).generateScope(
+      ws: input, isModule: true, name: "generate-app", clients: [],
+    ).file("dagger.gen.go").contents rescue { err: Error => err.message }
+    assert("unmigrated author code unexpectedly compiled without dag: " + refused) {
+      refused.contains("undefined: dag")
+    }
+    let migratedSource = input.file("main.go").contents.replace("dag.", "dagger.Connect().")
+    let noGlobal = goSdk(dangEntrypoint: true, globalClient: false).generateScope(
+      ws: input.withNewFile("main.go", migratedSource), isModule: true, name: "generate-app", clients: [],
+    )
+    assert("explicit false kept the legacy global") {
+      noGlobal.file("dagger.gen.go").contents.contains("var dag ") == false
+    }
+    assert("generation changed migrated author source") {
+      noGlobal.file("main.go").contents == migratedSource
+    }
+    let repeated = goSdk(dangEntrypoint: true).generateScope(
+      ws: noGlobal, isModule: true, name: "generate-app", clients: [],
+    )
+    assert("automatic regeneration forgot explicit false") {
+      repeated.changes(noGlobal).isEmpty
+    }
+    let built = container.from("golang:1.26-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/module", repeated.directory(".")).withWorkdir("/module")
+      .withExec(["go", "build", "-o", "/usr/local/bin/dispatch", "./cmd/generate-app-dispatch"])
+    let echoed = engineCall(built, "DaggerEcho", "{}", "{\"value\":\"without-global\"}")
+    assert("explicit clients failed after removing the global: " + echoed) {
+      echoed == "\"without-global\""
+    }
+    let legacyRefused = goSdk(globalClient: false).generateScope(
+      ws: input, isModule: true, name: "generate-app", clients: [],
+    ).file("dagger.gen.go").contents rescue { err: Error => err.message }
+    assert("legacy runtime silently ignored explicit false: " + legacyRefused) {
+      legacyRefused.contains("globalClient = false requires dangEntrypoint = true")
     }
     null
   }

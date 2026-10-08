@@ -11,6 +11,16 @@ type GoSdk {
   local replacement of dagger.io/dagger for development.
   """
   unifiedClients: Boolean! = false
+
+  """
+  Retain the generated module's global `dag` for existing author code.
+  Unset: preserve a recognized legacy module's API, or the decision saved
+  in .dagger-generated.json. New entrypoint modules omit it. Explicit false
+  removes it; use dagger.Connect() or core constructors instead.
+  This setting applies to Dang entrypoints. Legacy runtime codegen keeps
+  its existing global API.
+  """
+  globalClient: Boolean
   """
   Starter template used when a new module scope is initialized.
 
@@ -77,6 +87,9 @@ type GoSdk {
   ): Workspace! {
     let hadManifest = exists(ws, "dagger-module.toml") or exists(ws, "dagger.json")
     if (isModule) {
+      if (!dangEntrypoint and globalClient == false) {
+        raise "globalClient = false requires dangEntrypoint = true; legacy Go runtime codegen retains its global client"
+      }
       checkEntrypointScope(ws, hadManifest, clients)
     }
     let initialized = if (isModule and !hadManifest) {
@@ -370,6 +383,7 @@ type GoSdk {
     let goRoot = findClientRoot(ws) ?? scopePath
     let moduleRoot = moduleSubpath(goRoot, scopePath)
     let prefix = if (moduleRoot == ".") { "" } else { moduleRoot + "/" }
+    let globalClientPolicy = if (globalClient == null) { "auto" } else { JSON.encode(globalClient) }
     let inputs = moduleCodegenBuilder
       .withDirectory("/src", ws.withWorkdir(goRoot).directory(".", exclude: ["**/.git"]))
       .withFile("/schema.json", source.introspectionSchemaJSON)
@@ -381,6 +395,7 @@ type GoSdk {
       "--schema-version", schemaVersion,
       "--dagger-version", if (unifiedClients) { clientVersion } else { schemaVersion },
       "--unified=" + JSON.encode(unifiedClients),
+      "--global-client=" + globalClientPolicy,
       "--removed-list", "/removed.txt",
     ])
     let generated = runTool(codegen, [
