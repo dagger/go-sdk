@@ -182,6 +182,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := goModTidy(ctx, root); err != nil {
 		return err
 	}
+	if err := normalizeGoMod(goModPath); err != nil {
+		return fmt.Errorf("normalize generated go.mod: %w", err)
+	}
 	// Introspection loads declarations without function bodies. Compile the
 	// completed dispatcher before committing the staged tree, so a migration
 	// that removes an API still used by author code leaves the project intact.
@@ -507,6 +510,52 @@ func compileGeneratedModule(ctx context.Context, root, target string, runtimeFil
 		return fmt.Errorf("compile generated module: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// The temporary embedded client can promote runtime dependencies to direct
+// requirements. Final tidy demotes them again, retaining different require
+// blocks depending on the input layout. Normalize only after all final sources
+// have been written so repeated generation produces the same go.mod.
+func normalizeGoMod(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return err
+	}
+	// x/mod keeps requirement-line comments when regrouping, but drops
+	// comments on parentheses when an emptied block is cleaned up. Preserve
+	// those notes as block documentation before consolidating requirements.
+	for _, statement := range mod.Syntax.Stmt {
+		block, ok := statement.(*modfile.LineBlock)
+		if !ok || len(block.Token) == 0 || block.Token[0] != "require" {
+			continue
+		}
+		notes := block.Before
+		for _, comments := range []modfile.Comments{
+			{Suffix: block.Suffix}, block.LParen.Comments,
+			block.RParen.Comments, {After: block.After},
+		} {
+			notes = append(notes, comments.Before...)
+			notes = append(notes, comments.Suffix...)
+			notes = append(notes, comments.After...)
+		}
+		for i := range notes {
+			notes[i].Suffix = false
+		}
+		block.Comments = modfile.Comments{Before: notes}
+		block.LParen.Comments = modfile.Comments{}
+		block.RParen.Comments = modfile.Comments{}
+	}
+	mod.SetRequireAtMostTwo(mod.Require)
+	mod.Cleanup()
+	data, err = mod.Format()
+	if err != nil {
+		return err
+	}
+	return writeFile(path, data)
 }
 
 func writeFile(path string, data []byte) error {
