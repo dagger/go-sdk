@@ -3,13 +3,13 @@ Run the Go SDK against the helper under test.
 """
 type ManifestChecks {
   """
-  Generate a nested Go module, its local client, and its runtime schema.
+  Generate a nested Go runtime module, its local client, and its runtime schema.
   """
   localClientCheck(ws: Workspace!): Void @check {
     let scope = ".dagger/modules/e2e/fixtures/manifest/nested/app"
     let input = ws.withNewFile(scope + "/keep.txt", "keep").withWorkdir(scope)
     let target = ws.moduleSource("/.dagger/modules/e2e/fixtures/manifest/dep")
-    let generated = goSdk(fat: true).generateScope(
+    let generated = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: input,
       isModule: true,
       name: "app",
@@ -45,7 +45,7 @@ type ManifestChecks {
       generated.directory(".").exists("internal/dagger/clients/dep/dep.gen.go") == false
     }
 
-    let repeated = goSdk(fat: true).generateScope(
+    let repeated = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: generated,
       isModule: true,
       name: "app",
@@ -63,7 +63,7 @@ type ManifestChecks {
       "package main\n\nimport \"context\"\n\ntype App struct{}\n\n"
         + "func (m *App) Hello(ctx context.Context) (string, error) { return dag.Dep().Hello(ctx) }\n",
     )
-    let rebuilt = goSdk(fat: true).generateScope(
+    let rebuilt = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: runnable,
       isModule: true,
       name: "app",
@@ -86,7 +86,7 @@ type ManifestChecks {
       "keep",
     )
     # The commit check reads the standalone client, so enable dualClients.
-    let unlocked = goSdk(fat: true, dualClients: true).generateScope(
+    let unlocked = goSdk(fat: true, dualClients: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: input,
       isModule: true,
       name: "git-app",
@@ -104,7 +104,7 @@ type ManifestChecks {
     assert("default output lost the generated client commit") {
       unlocked.file("internal/dagger/clients/sdk-helpers/dagger.gen.go").contents.contains("RefPin: \"" + commit + "\"")
     }
-    let locked = goSdk(fat: true, lock: true).generateScope(
+    let locked = goSdk(fat: true, lock: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: unlocked,
       isModule: true,
       name: "git-app",
@@ -116,7 +116,7 @@ type ManifestChecks {
     assert("the SDK did not write the selected TOML pin") {
       locked.file("dagger-module.toml").contents.contains("pin = " + JSON.encode(commit))
     }
-    let unlockedAgain = goSdk(fat: true).generateScope(
+    let unlockedAgain = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: locked,
       isModule: true,
       name: "git-app",
@@ -128,7 +128,7 @@ type ManifestChecks {
     assert("disabling lock retained a TOML pin") {
       !unlockedAgain.file("dagger-module.toml").contents.contains("pin =")
     }
-    let thin = goSdk(lock: true).generateScope(
+    let thin = goSdk(lock: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: locked,
       isModule: true,
       name: "git-app",
