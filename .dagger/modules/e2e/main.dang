@@ -13,8 +13,8 @@ type E2e {
   entrypoint: EntrypointChecks! { EntrypointChecks }
 
   """Checks that need the shared runtime SDK from the engine checkout."""
-  unified(runtimeSdk: Directory!): UnifiedChecks! {
-    UnifiedChecks(runtimeSdk: runtimeSdk)
+  unified(runtimeSdk: Directory!, legacyVersion: String! = "v0.21.7", packageMain: Boolean! = false): UnifiedChecks! {
+    UnifiedChecks(runtimeSdk: runtimeSdk, legacyVersion: legacyVersion, packageMain: packageMain)
   }
 
   let fixtureRoot: String! = ".dagger/modules/e2e/fixtures"

@@ -29,10 +29,11 @@ func main() {
 		check(c.Do(ctx, &dagger.Request{Query: text}, &dagger.Response{Data: &value}))
 		return value["unifiedApp"].(map[string]any)
 	}
-	got := query(`{unifiedApp{state(status:READY) logged ownSource greet items{keys list{name} get(key:"a"){name} subset(keys:["b"]){keys list{name}}}}}`)
+	got := query(`{unifiedApp{state(status:READY) logged ownSource greet legacyContainer(value:"legacy handle"){file(path:"/value"){contents}} items{keys list{name} get(key:"a"){name} subset(keys:["b"]){keys list{name}}}}}`)
 	want := map[string]any{
 		"state": "READY", "logged": "result", "greet": os.Getenv("EXPECTED_GREETING"),
-		"ownSource": "own module",
+		"ownSource":       "own module",
+		"legacyContainer": map[string]any{"file": map[string]any{"contents": "legacy handle"}},
 		"items": map[string]any{
 			"keys":   []any{"a", "b"},
 			"list":   []any{map[string]any{"name": "a"}, map[string]any{"name": "b"}},
@@ -50,15 +51,19 @@ func main() {
 	check(err)
 	var echoed struct {
 		UnifiedApp struct {
-			Echo struct{ File struct{ Contents string } }
+			Echo       struct{ File struct{ Contents string } }
+			LegacyRead string
 		}
 	}
 	check(c.Do(ctx, &dagger.Request{
-		Query:     `query($id:ID!){unifiedApp{echo(value:$id){file(path:"/value"){contents}}}}`,
+		Query:     `query($id:ID!){unifiedApp{echo(value:$id){file(path:"/value"){contents}} legacyRead(value:$id)}}`,
 		Variables: map[string]any{"id": id},
 	}, &dagger.Response{Data: &echoed}))
 	if echoed.UnifiedApp.Echo.File.Contents != "shared core handle" {
 		panic("core handle did not round trip")
+	}
+	if echoed.UnifiedApp.LegacyRead != "shared core handle" {
+		panic("legacy module did not accept the shared core handle")
 	}
 	fmt.Println("unified entrypoint passed")
 }

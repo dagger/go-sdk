@@ -1,6 +1,8 @@
 """Exercise the shared runtime before its first published SDK version."""
 type UnifiedChecks {
   runtimeSdk: Directory!
+  legacyVersion: String!
+  packageMain: Boolean!
   let root: String! = ".dagger/modules/e2e/out/unified-app"
   let fixtures: String! = ".dagger/modules/e2e/fixtures"
 
@@ -8,9 +10,15 @@ type UnifiedChecks {
     ws.withDirectory(root + "/runtime-sdk", runtimeSdk)
       .withNewFile("own.txt", "caller files")
       .withNewFile(root + "/own.txt", "own module")
-      .withDirectory(root + "/dep", ws.directory("/" + fixtures + "/client/dep"))
+      .withDirectory(root + "/dep", ws.directory("/" + fixtures + "/unified-legacy"))
+      .withNewFile(root + "/dep/dagger.json", "{\"name\":\"client-dep\",\"engineVersion\":" + JSON.encode(legacyVersion) + ",\"sdk\":{\"source\":\"go\"}}\n")
+      .withNewFile(root + "/dep/go.mod", "module example.com/legacy-client-dep\n\ngo 1.26.1\n\nrequire dagger.io/dagger " + legacyVersion + "\n")
       .withNewFile(root + "/go.mod", "module example.com/unified\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.15\nreplace dagger.io/dagger => ./runtime-sdk\n")
-      .withFile(root + "/main.go", ws.file("/" + fixtures + "/unified/main.go"))
+      .withNewFile(root + "/main.go", if (packageMain) {
+        ws.file("/" + fixtures + "/unified/main.go").contents.replace("package unified_app", "package main")
+      } else {
+        ws.file("/" + fixtures + "/unified/main.go").contents
+      })
       .withFile(root + "/probe/main.go", ws.file("/" + fixtures + "/unified/probe/main.go"))
       .withNewFile(root + "/dagger-module.toml", "name = \"unified-app\"\n")
       .withWorkdir(root)
@@ -20,7 +28,7 @@ type UnifiedChecks {
     let input = prepared(ws)
     goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
       ws: input, isModule: true, name: "unified-app",
-      clients: [input.withWorkdir(".").moduleSource("/" + root + "/dep").withEngineVersion("v0.18.0")],
+      clients: [input.withWorkdir(".").moduleSource("/" + root + "/dep").withEngineVersion(legacyVersion)],
     )
   }
 
@@ -46,11 +54,17 @@ type UnifiedChecks {
   """Old targets, core handles, enums, collection projections and uncached calls."""
   callsCheck(ws: Workspace!): Void @check {
     let ready = generated(ws)
+    assert("generation changed the legacy target's SDK version") {
+      ready.file("dep/go.mod").contents == prepared(ws).file("dep/go.mod").contents
+    }
+    assert("generation changed the legacy target's author source") {
+      ready.file("dep/main.go").contents == prepared(ws).file("dep/main.go").contents
+    }
     let out = probe(ready, "hello entrypoint")
     assert("the unified entrypoint probe failed: " + out) { out.contains("unified entrypoint passed") }
     let repeated = goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
       ws: ready, isModule: true, name: "unified-app",
-      clients: [ready.withWorkdir(".").moduleSource("/" + root + "/dep").withEngineVersion("v0.18.0")],
+      clients: [ready.withWorkdir(".").moduleSource("/" + root + "/dep").withEngineVersion(legacyVersion)],
     )
     assert("unified regeneration changed files") { repeated.changes(ready).isEmpty }
     null
@@ -60,7 +74,7 @@ type UnifiedChecks {
   changedTargetCheck(ws: Workspace!): Void @check {
     let ready = generated(ws)
     let before = probe(ready, "hello entrypoint")
-    let changed = ready.withNewFile("dep/main.go", "package main\n\ntype ClientDep struct{}\nfunc (*ClientDep) Greet(name string) string { return \"updated \" + name }\n")
+    let changed = ready.withNewFile("dep/main.go", ready.file("dep/main.go").contents.replace("\"hello \" + name", "\"updated \" + name"))
     let after = probe(changed, "updated entrypoint")
     assert("target calls failed: " + before + after) {
       before.contains("unified entrypoint passed") and after.contains("unified entrypoint passed")
@@ -70,7 +84,8 @@ type UnifiedChecks {
 
   """Missing target fields report stale bindings with regeneration advice."""
   staleTargetCheck(ws: Workspace!): Void @check {
-    let changed = generated(ws).withNewFile("dep/main.go", "package main\n\ntype ClientDep struct{}\nfunc (*ClientDep) Renamed() string { return \"renamed\" }\n")
+    let ready = generated(ws)
+    let changed = ready.withNewFile("dep/main.go", ready.file("dep/main.go").contents.replace("Greet(", "Renamed("))
     let refused = probe(changed, "unused") rescue { err: Error => err.message }
     assert("a stale target did not report regeneration: " + refused) {
       refused.contains("generated client") and refused.contains("regenerate")

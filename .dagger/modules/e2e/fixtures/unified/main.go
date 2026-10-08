@@ -21,6 +21,14 @@ func (*UnifiedApp) Greet(ctx context.Context) (string, error) {
 	return dep.New().ClientDep().Greet(ctx, "entrypoint")
 }
 
+func (*UnifiedApp) LegacyContainer(value string) *core.Container {
+	return dep.New().ClientDep().Container(value)
+}
+
+func (*UnifiedApp) LegacyRead(ctx context.Context, value *core.Container) (string, error) {
+	return dep.New().ClientDep().Read(ctx, value)
+}
+
 func (*UnifiedApp) Echo(value *core.Container) *core.Container { return value }
 
 func (*UnifiedApp) Logged() string {
