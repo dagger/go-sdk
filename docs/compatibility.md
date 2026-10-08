@@ -18,13 +18,66 @@ and removes generated API methods from `dagger.Client`. That source upgrade
 requires migration; for example, `client.Container()` becomes
 `core.NewQuery(client).Container()`.
 
-The legacy-target probes do not prove that a beta.16 module can be regenerated
-or migrated automatically. Validate those paths separately on a frozen
-beta.16 fixture. The beta.16 floor check currently covers standalone clients,
-not the complete entrypoint/unified mode.
+The legacy-target probes and the beta.16 standalone-client floor check do not
+prove entrypoint migration. The separate beta.16 migration check first generates
+and calls a fixture on released beta.16, then migrates it on the integrated
+engine. It verifies unchanged author source, a retained global `dag`, stable
+regeneration, and actual module calls passing core objects in both directions.
+This does not establish beta.16 as the engine floor for the complete new mode.
 
-Existing modules keep the Go runtime unless `dangEntrypoint` is enabled.
-Modules that share a parent go.mod or sibling Go source keep that runtime.
+New module scopes use a Dang entrypoint and shared core types by default.
+They do not generate the unqualified global `dag`. Existing modules keep their
+Go runtime or custom entrypoint unless explicitly migrated. Existing generated
+Dang entrypoints keep that mode. Modules using a parent go.mod keep their
+existing runtime; fresh nested scopes receive their own go.mod.
+
+`dangEntrypoint` and `unifiedClients` can be set explicitly to override automatic
+selection. Existing entrypoint and standalone clients keep their previous mode.
+Standalone clients outside an entrypoint module keep embedded bindings unless
+`unifiedClients = true` is explicit. This avoids upgrading an existing Go
+application's runtime SDK merely because a client was added. Use the generated `dagger.Connect()`
+accessor or, with unified clients, `core.NewContainer()` and the other core
+constructors. These use the
+shared default session; removing the API global does not open a connection
+for each call.
+
+`globalClient` controls compatibility for a module's author package:
+
+| Setting | Generated behavior |
+| --- | --- |
+| Unset | Preserve the saved choice; otherwise enable compatibility for a recognized legacy generated client or Go runtime manifest. Fresh modules omit `dag`. |
+| `true` | Emit `var dag = dagger.Connect()` for existing author code. |
+| `false` | Omit `dag`, even if legacy files are present. Author code must already use explicit accessors or constructors. |
+
+For example, an existing module can opt into the new generator while retaining
+its author API in the workspace configuration:
+
+```toml
+[sdks.go.scopes.".dagger/modules/example".settings]
+dangEntrypoint = true
+globalClient = true
+```
+
+The generator records the effective choice in SDK-owned
+`.dagger-generated.json`; it does not edit the engine-owned `dagger.toml`.
+Explicit `false` takes precedence over automatic migration, and a failed
+generation leaves author files unchanged. A later automatic generation keeps
+the saved decision.
+
+This follows the [Python SDK's migration policy](https://github.com/dagger/python-sdk/blob/8506bf5c7991aaca501713df73af7da70cff9468/README.md#migrate-a-module):
+new projects omit the author global, recognized legacy projects
+retain it, and an explicit opt-out takes precedence. Python saves
+`global-client` under `[tool.dagger]` in `pyproject.toml`. Go saves the inferred
+choice in `.dagger-generated.json`, while explicit settings stay in the
+workspace configuration. Both continue to share connections when the author
+global is removed.
+
+Legacy runtime generation retains its global API. It rejects an explicit
+`globalClient = false` until the project enables Dang entrypoints. The
+compatibility option does not recreate the old combined dependency API
+(`dag.Dependency()`): projects using that API keep the legacy runtime until
+their source migrates to standalone clients. Entry-point migration continues
+to reject dependency manifests that it cannot preserve.
 
 Dang entrypoints support package main and importable packages. The module
 directory must contain its own go.mod. Generation builds from the module's
@@ -38,8 +91,8 @@ clients need the later serveModule correctness fixes, and owning-module enums
 need the accompanying enum lookup fix. Validate the integrated engine stack
 before claiming a released floor for these features.
 
-`unifiedClients` opts into shared `dagger.io/dagger/core` types. Generated
-module clients use `lib.New()` for the lazy process session or `lib.New(dag)`
+`unifiedClients = true` selects shared `dagger.io/dagger/core` types explicitly.
+Generated module clients use `lib.New()` for the lazy process session or `lib.New(dag)`
 to borrow a `dagger.Connect` connection. Closing an explicit connection leaves
 its bindings unusable; they never silently reconnect. Reopening the default
 session creates a new module-loading cache. Bindings include the target address
@@ -48,10 +101,16 @@ be retried. A missing schema field reports that bindings need regeneration;
 resolver and transport errors retain their original meaning.
 
 `clientVersion` selects the runtime SDK independently of each target's schema
-version. Unified clients require an SDK release containing the core split and
-`ModuleGraphQLClient` and core handle argument codecs, or a local
-`dagger.io/dagger` replacement during development. A target's older schema
-version must not select an older SDK for the new caller.
+version. Automatic selection uses the published
+`v1.0.0-beta.16.0.20261008202843-134540fec551` runtime for unified clients.
+That runtime contains the core split, shared module sessions, and core object
+ID decoding. Legacy clients retain their target-version SDK unless an explicit
+`clientVersion` overrides it. A target's older schema version must not select
+an older SDK for a new unified caller.
+
+Local replacements used by entrypoint generation must be reachable within the
+module source directory. A sibling replacement outside that directory is not
+included in the staged build.
 
 To check an old target with the local runtime:
 
@@ -65,30 +124,41 @@ Repeat with `v0.20.8` and `v0.18.0`. The same check set also includes
 `git-calls-check`, `changed-target-check`, and `stale-target-check`. Add
 `--package-main` to `unified` to exercise a caller that keeps `package main`.
 
+To exercise the complete proposed engine stack and this SDK checkout:
+
+```sh
+dagger -m .dagger/modules/engine-e2e call integrated-sdk-check \
+  --ws . --engine-source /path/to/dagger pass
+dagger -m .dagger/modules/engine-e2e call beta-16-migration-check \
+  --ws . --engine-source /path/to/dagger pass
+```
+
+The first check includes global removal, explicit compatibility settings,
+current and old-target calls, Git, changed targets, removed clients, and package
+main. The second generates and calls a real fixture on released beta.16, then
+migrates its generated module API on the supplied engine without changing
+author source. Unchanged beta.16 loading and builtin regeneration are covered
+separately by the engine's `TestRuntimeCodegen/TestFrozenBeta16GoModule` test.
+These commands must return `true`; a check's `pass` field can return `false`
+without a failing process exit code.
+
 Generation records file hashes in `.dagger-generated.json`. Removing a client
 removes unchanged owned outputs and preserves user files and edited generated
 files. A collision with user changes fails before generated files are written.
 Old outputs with a Dagger generated header can be adopted on the first run.
 
-Before changing the default for new modules or cutting a tag:
+Remaining integration order:
 
-1. Integrate the shared harness, smoke assertion, floor, and regression fixes
-   from go-sdk #51–#56, retaining one canonical collection test.
-2. Merge the core split (#14186, including #14234 and the already-integrated
-   #14559), then the runtime/session and enum fixes (#14561/#14562). Include
-   the complementary collection and file-preservation fixes (#14447/#14572).
-3. Review the complete preserved entrypoint foundation in #48 and the unified
-   clients in #49. Resolve overlapping changes in #43/#25. Finish the
-   no-global-client behavior and an explicit compatibility option before
-   changing defaults; today's generated code still contains global clients.
-4. Update #14560 to a generator revision containing #49's core codec emitter,
-   regenerate against the integrated schema, and integrate it into #14240.
-   Then merge #14240's generator adoption into main.
-5. Record immutable published generator and runtime SDK pins. Run the SDK
-   checks on the integrated engine, including unchanged and regenerated
-   beta.16 modules, explicit migration, old-target clients, Git and directory
-   calls, cache invalidation, enums, and collections.
-6. Record the new mode's released engine floor once its prerequisites ship.
-   Enable entrypoints for new modules after these gates pass. Preserve existing
-   modules' runtime choice; switching an existing module remains explicit.
-7. Tag the SDK after review. Remote publication requires maintainer approval.
+1. The engine prerequisites (#14186, #14561, #14562, #14447, and #14572)
+   are merged. The core split includes Tom's #14234 and #14559.
+2. Review and merge Go SDK #48, then #49. Yves's #51–#56 are already on
+   SDK main. #49 includes the older-schema fixes from #43; any remaining
+   package-naming work from #25 must preserve existing import names.
+3. Update Dagger #14560 to the published generator containing #49 and
+   regenerate against the actual engine schema. Merge #14560 into
+   `go-core-codegen` (#14240), then merge #14240 into Dagger main after CI.
+4. Record the immutable generator and runtime pins and the released engine
+   floor for the new defaults. Check unchanged beta.16 loading, explicit
+   migration, old-target calls, Git, cache invalidation, enums, and collections
+   on the integrated stack; a standalone-client floor check is insufficient.
+5. Tag the SDK after review and the engine floor release.
