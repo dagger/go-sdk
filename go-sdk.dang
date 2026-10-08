@@ -431,9 +431,14 @@ type GoSdk {
     let goRoot = findClientRoot(ws) ?? scopePath
     let moduleRoot = moduleSubpath(goRoot, scopePath)
     let prefix = if (moduleRoot == ".") { "" } else { moduleRoot + "/" }
+    let workspaceRoot = ws.withWorkdir(goRoot)
+    let goVersion = if (exists(workspaceRoot, "go.mod")) {
+      requiredGoVersion(workspaceRoot.file("go.mod"))
+    } else { "1.26" }
+    let goImage = "golang:" + goVersion + "-alpine"
     let globalClientPolicy = if (globalClient == null) { "auto" } else { JSON.encode(globalClient) }
-    let inputs = moduleCodegenBuilder
-      .withDirectory("/src", ws.withWorkdir(goRoot).directory(".", exclude: ["**/.git"]))
+    let inputs = moduleCodegenBuilder(goImage)
+      .withDirectory("/src", workspaceRoot.directory(".", exclude: ["**/.git"]))
       .withFile("/schema.json", source.introspectionSchemaJSON)
     let codegen = runTool(inputs, [
       "module-codegen",
@@ -441,6 +446,7 @@ type GoSdk {
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
+      "--go-image", goImage,
       "--dagger-version", if (unified) { runtimeVersion(true) } else { schemaVersion },
       "--unified=" + JSON.encode(unified),
       "--global-client=" + globalClientPolicy,
@@ -516,9 +522,9 @@ type GoSdk {
 
   The contract check embeds Dang, whose parser needs cgo.
   """
-  let moduleCodegenBuilder: Container! {
+  let moduleCodegenBuilder(goImage: String!): Container! {
     container
-      .from("golang:1.26-alpine")
+      .from(goImage)
       .withoutEntrypoint
       .withExec(["apk", "add", "--no-cache", "build-base"])
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
@@ -544,10 +550,14 @@ type GoSdk {
   }
 
   """Use the newer of the consumer Go directives and the generator's minimum."""
-  let clientCodegenBase(goMod: File!): Container! {
-    let goVersion = codegenBuilder.withFile("/consumer.go.mod", goMod)
+  let requiredGoVersion(goMod: File!): String! {
+    codegenBuilder.withFile("/consumer.go.mod", goMod)
       .withExec(["dagger-go-sdk-codegen", "go-version", "--go-mod", "/consumer.go.mod", "--minimum", "1.26"])
       .stdout.trimSpace
+  }
+
+  let clientCodegenBase(goMod: File!): Container! {
+    let goVersion = requiredGoVersion(goMod)
     container.from("golang:" + goVersion + "-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))

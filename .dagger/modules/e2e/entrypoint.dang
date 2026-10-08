@@ -396,6 +396,55 @@ type EntrypointChecks {
     null
   }
 
+  """Generation and the emitted dispatcher honor full Go/toolchain patch versions."""
+  compilerVersionCheck(ws: Workspace!): Void @check {
+    let name = "compiler-version"
+    let scopePath = outputRoot + "/" + name
+    let source = "package compiler_version\n\nimport \"runtime\"\n\ntype CompilerVersion struct{}\nfunc (m *CompilerVersion) Version() string { return runtime.Version() }\n"
+    let directives = ["go 1.26.8\n", "go 1.26.7\ntoolchain go1.26.8\n"]
+    directives.each { directive =>
+      let input = ws.withWorkdir(scopePath)
+        .withNewFile("go.mod", "module example.com/compiler-version\n\n" + directive)
+        .withNewFile("dagger-module.toml", "name = 'compiler-version'\n[runtime]\nsource = 'go'\n")
+        .withNewFile("main.go", source)
+      let generated = goSdk(dangEntrypoint: true).generateScope(
+        ws: input, isModule: true, name: name, clients: [],
+      )
+      assert("generation changed the author's source") { generated.file("main.go").contents == source }
+      let generatedDirectives = generated.file("go.mod").contents.split("\n")
+      directive.trimSpace.split("\n").each { expected =>
+        assert("generation changed the author's requirement: " + expected) {
+          generatedDirectives.contains(expected)
+        }
+      }
+      let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
+      assert("the emitted dispatch compiler lost the selected patch version") {
+        entrypoint.contains(".from(\"golang:1.26.8-alpine\")")
+      }
+      let dispatcher = container.from("golang:1.26.8-alpine").withoutEntrypoint
+        .withEnvVariable("CGO_ENABLED", "0")
+        .withEnvVariable("GOTOOLCHAIN", "local")
+        .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+        .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+        .withDirectory("/module", generated.directory(".")).withWorkdir("/module")
+        .withExec(["go", "build", "-buildvcs=false", "-o", "/usr/local/bin/dispatch", "./cmd/compiler-version-dispatch"])
+      let version = dispatcher.withExec(
+        ["dispatch", "engine-call"],
+        stdin: JSON.encode({{
+          receiverType: "CompilerVersion",
+          receiverValue: "{}",
+          fnName: "Version",
+          fnArgs: "{}",
+        }}),
+        experimentalPrivilegedNesting: true,
+      ).stdout.trimSpace
+      assert("the generated dispatcher ran on " + version) {
+        version == "\"go1.26.8\""
+      }
+    }
+    null
+  }
+
   """
   dangEntrypoint refuses what a manifest with an entrypoint cannot carry,
   and a module with a Dang entrypoint is not moved back to the Go runtime.
