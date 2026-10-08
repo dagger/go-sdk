@@ -113,6 +113,14 @@ func TestDispatchForObjectWithoutFunctions(t *testing.T) {
 	require.Contains(t, source, `fmt.Errorf("unknown function %s", fnName)`)
 }
 
+func TestEntrypointExposesDefaultConstructor(t *testing.T) {
+	mod := &v2Module{objects: []*parsedObjectType{{name: "HelloWorld"}, {name: "Item"}}}
+	source, err := mod.renderEntrypointSource("hello-world", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.Contains(t, string(source), `.withConstructor(function("", typeDef.withObject("HelloWorld")))`)
+	require.Equal(t, 1, strings.Count(string(source), ".withConstructor("))
+}
+
 func TestDispatchCommandSeparatesLogsFromResult(t *testing.T) {
 	for _, packageName := range []string{"main", "hello"} {
 		t.Run(packageName, func(t *testing.T) {

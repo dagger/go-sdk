@@ -28,9 +28,9 @@ type GoSdk {
 
   """
   Generate a Dang entrypoint and a static dispatch command, so the engine
-  loads the module's types without running it. The module must be an
-  importable Go package, not package main. Needs an engine that loads
-  manifest version 2 (Dagger v1.0.0-beta.14 or later).
+  loads the module's types without running it. Both importable packages and
+  package main are supported. Needs an engine that loads manifest version 2
+  (Dagger v1.0.0-beta.14 or later).
   """
   dangEntrypoint: Boolean! = false
 
@@ -375,6 +375,7 @@ type GoSdk {
       "go.sum",
       prefix + "go.mod",
       prefix + "go.sum",
+      prefix + ".dagger-generated.json",
       prefix + "dagger.gen.go",
       prefix + "dagger.dispatch.gen.go",
       prefix + "internal/dagger/**",
