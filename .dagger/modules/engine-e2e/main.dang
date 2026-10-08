@@ -7,10 +7,19 @@ type EngineE2e {
   """
   let engineCommit: String! = "17ba33f01e2470ae7888c51b030afd2c1a1db4bb"
 
-  """
-  Build the pinned main engine and use this checkout as its Go SDK.
-  """
-  devSdkCheck(ws: Workspace!): Void @check {
+  let daggerSource(commit: String!): Workspace! {
+    git("https://github.com/dagger/dagger").ref(commit).asWorkspace
+  }
+
+  let clientBase: Container! {
+    container
+      .from("alpine:3.22")
+      .withExec(["apk", "add", "--no-cache", "git"])
+      .withEnvVariable("HOME", "/root")
+      .withWorkdir("/root")
+  }
+
+  let sdkClient(ws: Workspace!, engineClient: Container!): Container! {
     let sdkSource = ws
       .directory("/", exclude: [".git"])
       .withFile("dagger.toml", ws.file("/.dagger/modules/engine-e2e/workspace.toml"))
@@ -18,22 +27,24 @@ type EngineE2e {
       sdkSource.exists("dagger.toml")
     }
 
-    let engineSource = git("https://github.com/dagger/dagger")
-      .ref(engineCommit)
-      .asWorkspace
-    let base = container
-      .from("alpine:3.22")
-      .withExec(["apk", "add", "--no-cache", "git"])
-      .withEnvVariable("HOME", "/root")
-      .withWorkdir("/root")
-    let client = engineDev(ws: engineSource)
-      .installClient(client: base)
+    let client = engineClient
       .withMountedDirectory("./go-sdk", sdkSource)
       .withWorkdir("./go-sdk")
       .withExec(["git", "init", "--quiet"])
     assert("nested client has no dagger.toml") {
       client.directory(".").exists("dagger.toml")
     }
+    client
+  }
+
+  """
+  Build the pinned main engine and use this checkout as its Go SDK.
+  """
+  devSdkCheck(ws: Workspace!): Void @check {
+    let client = sdkClient(
+      ws,
+      engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase),
+    )
 
     # The outer engine injects session credentials when the exec starts.
     # Clear them at the process boundary so these commands use the pinned
