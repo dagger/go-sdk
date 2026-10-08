@@ -180,6 +180,16 @@ type EngineE2e {
       engineCommit,
     ).withMountedDirectory("/beta16-frozen", frozen)
       .withMountedDirectory("/integrated-runtime-sdk", source.directory("/sdk/go"))
+    let unchanged = client.withWorkdir("/beta16-frozen")
+      .withExec(boundary + ["-m", ".", "call", "message"])
+    assert("the unchanged beta.16 module failed on the new engine: " + unchanged.stdout) {
+      unchanged.stdout.trimSpace == "beta16 generated global"
+    }
+    ["main.go", "go.mod", "dagger-module.toml", "dagger.gen.go", "internal/dagger/dagger.gen.go"].each { path =>
+      assert("loading the unchanged beta.16 module rewrote " + path) {
+        unchanged.file(path).contents == frozen.file(path).contents
+      }
+    }
     runModuleCheck(client, boundary + [
       "-m", ".dagger/modules/e2e", "call", "beta-16",
       "--frozen", "/beta16-frozen", "--runtime-sdk", "/integrated-runtime-sdk",

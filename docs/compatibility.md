@@ -21,7 +21,9 @@ requires migration; for example, `client.Container()` becomes
 The legacy-target probes and the beta.16 standalone-client floor check do not
 prove entrypoint migration. The separate beta.16 migration check first generates
 and calls a fixture on released beta.16, then migrates it on the integrated
-engine. It verifies unchanged author source, a retained global `dag`, stable
+engine. Before migration, it also calls the frozen module on the new engine
+and verifies that its source, SDK pin, manifest, and bindings stay unchanged.
+Migration verifies unchanged author source, a retained global `dag`, stable
 regeneration, and actual module calls passing core objects in both directions.
 This does not establish beta.16 as the engine floor for the complete new mode.
 
@@ -137,8 +139,8 @@ The first check includes global removal, explicit compatibility settings,
 current and old-target calls, Git, changed targets, removed clients, and package
 main. The second generates and calls a real fixture on released beta.16, then
 migrates its generated module API on the supplied engine without changing
-author source. Unchanged beta.16 loading and builtin regeneration are covered
-separately by the engine's `TestRuntimeCodegen/TestFrozenBeta16GoModule` test.
+author source. It also calls the original frozen module on that engine before
+migration and checks that loading preserves its source, pin, and bindings.
 These commands must return `true`; a check's `pass` field can return `false`
 without a failing process exit code.
 
