@@ -90,6 +90,22 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := pinDagger(goModPath, cfg.DaggerVersion); err != nil {
 		return err
 	}
+	runtimeVersion := cfg.DaggerVersion
+	// Bootstrap bindings do not import the runtime. Remember an existing
+	// higher requirement before tidy can remove it as temporarily unused.
+	modData, err := os.ReadFile(goModPath)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(goModPath, modData, nil)
+	if err != nil {
+		return err
+	}
+	for _, required := range mod.Require {
+		if required.Mod.Path == "dagger.io/dagger" && semver.Compare(required.Mod.Version, runtimeVersion) > 0 {
+			runtimeVersion = required.Mod.Version
+		}
+	}
 	if err := pinGeneratedTelemetry(goModPath); err != nil {
 		return err
 	}
@@ -146,6 +162,11 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	removed, err := generateClient(ctx, client, merged.Schema, cfg.SchemaVersion, packageImport, root, true)
 	if err != nil {
 		return fmt.Errorf("generate module client: %w", err)
+	}
+	// The bootstrap has no runtime SDK import, so its tidy may remove the
+	// requirement. Restore the caller's pin before unified bindings import core.
+	if err := pinDagger(goModPath, runtimeVersion); err != nil {
+		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {
 		return err

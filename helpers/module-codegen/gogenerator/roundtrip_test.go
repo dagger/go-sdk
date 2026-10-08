@@ -32,6 +32,86 @@ func TestGenerateFreshEmbeddedModuleWithoutLocalSDK(t *testing.T) {
 	require.JSONEq(t, `"fresh published dependencies"`, strings.TrimSpace(string(out)))
 }
 
+func TestGenerateFreshUnifiedModuleWithoutLocalSDK(t *testing.T) {
+	const runtimeVersion = "v1.0.0-beta.16.0.20261008202843-134540fec551"
+	root := t.TempDir()
+	// These private/body-only references are absent from the public module
+	// schema, but the default starter still needs their shared core aliases.
+	source := `package hello
+import (
+ "example.com/hello/internal/dagger"
+ "example.com/hello/helper"
+ "dagger.io/dagger/core"
+)
+type Hello struct {
+ // +private
+ Source *dagger.Directory
+}
+var _ *core.Directory = (*dagger.Directory)(nil)
+func New(ws *dagger.Workspace) *Hello {
+ return &Hello{Source:ws.Directory("/", dagger.WorkspaceDirectoryOpts{Exclude:[]string{"**/.git"}})}
+}
+func (h *Hello) Container() *dagger.Container { return dagger.Connect().Container().WithDirectory("/src", h.Source) }
+func (h *Hello) Echo(value string) string { return helper.Echo(value) }
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "helper"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "helper", "helper.go"), []byte(`package helper
+import client "example.com/hello/internal/dagger"
+type privateState struct { secret *client.Secret }
+func Echo(value string) string { _ = client.ContainerWithExecOpts{}; return value }
+`), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "cmd", "probe"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cmd", "probe", "main.go"), []byte(`package main
+import "example.com/hello/internal/dagger"
+func main() { _ = dagger.ContainerWithEnvVariableOpts{} }
+`), 0644))
+	for _, dir := range []string{"testdata", ".ignored", "nested-module"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, dir), 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, dir, "fixture.go"), []byte("package fixture\nfunc deliberately invalid syntax"), 0644))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "nested-module", "go.mod"), []byte("module example.com/fixture\n\ngo 1.26.1\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "ignored.go"), []byte("//go:build ignore\n\npackage hello\nfunc deliberately invalid syntax"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26.1\n"), 0644))
+	schema, err := filepath.Abs("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
+	require.NoError(t, err)
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: schema, SchemaVersion: "v1.0.0", DaggerVersion: runtimeVersion, UnifiedClient: true, GoImage: "golang:1.26-alpine"}
+	require.NoError(t, Generate(t.Context(), cfg))
+	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	require.NoError(t, err)
+	require.Contains(t, string(mod), "dagger.io/dagger "+runtimeVersion)
+	require.NotContains(t, string(mod), "replace")
+	bindings, err := os.ReadFile(filepath.Join(root, "internal/dagger/dagger.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(bindings), "type Directory = core.Directory")
+	require.Contains(t, string(bindings), "type WorkspaceDirectoryOpts = core.WorkspaceDirectoryOpts")
+	require.Contains(t, string(bindings), "type Secret = core.Secret")
+	require.Contains(t, string(bindings), "type ContainerWithExecOpts = core.ContainerWithExecOpts")
+	require.Contains(t, string(bindings), "type ContainerWithEnvVariableOpts = core.ContainerWithEnvVariableOpts")
+	require.NotContains(t, string(bindings), "var dag ")
+	require.NoError(t, Generate(t.Context(), cfg), "published-pin regeneration")
+	regenerated, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	require.NoError(t, err)
+	require.Equal(t, string(mod), string(regenerated))
+	// A caller's older default must not replace the project's selected newer
+	// runtime, even while bootstrap tidy temporarily removes its requirement.
+	cfg.DaggerVersion = "v1.0.0-beta.14"
+	require.NoError(t, Generate(t.Context(), cfg), "preserve a newer runtime requirement")
+	regenerated, err = os.ReadFile(filepath.Join(root, "go.mod"))
+	require.NoError(t, err)
+	require.Equal(t, string(mod), string(regenerated))
+	cmd := exec.CommandContext(t.Context(), "go", "run", "-buildvcs=false", "./cmd/hello-dispatch", "engine-call")
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader(`{"receiverType":"Hello","receiverValue":{},"fnName":"Echo","fnArgs":{"value":"published shared runtime"}}`)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.JSONEq(t, `"published shared runtime"`, strings.TrimSpace(string(out)))
+	cmd = exec.CommandContext(t.Context(), "go", "run", "-buildvcs=false", "./cmd/probe")
+	cmd.Dir = root
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
 func TestGenerateCompleteModule(t *testing.T) {
 	sdk := os.Getenv("GO_SDK_TEST_RUNTIME")
 	if sdk == "" {
