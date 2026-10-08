@@ -14,6 +14,13 @@ type EngineE2e {
   """
   let runtimeFloorCommit: String! = "4932411ff7a9b0771dd53779d9a085406cefb531"
 
+  """
+  Commit of release v1.0.0-beta.16, shared by the entrypoint-floor-engine-dev
+  dependency and the engine of the entrypoint floor check. Entrypoint-mode
+  modules and unified clients support no older engine.
+  """
+  let entrypointFloorCommit: String! = "2d95ef98b6824c5aaca4a43eb172c9a057c18619"
+
   let daggerSource(commit: String!): Workspace! {
     git("https://github.com/dagger/dagger").ref(commit).asWorkspace
   }
@@ -142,6 +149,19 @@ type EngineE2e {
       "e-2-e:module-client-check",
       "e-2-e:manifest:local-client-check",
       "e-2-e:manifest:git-client-check",
+    ])
+  }
+
+  """
+  Run the client checks on the entrypoint floor engine.
+  """
+  entrypointFloorCheck(ws: Workspace!): Void @check {
+    let engine = entrypointFloorEngineDev(ws: daggerSource(entrypointFloorCommit))
+    runChecks(sdkClient(ws, engine.installClient(client: clientBase)), [
+      "dag://e-2-e/find-client-root-check",
+      "dag://e-2-e/standalone-client-check",
+      "dag://e-2-e/standalone-client-compiles-check",
+      "dag://e-2-e/standalone-client-preservation-check",
     ])
   }
 }
