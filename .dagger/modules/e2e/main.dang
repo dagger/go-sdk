@@ -167,6 +167,11 @@ type E2e {
       generated.file("dagger.json").contents.contains("\"source\": \"../../client/dep\"")
     }
 
+    # The runtime generator creates a module-local go.mod as a workspace
+    # edit. That becomes the nearest Go scope for standalone clients too.
+    assert("generated module has no local Go root") {
+      goSdk.findClientRoot(initialized) == scopePath
+    }
     let dual = goSdk(fat: true, dualClients: true).generateScope(
       ws: initialized,
       isModule: true,
@@ -176,11 +181,18 @@ type E2e {
     assert("module client binding was not generated with dualClients") {
       exists(dual, "internal/dagger/client-dep.gen.go")
     }
-    assert("standalone module client was not generated with dualClients") {
+    assert("standalone module client was not generated in its nearest Go root") {
+      exists(dual, "internal/dagger/clients/client-dep/client-dep.gen.go")
+    }
+    assert("standalone module client escaped into the parent Go root") {
       exists(
         dual.withWorkdir(goScopePath),
         "internal/dagger/clients/client-dep/client-dep.gen.go",
-      )
+      ) == false
+    }
+    assert("dual client generation changed the parent go.mod") {
+      dual.withWorkdir(goScopePath).file("go.mod").contents ==
+        initialized.withWorkdir(goScopePath).file("go.mod").contents
     }
     null
   }
