@@ -33,10 +33,18 @@ type EngineE2e {
       .withWorkdir("/root")
   }
 
-  let sdkClient(ws: Workspace!, engineClient: Container!): Container! {
+  let sdkClient(
+    ws: Workspace!,
+    engineClient: Container!,
+    engineCommit: String!,
+  ): Container! {
     let sdkSource = ws
       .directory("/", exclude: [".git"])
       .withFile("dagger.toml", ws.file("/.dagger/modules/engine-e2e/workspace.toml"))
+      # Older engines reject the root lockfile's query-aware entries.
+      .withFile("dagger.lock", ws.file("/.dagger/modules/engine-e2e/nested.lock"))
+      # Tell shared checks which SDK source belongs to the engine under test.
+      .withNewFile(".dagger/modules/e2e/engine-commit", engineCommit)
     assert("Go SDK workspace source has no dagger.toml") {
       sdkSource.exists("dagger.toml")
     }
@@ -72,6 +80,7 @@ type EngineE2e {
     let client = sdkClient(
       ws,
       engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase),
+      engineCommit,
     )
 
     # The outer engine injects session credentials when the exec starts.
@@ -144,7 +153,11 @@ type EngineE2e {
   """
   runtimeFloorCheck(ws: Workspace!): Void @check {
     let engine = runtimeFloorEngineDev(ws: daggerSource(runtimeFloorCommit))
-    runChecks(sdkClient(ws, engine.installClient(client: clientBase)), [
+    runChecks(sdkClient(
+      ws,
+      engine.installClient(client: clientBase),
+      runtimeFloorCommit,
+    ), [
       "e-2-e:module-init-check",
       "e-2-e:module-client-check",
       "e-2-e:manifest:local-client-check",
@@ -157,7 +170,11 @@ type EngineE2e {
   """
   entrypointFloorCheck(ws: Workspace!): Void @check {
     let engine = entrypointFloorEngineDev(ws: daggerSource(entrypointFloorCommit))
-    runChecks(sdkClient(ws, engine.installClient(client: clientBase)), [
+    runChecks(sdkClient(
+      ws,
+      engine.installClient(client: clientBase),
+      entrypointFloorCommit,
+    ), [
       "dag://e-2-e/find-client-root-check",
       "dag://e-2-e/standalone-client-check",
       "dag://e-2-e/standalone-client-compiles-check",
