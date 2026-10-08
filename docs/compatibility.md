@@ -153,9 +153,11 @@ Remaining integration order:
 
 1. The engine prerequisites (#14186, #14561, #14562, #14447, and #14572)
    are merged. The core split includes Tom's #14234 and #14559.
-2. Review and merge Go SDK #48, then #49. Yves's #51–#56 are already on
-   SDK main. #49 includes the older-schema fixes from #43; any remaining
-   package-naming work from #25 must preserve existing import names.
+2. Go SDK #48 and Tibor's #57 are merged, along with Yves's #51–#56.
+   Review and merge #49 next: it adds shared clients, new-module defaults,
+   and the global-client compatibility option on top of those fixes.
+   #49 includes the older-schema fixes from #43; any remaining package-naming
+   work from #25 must preserve existing import names.
 3. Update Dagger #14560 to the published generator containing #49 and
    regenerate against the actual engine schema. Merge #14560 into
    `go-core-codegen` (#14240), then merge #14240 into Dagger main after CI.
