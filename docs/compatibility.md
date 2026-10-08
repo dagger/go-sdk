@@ -11,6 +11,18 @@ inputs and outputs. The new caller uses shared core types across that boundary.
 Run these checks on the integrated new engine. Compatibility with an older
 beta engine is a separate concern.
 
+Existing beta.16 modules that keep their generated code, manifest, and SDK pin
+must also remain loadable. This is different from upgrading the caller's Go
+SDK dependency: the core split moves public types to `dagger.io/dagger/core`
+and removes generated API methods from `dagger.Client`. That source upgrade
+requires migration; for example, `client.Container()` becomes
+`core.NewQuery(client).Container()`.
+
+The legacy-target probes do not prove that a beta.16 module can be regenerated
+or migrated automatically. Validate those paths separately on a frozen
+beta.16 fixture. The beta.16 floor check currently covers standalone clients,
+not the complete entrypoint/unified mode.
+
 Existing modules keep the Go runtime unless `dangEntrypoint` is enabled.
 Modules that share a parent go.mod or sibling Go source keep that runtime.
 
@@ -60,11 +72,23 @@ Old outputs with a Dagger generated header can be adopted on the first run.
 
 Before changing the default for new modules or cutting a tag:
 
-1. Merge the core split and generator adoption, then the session and enum fixes.
-2. Publish immutable generator and runtime SDK versions and record those pins.
-3. Run the SDK checks on the integrated engine, including old-target clients,
-   git and directory module calls, cache invalidation, enums, and collections.
-4. Record the new mode's released engine floor once its prerequisites ship.
-5. Enable entrypoints for new modules after these gates pass. Preserve existing
+1. Integrate the shared harness, smoke assertion, floor, and regression fixes
+   from go-sdk #51–#56, retaining one canonical collection test.
+2. Merge the core split (#14186, including #14234 and the already-integrated
+   #14559), then the runtime/session and enum fixes (#14561/#14562). Include
+   the complementary collection and file-preservation fixes (#14447/#14572).
+3. Review the complete preserved entrypoint foundation in #48 and the unified
+   clients in #49. Resolve overlapping changes in #43/#25. Finish the
+   no-global-client behavior and an explicit compatibility option before
+   changing defaults; today's generated code still contains global clients.
+4. Update #14560 to a generator revision containing #49's core codec emitter,
+   regenerate against the integrated schema, and integrate it into #14240.
+   Then merge #14240's generator adoption into main.
+5. Record immutable published generator and runtime SDK pins. Run the SDK
+   checks on the integrated engine, including unchanged and regenerated
+   beta.16 modules, explicit migration, old-target clients, Git and directory
+   calls, cache invalidation, enums, and collections.
+6. Record the new mode's released engine floor once its prerequisites ship.
+   Enable entrypoints for new modules after these gates pass. Preserve existing
    modules' runtime choice; switching an existing module remains explicit.
-6. Tag the SDK after review. Remote publication requires maintainer approval.
+7. Tag the SDK after review. Remote publication requires maintainer approval.
