@@ -278,7 +278,6 @@ type EngineE2e {
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-entrypoint",
         "--path", entrypointPath,
-        "--dang-entrypoint",
       ])
       .withExec(["grep", "-qx", "\\[entrypoint\\]", entrypointPath + "/dagger-module.toml"])
       .withExec(["test", "!", "-e", entrypointPath + "/dagger.json"])
