@@ -27,7 +27,7 @@ func TestCheck(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.dang"), []byte(validEntrypoint), 0o600))
 
-	err := Check(context.Background(), dir, filepath.Join("..", "codegen", "introspection", "testdata", "schema.json"))
+	err := Check(context.Background(), dir, filepath.Join("..", "..", "cmd", "dagger-go-sdk-codegen", "introspection", "testdata", "schema.json"))
 	require.NoError(t, err)
 }
 
@@ -40,7 +40,7 @@ func TestCheckRejectsInterfaceMismatch(t *testing.T) {
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.dang"), []byte(invalid), 0o600))
 
-	err := Check(context.Background(), dir, filepath.Join("..", "codegen", "introspection", "testdata", "schema.json"))
+	err := Check(context.Background(), dir, filepath.Join("..", "..", "cmd", "dagger-go-sdk-codegen", "introspection", "testdata", "schema.json"))
 	require.ErrorContains(t, err, "does not satisfy ModuleEntrypoint")
 }
 
@@ -61,6 +61,6 @@ func TestCheckRejectsArgumentList(t *testing.T) {
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.dang"), []byte(invalid), 0o600))
 
-	err := Check(context.Background(), dir, filepath.Join("..", "codegen", "introspection", "testdata", "schema.json"))
+	err := Check(context.Background(), dir, filepath.Join("..", "..", "cmd", "dagger-go-sdk-codegen", "introspection", "testdata", "schema.json"))
 	require.ErrorContains(t, err, "does not satisfy ModuleEntrypoint")
 }

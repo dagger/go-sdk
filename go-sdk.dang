@@ -36,6 +36,11 @@ type GoSdk {
 
   """Find the nearest Go module root from Workspace.cwd. Return null if no go.mod exists."""
   findClientRoot(ws: Workspace!): String {
+    # A host-backed workspace's findUp stats the host. A new go.mod can
+    # exist only in the workspace edits until those edits are applied.
+    if (exists(ws, "go.mod")) {
+      return normalizePath(ws.cwd)
+    }
     let goMod = ws.findUp("go.mod")
     if (goMod == null) {
       null

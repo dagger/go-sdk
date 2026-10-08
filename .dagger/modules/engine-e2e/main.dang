@@ -3,11 +3,11 @@ Checks the Go SDK against the Dagger development engine.
 """
 type EngineE2e {
   """
-  Commit shared by the engine-dev dependency and target engine: v1.0.0-beta.14,
-  the first release that loads manifest v2 entrypoints. Keep it aligned with
-  the engine-dev dependency in dagger-module.toml.
+  Current main commit shared by engine-dev and the target engine. Includes
+  beta.15 collections and the later call-digest and module-loading fixes.
+  Keep it aligned with the dependency in dagger-module.toml.
   """
-  let engineCommit: String! = "06660c3cde2d9da65d8b009531efd04cfc5578ed"
+  let engineCommit: String! = "195b09187512b7e114f47048c773310701af87a7"
 
   """
   The client container the development CLI is installed into. It matches the
@@ -24,7 +24,7 @@ type EngineE2e {
   """
   Build the pinned main engine and use this checkout as its Go SDK.
   """
-  devSdkCheck(ws: Workspace!): Void @check {
+  devSdkCheck(ws: Workspace!, checks: [String!]! = []): Void @check {
     let sdkSource = ws
       .directory("/", exclude: [".git"])
       .withFile("dagger.toml", ws.file("/.dagger/modules/engine-e2e/workspace.toml"))
@@ -59,7 +59,7 @@ type EngineE2e {
     let checked = listed.withExec([
       "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
       "dagger", "check",
-    ])
+    ] + checks)
 
     let initialized = checked
       .withExec([
@@ -110,6 +110,7 @@ type EngineE2e {
     let entrypointPath = ".dagger/modules/sdk-entrypoint"
     let entrypoint = thin
       .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-entrypoint",
         "--path", entrypointPath,
@@ -120,6 +121,7 @@ type EngineE2e {
       .withExec(["test", "-f", entrypointPath + "/internal/dagger/entrypoint/main.dang"])
       .withExec(["test", "-f", entrypointPath + "/cmd/sdk-entrypoint-dispatch/main.go"])
       .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "-m", entrypointPath,
         "call", "container", "file",
         "--path", "/etc/alpine-release",

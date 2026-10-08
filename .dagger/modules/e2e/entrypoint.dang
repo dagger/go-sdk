@@ -230,77 +230,42 @@ type EntrypointChecks {
     null
   }
 
-  """
-  The module's Go root is the nearest go.mod above it. The generator updates
-  that go.mod, and the entrypoint builds the dispatch command from there.
-  """
+  """A module sharing its parent's Go root stays on the legacy runtime."""
   goRootCheck(ws: Workspace!): Void @check {
     let scopePath = goScopePath + "/entrypoint-nested"
-    let generated = goSdk(dangEntrypoint: true, template: "empty").generateScope(
-      ws: ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath),
-      isModule: true,
-      name: "entrypoint-nested",
-      clients: [],
-    )
-
-    assert("a nested go.mod was created") {
-      exists(generated, "go.mod") == false
+    let input = ws.withNewFile(scopePath + "/user.txt", "keep me\n").withWorkdir(scopePath)
+    let refused = goSdk(dangEntrypoint: true, template: "empty").generateScope(
+      ws: input, isModule: true, name: "entrypoint-nested", clients: [],
+    ).file("dagger.gen.go").contents rescue { err: Error => err.message }
+    assert("parent go.mod was accepted: " + firstLine(refused)) {
+      refused.contains("a go.mod in the module directory")
     }
-    assert("the entrypoint does not build in the module directory") {
-      generated.file("internal/dagger/entrypoint/main.dang").contents.contains(".withWorkdir(\"/workspace/entrypoint-nested\")")
-    }
-    let goRoot = generated.withWorkdir(goScopePath)
-    assert("the Go root lost its module path") {
-      goRoot.file("go.mod").contents.hasPrefix("module example.com/go-scope\n")
-    }
-
-    let constructed = container
-      .from("golang:1.26-alpine")
-      .withoutEntrypoint
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/workspace", goRoot.directory("."))
-      .withWorkdir("/workspace/entrypoint-nested")
-      .withExec(["go", "run", "./cmd/entrypoint-nested-dispatch", "call", "entrypoint-nested"])
-      .stdout
-    assert("the nested module did not dispatch: " + constructed) {
-      constructed == "{}\n"
-    }
+    assert("the author file changed") { input.file("user.txt").contents == "keep me\n" }
     null
   }
 
-  """
-  The default starter imports the embedded client through the enclosing Go
-  module, so a new module below an existing go.mod builds.
-  """
+  """An independent Go module below a parent Go tree gets an importable starter."""
   goRootDefaultTemplateCheck(ws: Workspace!): Void @check {
     let scopePath = goScopePath + "/mods/entrypoint-starter"
+    let input = ws.withNewFile(scopePath + "/go.mod", "module example.com/entrypoint-starter\n\ngo 1.26\n").withWorkdir(scopePath)
+    assert("root discovery ignored the module's pending go.mod") {
+      goSdk.findClientRoot(input) == scopePath
+    }
     let generated = goSdk(dangEntrypoint: true).generateScope(
-      ws: ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath),
-      isModule: true,
-      name: "entrypoint-starter",
-      clients: [],
+      ws: input, isModule: true, name: "entrypoint-starter", clients: [],
     )
-
-    assert("the starter does not import through the enclosing Go module") {
-      generated.file("main.go").contents.contains("\"example.com/go-scope/mods/entrypoint-starter/internal/dagger\"")
+    assert("the starter does not import its own module client") {
+      generated.file("main.go").contents.contains("\"example.com/entrypoint-starter/internal/dagger\"")
     }
-    assert("a nested go.mod was created") {
-      exists(generated, "go.mod") == false
+    assert("the parent go.mod changed") {
+      generated.withWorkdir(goScopePath).file("go.mod").contents == input.withWorkdir(goScopePath).file("go.mod").contents
     }
-
-    let built = container
-      .from("golang:1.26-alpine")
-      .withoutEntrypoint
+    let built = container.from("golang:1.26-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/workspace", generated.withWorkdir(goScopePath).directory("."))
-      .withWorkdir("/workspace/mods/entrypoint-starter")
+      .withDirectory("/workspace", generated.directory(".")).withWorkdir("/workspace")
       .withExec(["go", "vet", "./..."], expect: ReturnType.ANY)
-    # A wrong import fails to build the starter and its dispatch command.
-    assert("the starter did not build: " + built.stderr) {
-      built.exitCode == 0
-    }
+    assert("the starter did not build: " + built.stderr) { built.exitCode == 0 }
     null
   }
 
@@ -348,7 +313,7 @@ type EntrypointChecks {
       fat.contains("set fat = false")
     }
 
-    # The generator refuses package main, and the SDK raises its message.
+    # Package main uses a dispatcher in the author package.
     let mainPath = outputRoot + "/entrypoint-main"
     let packageMain = goSdk(dangEntrypoint: true).generateScope(
       ws: ws
@@ -358,11 +323,9 @@ type EntrypointChecks {
       isModule: true,
       name: "entrypoint-main",
       clients: [],
-    ).file("dagger.gen.go").contents rescue {
-      err: Error => err.message
-    }
-    assert("package main was accepted: " + firstLine(packageMain)) {
-      packageMain.contains("change package main to package entrypoint_main")
+    ).file("dagger.dispatch.gen.go").contents
+    assert("package main dispatcher was not generated") {
+      packageMain.contains("package main") and packageMain.contains("func main()")
     }
 
     # Settings a manifest with an entrypoint would drop are refused, before
