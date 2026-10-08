@@ -7,6 +7,13 @@ type EngineE2e {
   """
   let engineCommit: String! = "17ba33f01e2470ae7888c51b030afd2c1a1db4bb"
 
+  """
+  Commit of release v1.0.0-beta.12, shared by the runtime-floor-engine-dev
+  dependency and the engine of the runtime floor check. Runtime-mode modules
+  support no older engine.
+  """
+  let runtimeFloorCommit: String! = "4932411ff7a9b0771dd53779d9a085406cefb531"
+
   let daggerSource(commit: String!): Workspace! {
     git("https://github.com/dagger/dagger").ref(commit).asWorkspace
   }
@@ -35,6 +42,20 @@ type EngineE2e {
       client.directory(".").exists("dagger.toml")
     }
     client
+  }
+
+  let runChecks(client: Container!, checks: [String!]!): Void {
+    # One check per run: dagger check passes when any of its patterns
+    # matches, so a stale name among several would be skipped silently.
+    checks.each { check =>
+      client
+        .withExec([
+          "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+          "dagger", "check", check,
+        ])
+        .sync
+    }
+    null
   }
 
   """
@@ -109,5 +130,18 @@ type EngineE2e {
       release.trimSpace != ""
     }
     null
+  }
+
+  """
+  Run the runtime-mode checks on the runtime floor engine.
+  """
+  runtimeFloorCheck(ws: Workspace!): Void @check {
+    let engine = runtimeFloorEngineDev(ws: daggerSource(runtimeFloorCommit))
+    runChecks(sdkClient(ws, engine.installClient(client: clientBase)), [
+      "e-2-e:module-init-check",
+      "e-2-e:module-client-check",
+      "e-2-e:manifest:local-client-check",
+      "e-2-e:manifest:git-client-check",
+    ])
   }
 }
