@@ -11,6 +11,9 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	{{- if IsModuleCode }}
+	"sync"
+	{{- end }}
 
 
 	{{- if not IsCoreLibrary }}
@@ -184,20 +187,15 @@ type Client struct {
 	client graphql.Client
 }
 
-var dag *Client
-
-func init() {
+// Connect constructs bindings for the current module session.
+func Connect() *Client {
 	gqlClient, q := getClientParams()
-	dag = &Client{
+	return &Client{
 		Query: &Query{
 			query: q.Client(gqlClient),
 		},
 		client: gqlClient,
 	}
-}
-
-func Connect() *Client {
-	return dag
 }
 
 // GraphQLClient returns the underlying graphql.Client
@@ -208,6 +206,14 @@ func (c *Client) GraphQLClient() graphql.Client {
 // QueryBuilder returns the underlying query builder.
 func (c *Client) QueryBuilder() *querybuilder.Selection {
 	return c.Query.query
+}
+
+// Share the transport, while each Connect call receives its own query root.
+// Missing session environment is not cached, so an early lazy handle cannot
+// prevent a later call from using the attached session.
+var defaultGraphQLClient struct {
+	sync.Mutex
+	client graphql.Client
 }
 
 func getClientParams() (graphql.Client, *querybuilder.Selection) {
@@ -223,6 +229,11 @@ func getClientParams() (graphql.Client, *querybuilder.Selection) {
 	sessionToken := os.Getenv("DAGGER_SESSION_TOKEN")
 	if sessionToken == "" {
 		return unavailableGraphQLClient{fmt.Errorf("DAGGER_SESSION_TOKEN is not set; run this call in a Dagger session")}, querybuilder.Query()
+	}
+	defaultGraphQLClient.Lock()
+	defer defaultGraphQLClient.Unlock()
+	if defaultGraphQLClient.client != nil {
+		return defaultGraphQLClient.client, querybuilder.Query()
 	}
 
 	host := fmt.Sprintf("127.0.0.1:%d", port)
@@ -246,6 +257,7 @@ func getClientParams() (graphql.Client, *querybuilder.Selection) {
 		}),
 	}
 	gqlClient := errorWrappedClient{graphql.NewClient(fmt.Sprintf("http://%s/query", host), httpClient)}
+	defaultGraphQLClient.client = gqlClient
 
 	return gqlClient, querybuilder.Query()
 }

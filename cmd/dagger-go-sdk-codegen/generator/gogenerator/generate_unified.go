@@ -124,7 +124,6 @@ type DaggerObject = core.DaggerObject
 type ExecError = dagger.ExecError
 var marshalCtx = context.Background()
 func SetMarshalContext(ctx context.Context) {marshalCtx=ctx;core.SetMarshalContext(ctx)}
-var dag = New()
 // Connect is retained for module dispatchers generated before New was introduced.
 func Connect() *Client {return New()}
 // New constructs lazy bindings. An omitted connection uses the shared session.
