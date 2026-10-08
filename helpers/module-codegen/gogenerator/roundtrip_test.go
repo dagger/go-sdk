@@ -10,6 +10,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// No local SDK replacement supplies a dependency graph here. This is the
+// fresh embedded path used by the SDK starter, where tidy previously selected
+// an experimental OTel log API incompatible with otel-go's log SDK.
+func TestGenerateFreshEmbeddedModuleWithoutLocalSDK(t *testing.T) {
+	root := t.TempDir()
+	source := "package hello\n\ntype Hello struct{}\nfunc (h *Hello) Echo(value string) string { return value }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
+	schema, err := filepath.Abs("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
+	require.NoError(t, err)
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26-alpine"}
+	require.NoError(t, Generate(t.Context(), cfg))
+	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	require.NoError(t, err)
+	require.Contains(t, string(mod), "github.com/dagger/otel-go v1.43.0")
+	cmd := exec.CommandContext(t.Context(), "go", "run", "-buildvcs=false", "./cmd/hello-dispatch", "engine-call")
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader(`{"receiverType":"Hello","receiverValue":{},"fnName":"Echo","fnArgs":{"value":"fresh published dependencies"}}`)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.JSONEq(t, `"fresh published dependencies"`, strings.TrimSpace(string(out)))
+}
+
 func TestGenerateCompleteModule(t *testing.T) {
 	sdk := os.Getenv("GO_SDK_TEST_RUNTIME")
 	if sdk == "" {

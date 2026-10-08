@@ -86,6 +86,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := pinDagger(goModPath, cfg.DaggerVersion); err != nil {
 		return err
 	}
+	if err := pinGeneratedTelemetry(goModPath); err != nil {
+		return err
+	}
 	if err := removeLegacyGeneratedFile(root); err != nil {
 		return err
 	}
@@ -351,6 +354,42 @@ func pinDagger(path, version string) error {
 		return nil
 	}
 	if err := mod.AddRequire("dagger.io/dagger", version); err != nil {
+		return err
+	}
+	body, err := mod.Format()
+	if err != nil {
+		return err
+	}
+	return writeFile(path, body)
+}
+
+// The embedded transport needs only propagation from otel-go, but that package
+// also imports the experimental log SDK. Seed its known dependency graph before
+// tidy discovers direct OTel imports: resolving those imports independently at
+// latest can select a log API that the SDK in otel-go no longer compiles with.
+// This runtime dependency is independent of the module's schema version.
+func pinGeneratedTelemetry(path string) error {
+	const modulePath = "github.com/dagger/otel-go"
+	const version = "v1.43.0"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return err
+	}
+	for _, replacement := range mod.Replace {
+		if replacement.Old.Path == modulePath {
+			return nil
+		}
+	}
+	for _, requirement := range mod.Require {
+		if requirement.Mod.Path == modulePath && semver.Compare(requirement.Mod.Version, version) >= 0 {
+			return nil
+		}
+	}
+	if err := mod.AddRequire(modulePath, version); err != nil {
 		return err
 	}
 	body, err := mod.Format()

@@ -182,6 +182,28 @@ func TestPinDaggerKeepsReplaceAndNewerVersion(t *testing.T) {
 	}
 }
 
+func TestPinGeneratedTelemetryPreservesUserChoices(t *testing.T) {
+	for name, goMod := range map[string]string{
+		"replace": "module example.com/app\n\ngo 1.26\n\nreplace github.com/dagger/otel-go => ../telemetry\n",
+		"newer":   "module example.com/app\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.43.1-0.20260917165636-2bca4f5622cf\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "go.mod")
+			writeTestFile(t, path, goMod)
+			if err := pinGeneratedTelemetry(path); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != goMod {
+				t.Errorf("user-selected telemetry changed:\n%s", data)
+			}
+		})
+	}
+}
+
 func TestRemoveStaleBindingsReportsRemovedFiles(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "internal", "dagger")
