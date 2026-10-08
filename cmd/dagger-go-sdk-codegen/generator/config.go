@@ -8,6 +8,10 @@ type Config struct {
 	// module.
 	PackageImport string
 
+	// UnifiedClient uses shared core bindings and a borrowed lazy session.
+	UnifiedClient bool
+	PackageName   string
+
 	// ModuleConfig is the specific config to generate a module.
 	//
 	// Client generation never sets it; it only remains so template helpers

@@ -15,6 +15,7 @@ import (
 	. "github.com/dave/jennifer/jen" //nolint:staticcheck
 	"github.com/iancoleman/strcase"
 	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/imports"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
@@ -113,6 +114,20 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 	moduleSource, err := mod.renderModuleSource(funcs.modulePkg.Name, packageImport)
 	if err != nil {
 		return nil, err
+	}
+	var typeImports strings.Builder
+	if funcs.cfg.UnifiedClient {
+		typeImports.WriteString("core \"dagger.io/dagger/core\"\n")
+	}
+	for path, pkg := range funcs.modulePkg.Imports {
+		if path != "dagger.io/dagger/core" {
+			fmt.Fprintf(&typeImports, "%s %q\n", pkg.Name, path)
+		}
+	}
+	moduleSource = bytes.Replace(moduleSource, []byte("import ("), []byte("import (\n"+typeImports.String()), 1)
+	moduleSource, err = imports.Process("dagger.gen.go", moduleSource, nil)
+	if err != nil {
+		return nil, fmt.Errorf("format dispatcher imports: %w", err)
 	}
 	dispatchSource, err := mod.renderDispatchSource(funcs.cfg.ModuleConfig.ModuleName, packageImport, funcs.modulePkg.Name)
 	if err != nil {

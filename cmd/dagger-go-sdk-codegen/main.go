@@ -70,6 +70,24 @@ func run(args []string) error {
 		return runCore(args[1:])
 	case "normalize-source-links":
 		return runNormalizeSourceLinks(args[1:])
+	case "prune-clients":
+		return runPruneClients(args[1:])
+	case "go-version":
+		flags := flag.NewFlagSet("go-version", flag.ContinueOnError)
+		path := flags.String("go-mod", "go.mod", "consumer go.mod")
+		minimum := flags.String("minimum", "1.26", "minimum Go language version")
+		if err := flags.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		value, err := requiredGoVersion(*path, *minimum)
+		if err != nil {
+			return err
+		}
+		fmt.Println(value)
+		return nil
 	case "-h", "-help", "--help", "help":
 		fmt.Fprint(os.Stdout, usage)
 		return nil
@@ -85,6 +103,7 @@ func run(args []string) error {
 type clientMeta struct {
 	EngineVersion string                `json:"engineVersion"`
 	Module        generator.BoundModule `json:"module"`
+	ClientVersion string                `json:"clientVersion"`
 }
 
 // validateBoundModuleKind fails closed on a source kind the generated client
@@ -108,6 +127,8 @@ func runClient(args []string) error {
 		clientMetaPath    = flags.String("client-meta-path", "", "path to the client meta JSON (engine version and bound module)")
 		outputDir         = flags.String("output", ".", "output directory for the generated client")
 		moduleRoot        = flags.String("module-root", "", "root of the Go module that owns the generated package")
+		unified           = flags.Bool("unified", false, "reuse dagger.io/dagger/core types and a shared session")
+		removedPath       = flags.String("removed-list", "", "append removed generated paths relative to module-root")
 	)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -161,9 +182,7 @@ func runClient(args []string) error {
 		OutputDir:     *outputDir,
 		PackageImport: packageImport,
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
-	}
-	if err := updateModuleGoMod(*moduleRoot, meta.EngineVersion); err != nil {
-		return err
+		UnifiedClient: *unified,
 	}
 
 	generator.SetSchemaParents(resp.Schema)
@@ -176,10 +195,58 @@ func runClient(args []string) error {
 		return fmt.Errorf("generate client: %w", err)
 	}
 
-	if err := generator.Overlay(ctx, state.Overlay, cfg.OutputDir); err != nil {
+	if err := generator.ValidateOwnedOverlay(ctx, state.Overlay, cfg.OutputDir); err != nil {
+		return err
+	}
+	clientVersion := meta.ClientVersion
+	if clientVersion == "" {
+		if *unified {
+			data, err := os.ReadFile(filepath.Join(*moduleRoot, "go.mod"))
+			if err != nil {
+				return err
+			}
+			mod, err := modfile.Parse("go.mod", data, nil)
+			if err != nil {
+				return err
+			}
+			replaced := false
+			for _, replacement := range mod.Replace {
+				if replacement.Old.Path == "dagger.io/dagger" {
+					replaced = true
+				}
+			}
+			if !replaced {
+				return fmt.Errorf("unified clients require clientVersion: use a published SDK containing dagger.io/dagger/core and ModuleGraphQLClient, or a local SDK replacement")
+			}
+		}
+		clientVersion = meta.EngineVersion // Compatibility with older SDK metadata.
+	}
+	if err := updateModuleGoMod(*moduleRoot, clientVersion); err != nil {
+		return err
+	}
+	removed, err := generator.WriteOwnedOverlay(ctx, state.Overlay, cfg.OutputDir)
+	if err != nil {
 		return fmt.Errorf("write generated client: %w", err)
 	}
-
+	if *removedPath != "" {
+		prefix, err := filepath.Rel(*moduleRoot, cfg.OutputDir)
+		if err != nil {
+			return err
+		}
+		f, err := os.OpenFile(*removedPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		for _, p := range removed {
+			if _, err := fmt.Fprintln(f, filepath.ToSlash(filepath.Join(prefix, p))); err != nil {
+				f.Close()
+				return err
+			}
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

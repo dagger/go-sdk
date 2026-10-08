@@ -156,6 +156,9 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"IsPartial":               funcs.isPartial,
 		"IsModuleCode":            funcs.isModuleCode,
 		"IsStandaloneClient":      funcs.isStandaloneClient,
+		"IsSharedCoreObject":      funcs.isSharedCoreObject,
+		"IsSharedCoreObjectType":  funcs.isSharedCoreObjectType,
+		"IsSharedCoreHandle":      funcs.isSharedCoreHandle,
 		"IsCoreLibrary":           funcs.isCoreLibrary,
 		"CoreConstructorName":     funcs.coreConstructorName,
 		"ModuleMainSrc":           funcs.moduleMainSrc,
@@ -178,6 +181,9 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 const legacyGoSDKCompatCutoverVersion = "v0.21.0-0"
 
 func (funcs goTemplateFuncs) legacyGoSDKCompat() bool {
+	if funcs.cfg.UnifiedClient {
+		return false
+	}
 	if funcs.schemaVersion == "" || funcs.CommonFunctions == nil {
 		return false
 	}

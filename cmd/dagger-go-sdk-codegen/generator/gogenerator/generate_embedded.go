@@ -3,6 +3,8 @@ package gogenerator
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"path"
 
 	"github.com/psanford/memfs"
 
@@ -19,6 +21,24 @@ func (g *GoGenerator) GenerateEmbeddedClient(
 	schemaVersion string,
 	packageImport string,
 ) (*generator.GeneratedState, error) {
+	if g.Config.UnifiedClient {
+		cfg := g.Config
+		cfg.PackageImport = packageImport
+		cfg.PackageName = "dagger"
+		cfg.ClientConfig = nil // The engine has already served the module schema.
+		state, err := (&GoGenerator{Config: cfg}).GenerateUnifiedClient(ctx, schema, schemaVersion)
+		if err != nil {
+			return nil, err
+		}
+		mfs := memfs.New()
+		if err := mfs.MkdirAll("internal/dagger", 0755); err != nil {
+			return nil, err
+		}
+		if err := copyOverlay(state.Overlay, mfs); err != nil {
+			return nil, err
+		}
+		return &generator.GeneratedState{Overlay: mfs}, nil
+	}
 	generator.SetSchema(schema)
 
 	mfs := memfs.New()
@@ -43,4 +63,24 @@ func (g *GoGenerator) GenerateEmbeddedClient(
 	}
 
 	return &generator.GeneratedState{Overlay: mfs}, nil
+}
+
+func copyOverlay(source fs.FS, target *memfs.FS) error {
+	return fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(source, name)
+		if err != nil {
+			return err
+		}
+		dest := path.Join("internal/dagger", name)
+		if err := target.MkdirAll(path.Dir(dest), 0755); err != nil {
+			return err
+		}
+		return target.WriteFile(dest, data, 0644)
+	})
 }

@@ -14,6 +14,9 @@ import (
 // dagger.gen.go with the core bindings, one <module>.gen.go for the bound
 // module, and a dag/ convenience package.
 func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
+	if g.Config.UnifiedClient {
+		return g.GenerateUnifiedClient(ctx, schema, schemaVersion)
+	}
 	generator.SetSchema(schema)
 
 	mfs := memfs.New()

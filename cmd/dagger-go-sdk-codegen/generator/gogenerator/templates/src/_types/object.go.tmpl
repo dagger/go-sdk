@@ -117,9 +117,13 @@ type {{ $field | FieldOptionsStructName }} struct {
 	if err := q.Bind(&id).Execute(ctx); err != nil {
 		return nil, err
 	}
-	return &{{ $field | IDHandleClient }}{
+	{{- if IsSharedCoreHandle $field }}
+return new({{ $field | IDHandleClient }}).WithGraphQLQuery(selectNode(q.Root(), id, "{{ $field | IDHandleType }}"))
+{{- else }}
+return &{{ $field | IDHandleClient }}{
 		query: selectNode(q.Root(), id, "{{ $field | IDHandleType }}"),
-	}, nil
+	}
+{{- end }}, nil
 
 	{{- else if IsNullableObject $field.TypeRef }}
 	q = q.Select("id")
@@ -131,25 +135,41 @@ type {{ $field | FieldOptionsStructName }} struct {
 		return nil, nil
 	}
 	{{- if IsInterfaceRef $field.TypeRef }}
-	return &{{ $typeName | InterfaceClientName }}{
+	{{- if IsSharedCoreObject $field.TypeRef }}
+return new({{ $typeName | InterfaceClientName }}).WithGraphQLQuery(selectNode(q.Root(), *objectID, "{{ $typeName }}"))
+{{- else }}
+return &{{ $typeName | InterfaceClientName }}{
 		query: selectNode(q.Root(), *objectID, "{{ $typeName }}"),
-	}, nil
+	}
+{{- end }}, nil
 	{{- else }}
-	return &{{ $typeName }}{
+	{{- if IsSharedCoreObject $field.TypeRef }}
+return new({{ $typeName }}).WithGraphQLQuery(selectNode(q.Root(), *objectID, "{{ $typeName }}"))
+{{- else }}
+return &{{ $typeName }}{
 		query: selectNode(q.Root(), *objectID, "{{ $typeName }}"),
-	}, nil
+	}
+{{- end }}, nil
 	{{- end }}
 
 	{{- else if IsInterfaceRef $field.TypeRef }}
 	{{- /* Interface return: wrap in the interface's query-builder struct */ -}}
-	return &{{ $typeName | InterfaceClientName }}{
+	{{- if IsSharedCoreObject $field.TypeRef }}
+return new({{ $typeName | InterfaceClientName }}).WithGraphQLQuery(q)
+{{- else -}}
+return &{{ $typeName | InterfaceClientName }}{
 		query: q,
 	}
+{{- end }}
 
 	{{- else if $field.TypeRef.IsObject }}
-	return &{{ $typeName }} {
+	{{- if IsSharedCoreObject $field.TypeRef }}
+return new({{ $typeName }}).WithGraphQLQuery(q)
+{{- else }}
+return &{{ $typeName }} {
 		query: q,
 	}
+{{- end }}
 
 	{{- else if and $field.TypeRef.IsList (IsListOfInterface $field.TypeRef) }}
 	{{- /* List of interface: query IDs and wrap each in interface client */ -}}
@@ -166,9 +186,13 @@ type {{ $field | FieldOptionsStructName }} struct {
 	}
 	var results {{ $field.TypeRef | InterfaceListResultType }}
 	for _, idResult := range idResults {
-		results = append(results, &{{ $eleType | ObjectName | InterfaceClientName }}{
+		{{- if IsSharedCoreObject $eleType }}
+        results = append(results, new({{ $eleType | ObjectName | InterfaceClientName }}).WithGraphQLQuery(selectNode(q.Root(), idResult.Id, "{{ $eleType | ObjectName }}")))
+        {{- else }}
+        results = append(results, &{{ $eleType | ObjectName | InterfaceClientName }}{
 			query: selectNode(q.Root(), idResult.Id, "{{ $eleType | ObjectName }}"),
 		})
+        {{- end }}
 	}
 	return results, nil
 
@@ -187,8 +211,12 @@ type {{ $field | FieldOptionsStructName }} struct {
         out := {{ $field.TypeRef | FormatOutputType }}{}
 
         for i := range fields {
+            {{- if IsSharedCoreObject $eleType }}
+            val := *new({{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}).WithGraphQLQuery(selectNode(q.Root(), fields[i].Id, "{{$eleType | ObjectName}}"))
+            {{- else }}
             val := {{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}{{"{"}}{{ $field | GetArrayField | FormatArrayField }}{{"}"}}
-            {{- if $eleType | IsIDableObject }}
+            {{- end }}
+            {{- if and ($eleType | IsIDableObject) (not (IsSharedCoreObject $eleType)) }}
               val.query = selectNode(q.Root(), fields[i].Id, "{{$eleType | ObjectName}}")
             {{- end }}
             out = append(out, val)
@@ -267,8 +295,12 @@ func (r *{{ $.Name | FormatName }}) UnmarshalJSON(bs []byte) error {
 // As{{ $iface.Name | FormatName }} returns this {{ $.Name | FormatName }} as a {{ $iface.Name | FormatName }}.
 // This is a local type conversion — no GraphQL call.
 func (r *{{ $.Name | FormatName }}) As{{ $iface.Name | FormatName }}() {{ $iface.Name | InterfaceReturnType }} {
-	return &{{ $iface.Name | InterfaceClientName }}{
+	{{- if IsSharedCoreObjectType $iface }}
+return new({{ $iface.Name | InterfaceClientName }}).WithGraphQLQuery(r.query)
+{{- else }}
+return &{{ $iface.Name | InterfaceClientName }}{
 		query: r.query,
 	}
+{{- end }}
 }
 {{ end -}}

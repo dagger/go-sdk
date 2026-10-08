@@ -36,7 +36,8 @@ type GenerateConfig struct {
 	// RemovedPath, when set, names a file that receives the module-relative
 	// paths of the generated files this run removed, one per line. The caller
 	// merges the remaining files back, so it needs the list to remove the rest.
-	RemovedPath string
+	RemovedPath   string
+	UnifiedClient bool
 }
 
 func generate(ctx context.Context, cfg GenerateConfig) error {
@@ -97,14 +98,18 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	generator.SetSchemaParents(resp.Schema)
 
 	genCfg := generator.Config{
-		OutputDir:    root,
-		ClientConfig: &generator.ClientGeneratorConfig{},
+		OutputDir:     root,
+		UnifiedClient: cfg.UnifiedClient,
+		ClientConfig:  &generator.ClientGeneratorConfig{},
 		ModuleConfig: &generator.ModuleGeneratorConfig{
 			ModuleName: cfg.ModuleName,
 			LibVersion: cfg.DaggerVersion,
 		},
 	}
 	client := &clientgen.GoGenerator{Config: genCfg}
+	// Author source can reference any core alias before its self-call schema
+	// has been discovered. The bootstrap supplies the complete legacy surface.
+	client.Config.UnifiedClient = false
 	if _, err := generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, false); err != nil {
 		return fmt.Errorf("bootstrap module client: %w", err)
 	}
@@ -129,6 +134,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("merge self-call schema: %w", err)
 	}
 	generator.SetSchemaParents(merged.Schema)
+	client.Config.UnifiedClient = cfg.UnifiedClient
 	removed, err := generateClient(ctx, client, merged.Schema, cfg.SchemaVersion, packageImport, root, true)
 	if err != nil {
 		return fmt.Errorf("generate module client: %w", err)

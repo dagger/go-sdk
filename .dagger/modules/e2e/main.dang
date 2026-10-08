@@ -310,7 +310,7 @@ type E2e {
   }
 
   """
-  Regeneration preserves existing generated and user-owned client packages.
+  Removing a client prunes generated files and preserves user files.
   """
   standaloneClientPreservationCheck(ws: Workspace!): Void @check {
     let scopePath = fixtureRoot + "/go-scope"
@@ -333,8 +333,8 @@ type E2e {
       clients: [],
     )
 
-    assert("regeneration deleted generated client code") {
-      exists(withoutClient, "internal/dagger/clients/client-dep/dagger.gen.go")
+    assert("regeneration kept stale generated client code") {
+      exists(withoutClient, "internal/dagger/clients/client-dep/dagger.gen.go") == false
     }
     assert("regeneration deleted user-owned client code") {
       exists(withoutClient, "internal/dagger/clients/custom/user.go")

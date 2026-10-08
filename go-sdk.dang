@@ -2,6 +2,15 @@
 Manage Dagger modules and module clients that use the Go SDK.
 """
 type GoSdk {
+  """Runtime SDK version for generated clients, independent of a target's schema version."""
+  clientVersion: String! = ""
+
+  """
+  Reuse dagger.io/dagger/core types and one lazy shared session. Requires a
+  published SDK containing the core split and ModuleGraphQLClient, or a
+  local replacement of dagger.io/dagger for development.
+  """
+  unifiedClients: Boolean! = false
   """
   Starter template used when a new module scope is initialized.
 
@@ -28,9 +37,11 @@ type GoSdk {
 
   """
   Generate a Dang entrypoint and a static dispatch command, so the engine
-  loads the module's types without running it. Both importable packages and
-  package main are supported. Needs an engine that loads manifest version 2
-  (Dagger v1.0.0-beta.14 or later).
+  loads the module's types without running it. Supports package main and
+  importable packages with a go.mod in the module directory. Manifest v2
+  needs beta.14; collections need beta.15. Correct cache policies and
+  unified clients also require the subsequent engine fixes documented in
+  docs/compatibility.md. This mode remains opt-in until those fixes ship.
   """
   dangEntrypoint: Boolean! = false
 
@@ -75,7 +86,10 @@ type GoSdk {
     }
 
     if (isModule and dangEntrypoint) {
-      entrypointModule(initialized, name)
+      let withClients = if (unifiedClients) {
+        generateStandaloneClients(initialized, clients)
+      } else { initialized }
+      entrypointModule(withClients, name)
     } else if (isModule) {
       let configured = generatedManifest(initialized, name, clients)
       let generated = configured.withDirectory(".", generatedModuleCode(configured))
@@ -110,27 +124,32 @@ type GoSdk {
     ws: Workspace!,
     clients: [ModuleSource!]!,
   ): Workspace! {
-    if (clients.length == 0) {
-      return ws
-    }
     let originalScope = normalizePath(ws.cwd)
     let goScope = findClientRoot(ws)
     if (goScope == null) {
+      if (clients.length == 0) { return ws }
       raise "cannot generate Go clients without a go.mod"
     } else {
       let scoped = ws.withWorkdir(goScope)
-      let base = codegenBuilder.withDirectory(
+      let base = clientCodegenBase(scoped.file("go.mod")).withDirectory(
         "/out",
         scoped.directory(".", exclude: ["**/.git"]),
-      )
+      ).withNewFile("/removed-clients.txt", "")
       # Keep prior client outputs and go.mod updates in the same container.
       # Only the completed batch needs to be merged into the workspace.
       let generated = clients.reduce(base) { current, target =>
         generateStandaloneClient(current, target)
       }
-      scoped
-        .withDirectory(".", generated.directory("/out"))
-        .withWorkdir(originalScope)
+      let pruned = generated.withExec([
+        "dagger-go-sdk-codegen", "prune-clients",
+        "--root", "/out/internal/dagger/clients",
+        "--keep", clients.map { target => target.moduleOriginalName }.join(","),
+        "--removed-list", "/removed-clients.txt",
+        "--prefix", "internal/dagger/clients",
+      ]).withWorkdir("/out").withExec(["go", "mod", "tidy"])
+      let merged = scoped.withDirectory(".", pruned.directory("/out"))
+      let removed = pruned.file("/removed-clients.txt").contents.split("\n").filter { p => p != "" }
+      removed.reduce(merged) { current, p => current.withoutFile(p) }.withWorkdir(originalScope)
     }
   }
 
@@ -206,7 +225,7 @@ type GoSdk {
       if (enclosingRoot != null and enclosingRoot != normalizePath(ws.cwd)) {
         raise "Dang entrypoints need a go.mod in the module directory; keep dangEntrypoint = false for modules using a parent go.mod"
       }
-      if (clients.length > 0) {
+      if (clients.length > 0 and !unifiedClients) {
         raise "a Dang entrypoint cannot use other modules yet: a manifest with an entrypoint has no dependencies; set dangEntrypoint = false"
       }
       if (!hadManifest and template == "legacy") {
@@ -360,7 +379,8 @@ type GoSdk {
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
-      "--dagger-version", schemaVersion,
+      "--dagger-version", if (unifiedClients) { clientVersion } else { schemaVersion },
+      "--unified=" + JSON.encode(unifiedClients),
       "--removed-list", "/removed.txt",
     ])
     let generated = runTool(codegen, [
@@ -375,9 +395,9 @@ type GoSdk {
       "go.sum",
       prefix + "go.mod",
       prefix + "go.sum",
-      prefix + ".dagger-generated.json",
       prefix + "dagger.gen.go",
       prefix + "dagger.dispatch.gen.go",
+      prefix + ".dagger-generated.json",
       prefix + "internal/dagger/**",
       prefix + "cmd/*-dispatch/**",
     ])
@@ -460,6 +480,17 @@ type GoSdk {
       .withExec(["go", "build", "-o", "/usr/local/bin/dagger-go-sdk-codegen", "."])
   }
 
+  """Use the newer of the consumer Go directives and the generator's minimum."""
+  let clientCodegenBase(goMod: File!): Container! {
+    let goVersion = codegenBuilder.withFile("/consumer.go.mod", goMod)
+      .withExec(["dagger-go-sdk-codegen", "go-version", "--go-mod", "/consumer.go.mod", "--minimum", "1.26"])
+      .stdout.trimSpace
+    container.from("golang:" + goVersion + "-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withFile("/usr/local/bin/dagger-go-sdk-codegen", codegenBuilder.file("/usr/local/bin/dagger-go-sdk-codegen"))
+  }
+
   """Serialize the target-module location used by the generated bootstrap."""
   let boundModuleJSON(kindJSON: String!, path: String!, ref: String!, pin: String!): String! {
     "{\"kind\":" + kindJSON + ",\"path\":" + JSON.encode(path) + ",\"ref\":" + JSON.encode(ref) + ",\"pin\":" + JSON.encode(pin) + "}"
@@ -470,6 +501,7 @@ type GoSdk {
     let targetName = target.moduleOriginalName
     let outputPath = "internal/dagger/clients/" + targetName
     let metaJSON = "{\"engineVersion\":" + JSON.encode(target.engineVersion) +
+      ",\"clientVersion\":" + JSON.encode(clientVersion) +
       ",\"module\":" + boundModuleJSON(
         JSON.encode(target.kind),
         target.sourceRootSubpath,
@@ -485,6 +517,8 @@ type GoSdk {
         "--client-meta-path", "/meta.json",
         "--output", "/out/" + outputPath,
         "--module-root", "/out",
+        "--unified=" + JSON.encode(unifiedClients),
+        "--removed-list", "/removed-clients.txt",
       ])
   }
 

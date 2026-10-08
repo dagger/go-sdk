@@ -95,6 +95,11 @@ func (funcs goTemplateFuncs) getTypes(ps *parseState, strict bool) ([]types.Type
 		if !obj.Exported() {
 			continue
 		}
+		// Shared-runtime aliases in the generated dispatcher are support types,
+		// rather than author-declared module objects.
+		if _, alias := obj.Type().(*types.Alias); alias && ps.isDaggerGenerated(obj) {
+			continue
+		}
 
 		// check if this is the constructor func, save it for later if so
 		if ok := ps.checkConstructor(obj); ok {
@@ -1043,7 +1048,13 @@ func (ps *parseState) commentForFuncField(fnDecl *ast.FuncDecl, unpackedParams [
 }
 
 func (ps *parseState) isDaggerGenerated(obj types.Object) bool {
+	if pkg := obj.Pkg(); pkg != nil && pkg.Path() == "dagger.io/dagger/core" {
+		return true
+	}
 	tokenFile := ps.fset.File(obj.Pos())
+	if tokenFile == nil {
+		return false
+	}
 	filename := tokenFile.Name()
 
 	// Match any *.gen.go file inside internal/dagger/ — dependency types are
