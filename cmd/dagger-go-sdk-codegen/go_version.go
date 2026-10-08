@@ -9,9 +9,9 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-// requiredGoVersion returns the Go language version of the newer of the go
-// and toolchain directives. The language version maps to the corresponding
-// golang:<major>.<minor> image tag.
+// requiredGoVersion returns the newest requirement from the go and toolchain
+// directives and the generator minimum. Keep patch versions: a compiler image
+// for the same language version can still be too old to load the module.
 func requiredGoVersion(goModPath, minimum string) (string, error) {
 	data, err := os.ReadFile(goModPath)
 	if err != nil {
@@ -45,5 +45,5 @@ func requiredGoVersion(goModPath, minimum string) (string, error) {
 		}
 	}
 
-	return strings.TrimPrefix(version.Lang(selected), "go"), nil
+	return strings.TrimPrefix(selected, "go"), nil
 }

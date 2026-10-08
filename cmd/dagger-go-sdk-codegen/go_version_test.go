@@ -14,13 +14,18 @@ func TestRequiredGoVersion(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "go directive", goMod: "module example.com/app\n\ngo 1.26.1\n", want: "1.26"},
-		{name: "newer toolchain", goMod: "module example.com/app\n\ngo 1.25\n\ntoolchain go1.26.2\n", want: "1.26"},
+		{name: "go directive", goMod: "module example.com/app\n\ngo 1.26.1\n", want: "1.26.1"},
+		{name: "newer toolchain", goMod: "module example.com/app\n\ngo 1.25\n\ntoolchain go1.26.2\n", want: "1.26.2"},
 		{name: "older toolchain", goMod: "module example.com/app\n\ngo 1.26\n\ntoolchain go1.25.4\n", want: "1.26"},
 		{name: "toolchain default", goMod: "module example.com/app\n\ngo 1.25\n\ntoolchain default\n", want: "1.25"},
 		{name: "newer minimum", goMod: "module example.com/app\n\ngo 1.25\n", minimum: "1.26", want: "1.26"},
 		{name: "older minimum", goMod: "module example.com/app\n\ngo 1.26\n", minimum: "1.25", want: "1.26"},
 		{name: "newer consumer", goMod: "module example.com/app\n\ngo 1.27\n", minimum: "1.26", want: "1.27"},
+		{name: "runtime generated patch minimum", goMod: "module example.com/app\n\ngo 1.26.8\n", minimum: "1.26", want: "1.26.8"},
+		{name: "newer same minor toolchain", goMod: "module example.com/app\n\ngo 1.26.7\n\ntoolchain go1.26.8\n", minimum: "1.26", want: "1.26.8"},
+		{name: "older same minor toolchain", goMod: "module example.com/app\n\ngo 1.26.8\n\ntoolchain go1.26.7\n", minimum: "1.26", want: "1.26.8"},
+		{name: "newer same minor minimum", goMod: "module example.com/app\n\ngo 1.26.7\n", minimum: "1.26.8", want: "1.26.8"},
+		{name: "older same minor minimum", goMod: "module example.com/app\n\ngo 1.26.8\n", minimum: "1.26.7", want: "1.26.8"},
 		{name: "invalid minimum", goMod: "module example.com/app\n\ngo 1.25\n", minimum: "next", wantErr: true},
 		{name: "missing go directive", goMod: "module example.com/app\n", wantErr: true},
 	}
