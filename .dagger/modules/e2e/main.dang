@@ -7,10 +7,18 @@ type E2e {
   """
   manifest: ManifestChecks! { ManifestChecks }
 
+  """
+  Checks for modules generated with dangEntrypoint.
+  """
+  entrypoint: EntrypointChecks! { EntrypointChecks }
+
   let fixtureRoot: String! = ".dagger/modules/e2e/fixtures"
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
+  # Dagger Go library source used by the generated-client compile check.
+  let daggerSourceRef: String! = "195b09187512b7e114f47048c773310701af87a7"
+
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
   }
@@ -159,6 +167,11 @@ type E2e {
       generated.file("dagger.json").contents.contains("\"source\": \"../../client/dep\"")
     }
 
+    # The runtime generator creates a module-local go.mod as a workspace
+    # edit. That becomes the nearest Go scope for standalone clients too.
+    assert("generated module has no local Go root") {
+      goSdk.findClientRoot(initialized) == scopePath
+    }
     let dual = goSdk(fat: true, dualClients: true).generateScope(
       ws: initialized,
       isModule: true,
@@ -168,11 +181,18 @@ type E2e {
     assert("module client binding was not generated with dualClients") {
       exists(dual, "internal/dagger/client-dep.gen.go")
     }
-    assert("standalone module client was not generated with dualClients") {
+    assert("standalone module client was not generated in its nearest Go root") {
+      exists(dual, "internal/dagger/clients/client-dep/client-dep.gen.go")
+    }
+    assert("standalone module client escaped into the parent Go root") {
       exists(
         dual.withWorkdir(goScopePath),
         "internal/dagger/clients/client-dep/client-dep.gen.go",
-      )
+      ) == false
+    }
+    assert("dual client generation changed the parent go.mod") {
+      dual.withWorkdir(goScopePath).file("go.mod").contents ==
+        initialized.withWorkdir(goScopePath).file("go.mod").contents
     }
     null
   }
@@ -250,10 +270,9 @@ type E2e {
   Two standalone target packages compile in one Go module.
   """
   standaloneClientCompilesCheck(ws: Workspace!): Void @check {
-    let daggerSourceRef = ws
-      .file("/.dagger/modules/e2e/engine-commit")
-      .contents
-      .trimSpace
+    let sourceRef = if (ws.directory("/").exists(".dagger/modules/e2e/engine-commit")) {
+      ws.file("/.dagger/modules/e2e/engine-commit").contents.trimSpace
+    } else { daggerSourceRef }
     let scopePath = fixtureRoot + "/go-scope"
     let input = ws
       .withNewFile(scopePath + "/go.mod", "module example.com/compile\n\ngo 1.25\n")
@@ -276,7 +295,7 @@ type E2e {
       .withDirectory(
         "/dagger-sdk",
         git("https://github.com/dagger/dagger")
-          .commit(daggerSourceRef)
+          .commit(sourceRef)
           .tree
           .directory("sdk/go"),
       )
@@ -327,18 +346,22 @@ type E2e {
   }
 
   """
-  The client code generator unit tests pass.
+  The unit tests of every helper pass. The entrypoint contract check embeds
+  Dang, whose parser needs cgo.
   """
   helperTestsCheck(ws: Workspace!): Void @check {
-    let out = container
+    let base = container
       .from("golang:1.26-alpine")
       .withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "build-base"])
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/src", ws.directory("cmd/dagger-go-sdk-codegen"))
-      .withWorkdir("/src")
-      .withExec(["go", "test", "./..."])
-      .stdout
+      .withDirectory("/src", ws.directory("."))
+    let out = ["cmd/dagger-go-sdk-codegen", "helpers/module-codegen", "helpers/render-template", "helpers/entrypoint-contract"].reduce(base) { ctr, helper =>
+      ctr
+        .withWorkdir("/src/" + helper)
+        .withExec(["go", "test", "./..."])
+    }.stdout
 
     null
   }

@@ -6,7 +6,7 @@ source = "dang"
 
 [[dependencies]]
 name = "engine-dev"
-source = "github.com/dagger/dagger/.dagger/modules/engine-dev@17ba33f01e2470ae7888c51b030afd2c1a1db4bb"
+source = "github.com/dagger/dagger/.dagger/modules/engine-dev@195b09187512b7e114f47048c773310701af87a7"
 
 [[dependencies]]
 name = "runtime-floor-engine-dev"

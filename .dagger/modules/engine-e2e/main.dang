@@ -3,9 +3,11 @@ Checks the Go SDK against the Dagger development engine.
 """
 type EngineE2e {
   """
-  Main commit shared by the engine-dev dependency and target engine.
+  Current main commit shared by engine-dev and the target engine. Includes
+  beta.15 collections and the later call-digest and module-loading fixes.
+  Keep it aligned with the dependency in dagger-module.toml.
   """
-  let engineCommit: String! = "17ba33f01e2470ae7888c51b030afd2c1a1db4bb"
+  let engineCommit: String! = "195b09187512b7e114f47048c773310701af87a7"
 
   """
   Commit of release v1.0.0-beta.12, shared by the runtime-floor-engine-dev
@@ -16,8 +18,9 @@ type EngineE2e {
 
   """
   Commit of release v1.0.0-beta.16, shared by the entrypoint-floor-engine-dev
-  dependency and the engine of the entrypoint floor check. Entrypoint-mode
-  modules and unified clients support no older engine.
+  dependency and the engine of the client baseline check. The full entrypoint
+  and unified-client floors must be validated after their engine and runtime
+  SDK prerequisites are integrated.
   """
   let entrypointFloorCommit: String! = "2d95ef98b6824c5aaca4a43eb172c9a057c18619"
 
@@ -76,7 +79,7 @@ type EngineE2e {
   """
   Build the pinned main engine and use this checkout as its Go SDK.
   """
-  devSdkCheck(ws: Workspace!): Void @check {
+  devSdkCheck(ws: Workspace!, checks: [String!]! = []): Void @check {
     let client = sdkClient(
       ws,
       engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase),
@@ -98,7 +101,7 @@ type EngineE2e {
     let checked = listed.withExec([
       "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
       "dagger", "check",
-    ])
+    ] + checks)
 
     let initialized = checked
       .withExec([
@@ -144,6 +147,32 @@ type EngineE2e {
 
     assert("generated module did not run") {
       release.trimSpace != ""
+    }
+
+    let entrypointPath = ".dagger/modules/sdk-entrypoint"
+    let entrypoint = thin
+      .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+        "dagger", "--auto-apply", "module", "init", "go",
+        "--name", "sdk-entrypoint",
+        "--path", entrypointPath,
+        "--dang-entrypoint",
+      ])
+      .withExec(["grep", "-qx", "\\[entrypoint\\]", entrypointPath + "/dagger-module.toml"])
+      .withExec(["test", "!", "-e", entrypointPath + "/dagger.json"])
+      .withExec(["test", "-f", entrypointPath + "/internal/dagger/entrypoint/main.dang"])
+      .withExec(["test", "-f", entrypointPath + "/cmd/sdk-entrypoint-dispatch/main.go"])
+      .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+        "dagger", "-m", entrypointPath,
+        "call", "container", "file",
+        "--path", "/etc/alpine-release",
+        "contents",
+      ])
+      .stdout
+
+    assert("module with a Dang entrypoint did not run") {
+      entrypoint.trimSpace != ""
     }
     null
   }
