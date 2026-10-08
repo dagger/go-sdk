@@ -36,10 +36,12 @@ hello/
 ├── go.mod
 ├── go.sum
 ├── main.go
+├── .dagger-generated.json
 ├── dagger.gen.go
-├── cmd/
+├── cmd/                         # importable package only
 │   └── hello-dispatch/
 │       └── main.go
+├── dagger.dispatch.gen.go       # package main only
 └── internal/
     └── dagger/
         ├── dagger.gen.go
@@ -50,15 +52,18 @@ hello/
 
 | Path | Owner | Purpose |
 | --- | --- | --- |
-| `main.go` | Developer | Importable module package. |
+| `main.go` | Developer | Module package, either importable or `package main`. |
+| `.dagger-generated.json` | Go SDK | Hashes of generated files used to preserve developer edits. |
 | `dagger.gen.go` | Go SDK | Codecs and the static `DaggerDispatch` function. |
-| `cmd/hello-dispatch/main.go` | Go SDK | Dispatch command for the engine and for developers. |
+| `cmd/hello-dispatch/main.go` | Go SDK | Dispatch command for an importable package. |
+| `dagger.dispatch.gen.go` | Go SDK | Dispatch command for `package main`. |
 | `internal/dagger/*.gen.go` | Go SDK | Embedded Dagger client, including self-call bindings. |
 | `internal/dagger/entrypoint/main.dang` | Go SDK | Entrypoint that the engine loads. |
 
-The module is an importable Go package. A new module's starter uses the module
-name as its package name, for example `package hello`. The SDK refuses
-`package main` with a migration message.
+The module may be an importable Go package or `package main`. A new module's
+starter uses the module name as its package name, for example `package hello`.
+Existing `package main` modules keep their package and receive an in-package
+dispatch command.
 
 The manifest names only the module and the entrypoint:
 
@@ -143,22 +148,24 @@ Dagger API needs a session, for example `dagger run go run ...`.
 2. Render the starter for a new module, with an importable package name. The
    starter imports the embedded client through the nearest `go.mod`, or
    through `dagger/<module>` when there is none, as the generator does.
+   Existing `package main` modules remain supported.
 3. Stage a runtime manifest from sdk-helpers, and read the schema and engine
    version from that staged module. The SDK does not reuse an existing
    entrypoint manifest here. With an entrypoint and no dependencies, the engine
    would load the module through the entrypoint that is being generated.
 4. Run `module-codegen` on the module's Go root:
    1. Generate the dependency client with the existing client renderer.
-   2. Load and analyze the importable module package.
+   2. Load and analyze the module package.
    3. Emit the module schema and merge it with the dependency schema.
    4. Generate the client again with self-call bindings.
    5. Reload the package and emit codecs, static dispatch, the dispatch
       command, and the Dang entrypoint.
 5. Type-check the entrypoint with `entrypoint-contract`, which installs the
    engine's `ModuleEntrypoint` interface next to it.
-6. Merge only the generated files, `go.mod`, and `go.sum` into the workspace.
-   The generator lists the generated bindings it removed, and the SDK removes
-   them from the workspace too.
+6. Merge only the generated files, ownership metadata, `go.mod`, and `go.sum`
+   into the workspace. The generator refuses to replace an owned file that a
+   developer edited. It lists unchanged generated bindings it removed, and the
+   SDK removes them from the workspace too.
 7. Write the manifest with sdk-helpers, and remove `dagger.json`.
 
 The staged runtime manifest does not reach the result. When a generator step
@@ -177,12 +184,13 @@ anything:
   `disableDefaultFunctionCaching`, a `source` other than `.`, the `codegen`,
   `clients`, and `dependencies` tables, and a runtime other than Go. The SDK
   reads `dagger-module.toml` and `dagger.json` for them.
-- `package main`. The generator names the package to use instead, and it
-  leaves the module unchanged.
 - A file at a generated path that is not generated code:
   `dagger.gen.go`, `cmd/<module>-dispatch/main.go`, or
   `internal/dagger/entrypoint/main.dang`. The generator writes these files
   only when they are missing or start with a generated-code header.
+- A change to a file recorded in `.dagger-generated.json`. The generator
+  compares its saved hash and leaves the module unchanged instead of replacing
+  the developer's edit.
 
 Without `dangEntrypoint`, `generateScope` refuses a module whose manifest names
 a Dang entrypoint whose source is not clearly a remote module. It parses the

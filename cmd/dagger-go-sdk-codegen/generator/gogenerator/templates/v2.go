@@ -263,6 +263,11 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 		if err != nil {
 			return nil, err
 		}
+		// The entrypoint protocol needs an explicit constructor to expose the
+		// module's main object. Match the Go runtime's implicit zero-value New.
+		if obj.constructor == nil && strcase.ToCamel(obj.name) == strcase.ToCamel(moduleName) {
+			def += "\n  .withConstructor(function(\"\", typeDef.withObject(" + strconv.Quote(obj.name) + ")))"
+		}
 		defs = append(defs, def)
 	}
 	for _, iface := range mod.interfaces {

@@ -39,7 +39,7 @@ type GenerateConfig struct {
 	RemovedPath string
 }
 
-func Generate(ctx context.Context, cfg GenerateConfig) error {
+func generate(ctx context.Context, cfg GenerateConfig) error {
 	root, err := filepath.Abs(cfg.ModuleRoot)
 	if err != nil {
 		return fmt.Errorf("resolve module root: %w", err)
@@ -166,6 +166,13 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {
+		return err
+	}
+	target := "./cmd/" + strcase.ToKebab(cfg.ModuleName) + "-dispatch"
+	if packageName == "main" {
+		target = "."
+	}
+	if err := compileGeneratedModule(ctx, root, target, runtimeFiles); err != nil {
 		return err
 	}
 	if cfg.RemovedPath != "" {
@@ -407,6 +414,44 @@ func goModTidy(ctx context.Context, root string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("go mod tidy: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// compileGeneratedModule checks the complete dispatcher, including author
+// function bodies that declaration-only package analysis intentionally skips.
+// Collection modules compile against the private runtime source overlays that
+// the generated entrypoint applies before its own build.
+func compileGeneratedModule(ctx context.Context, root, target string, runtimeFiles map[string][]byte) error {
+	buildRoot := root
+	if len(runtimeFiles) > 0 {
+		var err error
+		buildRoot, err = os.MkdirTemp("", "dagger-module-compile-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(buildRoot)
+		if err := os.CopyFS(buildRoot, os.DirFS(root)); err != nil {
+			return fmt.Errorf("stage module compilation: %w", err)
+		}
+		for name, data := range runtimeFiles {
+			if err := writeFile(filepath.Join(buildRoot, name), data); err != nil {
+				return err
+			}
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", os.DevNull, target)
+	cmd.Dir = buildRoot
+	for _, setting := range os.Environ() {
+		if !strings.HasPrefix(setting, "CGO_ENABLED=") {
+			cmd.Env = append(cmd.Env, setting)
+		}
+	}
+	cmd.Env = append(cmd.Env, "CGO_ENABLED=0")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("compile generated module: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen v0.0.0
 	github.com/iancoleman/strcase v0.3.0
+	github.com/psanford/memfs v0.0.0-20241019191636-4ef911798f9b
 	golang.org/x/mod v0.37.0
 	golang.org/x/tools v0.45.0
 )
@@ -22,7 +23,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
-	github.com/psanford/memfs v0.0.0-20241019191636-4ef911798f9b // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.32 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
