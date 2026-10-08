@@ -152,8 +152,10 @@ type GoSdk {
 
   """The SDK's generated entrypoint, rather than a runner chosen by the user."""
   let hasGeneratedEntrypoint(ws: Workspace!): Boolean! {
-    let manifest = decodedManifest(ws)
-    if (manifest == null or !manifest.fields.contains("entrypoint")) { return false }
+    let optionalManifest = decodedManifest(ws)
+    if (optionalManifest == null) { return false }
+    let manifest = optionalManifest :: Dagger.JSONValue!
+    if (manifest.fields.contains("entrypoint") == false) { return false }
     let entrypoint = manifest.field(["entrypoint"])
     stringField(entrypoint, "kind") == "dang" and
       normalizePath(stringField(entrypoint, "source")) == entrypointPath and
@@ -173,12 +175,13 @@ type GoSdk {
 
   """A custom runtime or entrypoint remains unchanged by automatic selection."""
   let hasCustomRunner(ws: Workspace!): Boolean! {
-    let manifest = if (exists(ws, "dagger-module.toml")) {
+    let optionalManifest = if (exists(ws, "dagger-module.toml")) {
       decodedManifest(ws)
     } else if (exists(ws, "dagger.json")) {
       Dagger.json.withContents(ws.file("dagger.json").contents :: Dagger.JSON!)
     } else { null }
-    if (manifest == null) { return false }
+    if (optionalManifest == null) { return false }
+    let manifest = optionalManifest :: Dagger.JSONValue!
     let fields = manifest.fields
     if (fields.contains("entrypoint") and !hasGeneratedEntrypoint(ws)) { return true }
     let key = if (fields.contains("runtime")) { "runtime" } else if (fields.contains("sdk")) { "sdk" } else { "" }
@@ -380,23 +383,6 @@ type GoSdk {
   }
 
   """
-  Whether dagger-module.toml names a Dang entrypoint that could be the one
-  dangEntrypoint generates. Only a source that is clearly a remote module
-  reference is left to the Go runtime path.
-  """
-  let hasLocalDangEntrypoint(ws: Workspace!): Boolean! {
-    # sdk-helpers reports a manifest that is not TOML when it loads it.
-    let manifest = decodedManifest(ws) rescue {
-      err: Error => null
-    }
-    if (manifest == null or manifest.fields.contains("entrypoint") == false) {
-      return false
-    }
-    let entrypoint = manifest.field(["entrypoint"])
-    stringField(entrypoint, "kind") == "dang" and isRemoteSource(stringField(entrypoint, "source")) == false
-  }
-
-  """
   dagger-module.toml parsed as TOML, the way sdk-helpers reads it, or null
   when the module has none.
   """
@@ -418,20 +404,6 @@ type GoSdk {
   """A string field of a JSON object, or empty when the field is missing."""
   let stringField(value: Dagger.JSONValue!, key: String!): String! {
     if (value.fields.contains(key)) { value.field([key]).asString } else { "" }
-  }
-
-  """
-  The engine's rule: a path prefix or a dot-free first segment is local, a
-  URL or a host name is not. An empty source is not clearly remote.
-  """
-  let isRemoteSource(source: String!): Boolean! {
-    if (source == "" or source.hasPrefix(".") or source.hasPrefix("/")) {
-      false
-    } else if (source.contains(":")) {
-      true
-    } else {
-      (source.split("/")[0] ?? "").contains(".")
-    }
   }
 
   """
