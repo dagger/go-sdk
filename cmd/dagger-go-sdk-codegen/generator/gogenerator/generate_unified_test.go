@@ -19,6 +19,24 @@ func TestUnifiedClientSharesCoreObjects(t *testing.T) {
 		})
 	}
 }
+
+func TestUnifiedClientPinsAreIndependentOfTargetVersion(t *testing.T) {
+	const ref = "github.com/dagger/sdk-helpers@main"
+	for _, pin := range []string{"64645f1967d3dba6fce951dd61ae4acd8d9b0861", "92d07fcb9dd25ae50afd30097f09936d674c2950"} {
+		gen := &GoGenerator{Config: generator.Config{
+			UnifiedClient: true, OutputDir: t.TempDir(), PackageImport: "example.com/app/client",
+			ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{
+				Kind: generator.ModuleKindGit, Ref: ref, Pin: pin,
+			}},
+		}}
+		state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v0.18.0")
+		require.NoError(t, err)
+		bindings := readOverlay(t, state, "dagger.gen.go")
+		require.Contains(t, bindings, `dagger.ModuleGraphQLClient(connection, "`+ref+`", "`+pin+`")`)
+		require.NotContains(t, bindings, ".AsModule().Serve(")
+	}
+}
+
 func testUnifiedClientSharesCoreObjects(t *testing.T, schemaVersion string) {
 	root := t.TempDir()
 	schema := buildClientSchema()
