@@ -87,6 +87,51 @@ func TestRunDefaultImport(t *testing.T) {
 	}
 }
 
+func TestRunStandaloneModuleInsideProject(t *testing.T) {
+	project := t.TempDir()
+	parentMod := "module example.com/project\n\ngo 1.25\n"
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte(parentMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(project, ".dagger", "hello")
+	if err := run([]string{"--importable-package", "--standalone-go-module", "hello-world", filepath.Join("..", "..", "templates", "default"), out}); err != nil {
+		t.Fatal(err)
+	}
+	mod, err := os.ReadFile(filepath.Join(out, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mod) != "module dagger/hello-world\n\ngo 1.26.1\n" {
+		t.Fatalf("unexpected local module:\n%s", mod)
+	}
+	starter, err := os.ReadFile(filepath.Join(out, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(starter), `"dagger/hello-world/internal/dagger"`) || strings.Contains(string(starter), "dag.") {
+		t.Fatalf("starter does not use its own explicit client:\n%s", starter)
+	}
+	parent, err := os.ReadFile(filepath.Join(project, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(parent) != parentMod {
+		t.Fatal("creating the nested module changed the enclosing project")
+	}
+}
+
+func TestStandaloneModuleRefusesConflictingOptions(t *testing.T) {
+	for _, options := range [][]string{
+		{"--standalone-go-module"},
+		{"--importable-package", "--standalone-go-module", "--go-mod", "parent/go.mod"},
+		{"--importable-package", "--standalone-go-module", "--module-subpath", "child"},
+	} {
+		if err := run(append(options, "hello", filepath.Join("..", "..", "templates", "default"), t.TempDir())); err == nil {
+			t.Fatalf("conflicting standalone options accepted: %v", options)
+		}
+	}
+}
+
 func packageClause(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

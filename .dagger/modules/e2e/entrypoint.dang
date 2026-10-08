@@ -21,7 +21,8 @@ type EntrypointChecks {
 
   """
   A new module gets an importable starter, the entrypoint manifest, the
-  embedded client, the dispatch command, and the Dang entrypoint.
+  shared-core client without a global dag, the dispatch command, and the Dang
+  entrypoint. It compiles against the published runtime without replacements.
   Regeneration reads the entrypoint manifest and changes nothing.
   """
   moduleInitCheck(ws: Workspace!): Void @check {
@@ -29,7 +30,7 @@ type EntrypointChecks {
     let input = ws
       .withNewFile(scopePath + "/user.txt", "keep me\n")
       .withWorkdir(scopePath)
-    let generated = goSdk(dangEntrypoint: true).generateScope(
+    let generated = goSdk.generateScope(
       ws: input,
       isModule: true,
       name: "entrypoint-init",
@@ -58,10 +59,10 @@ type EntrypointChecks {
     assert("the starter uses the removed global client") {
       generated.file("main.go").contents.contains("dag.") == false
     }
-    assert("the embedded client was not generated") {
+    assert("the module client was not generated") {
       exists(generated, "internal/dagger/dagger.gen.go")
     }
-    assert("the embedded client was generated twice") {
+    assert("the module client was generated twice") {
       exists(generated, "internal/dagger/internal") == false
     }
     assert("the dispatch command was not generated") {
@@ -77,7 +78,7 @@ type EntrypointChecks {
       generated.cwd == input.cwd
     }
 
-    let regenerated = goSdk(dangEntrypoint: true).generateScope(
+    let regenerated = goSdk.generateScope(
       ws: generated,
       isModule: true,
       name: "entrypoint-init",
@@ -85,6 +86,14 @@ type EntrypointChecks {
     )
     assert("regeneration was not stable") {
       regenerated.changes(generated).isEmpty
+    }
+
+    let recovered = goSdk.generateScope(
+      ws: generated.withoutFile("internal/dagger/entrypoint/main.dang"),
+      isModule: true, name: "entrypoint-init", clients: [],
+    )
+    assert("automatic regeneration did not recover its deleted entrypoint") {
+      recovered.changes(generated).isEmpty
     }
 
     # A binding an earlier schema generated is removed from the workspace. A
@@ -294,12 +303,66 @@ type EntrypointChecks {
     null
   }
 
+  """Automatic mode preserves existing legacy and custom runners."""
+  defaultCompatibilityCheck(ws: Workspace!): Void @check {
+    let legacyManifest = "name = 'generate-app'\n[runtime]\nsource = 'go'\n"
+    let input = ws.withWorkdir(appPath).withNewFile("dagger-module.toml", legacyManifest)
+    let legacy = goSdk.generateScope(ws: input, isModule: true, name: "generate-app", clients: [])
+    assert("automatic generation migrated an existing runtime module") {
+      legacy.file("dagger-module.toml").contents.contains("[runtime]") and
+        exists(legacy, "internal/dagger/entrypoint/main.dang") == false
+    }
+    assert("automatic generation removed the legacy API global") {
+      legacy.file("dagger.gen.go").contents.contains("var dag ")
+    }
+    let embedded = goSdk(dangEntrypoint: true, unifiedClients: false).generateScope(
+      ws: input, isModule: true, name: "generate-app", clients: [],
+    )
+    let retainedEmbedded = goSdk.generateScope(
+      ws: embedded, isModule: true, name: "generate-app", clients: [],
+    )
+    assert("automatic regeneration changed existing embedded entrypoint bindings") {
+      retainedEmbedded.changes(embedded).isEmpty and
+        retainedEmbedded.file("internal/dagger/dagger.gen.go").contents.contains("GraphQLClient() graphql.Client")
+    }
+    let customs = [
+      "name = 'generate-app'\n[runtime]\nsource = 'example.com/custom/go@v1'\n",
+      "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = './custom-entrypoint'\n",
+      "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = './internal/dagger/entrypoint'\n",
+    ]
+    customs.map { manifest =>
+      let custom = input
+        .withNewFile("dagger-module.toml", manifest)
+        .withNewFile("internal/dagger/entrypoint/main.dang", "# User-authored runner, even at the SDK's usual path.\n")
+      let retained = goSdk.generateScope(ws: custom, isModule: true, name: "generate-app", clients: [])
+      assert("automatic generation replaced a custom runner") {
+        retained.changes(custom).isEmpty
+      }
+    }
+    null
+  }
+
   """A module sharing its parent's Go root stays on the legacy runtime."""
   goRootCheck(ws: Workspace!): Void @check {
     let scopePath = goScopePath + "/entrypoint-nested"
     let input = ws.withNewFile(scopePath + "/user.txt", "keep me\n").withWorkdir(scopePath)
-    let refused = goSdk(dangEntrypoint: true, template: "empty").generateScope(
+    let nested = goSdk(template: "empty").generateScope(
       ws: input, isModule: true, name: "entrypoint-nested", clients: [],
+    )
+    assert("a fresh nested module did not get its own Go root") {
+      nested.file("go.mod").contents.contains("module dagger/entrypoint-nested")
+    }
+    assert("a fresh nested module kept the API global") {
+      nested.file("dagger.gen.go").contents.contains("var dag ") == false
+    }
+    assert("initializing the nested module changed its parent's Go module") {
+      nested.file("/" + goScopePath + "/go.mod").contents == ws.file("/" + goScopePath + "/go.mod").contents
+    }
+    let existing = input
+      .withNewFile("dagger-module.toml", "name = 'entrypoint-nested'\n[runtime]\nsource = 'go'\n")
+      .withNewFile("main.go", "package main\n\ntype EntrypointNested struct{}\n")
+    let refused = goSdk(dangEntrypoint: true, template: "empty").generateScope(
+      ws: existing, isModule: true, name: "entrypoint-nested", clients: [],
     ).file("dagger.gen.go").contents rescue { err: Error => err.message }
     assert("parent go.mod was accepted: " + firstLine(refused)) {
       refused.contains("a go.mod in the module directory")
@@ -340,7 +403,7 @@ type EntrypointChecks {
   refusalsCheck(ws: Workspace!): Void @check {
     let app = ws.withWorkdir(appPath)
 
-    let withClient = goSdk(dangEntrypoint: true).generateScope(
+    let withClient = goSdk(dangEntrypoint: true, unifiedClients: false).generateScope(
       ws: app,
       isModule: true,
       name: "generate-app",
@@ -429,11 +492,12 @@ type EntrypointChecks {
       entrypointManifest("generate-app"),
       "name = 'generate-app'\n\n[entrypoint]\n  kind = 'dang'\n  source = './internal/dagger/entrypoint'\n",
       "name = \"generate-app\"\nentrypoint = { kind = \"dang\", source = \"internal/dagger/entrypoint\" }\n",
-      "name = \"generate-app\"\n\n[entrypoint]\n  kind = \"dang\"\n",
     ]
     entrypointTables.map { manifest =>
-      let switched = goSdk.generateScope(
-        ws: app.withNewFile("dagger-module.toml", manifest),
+      let switched = goSdk(dangEntrypoint: false).generateScope(
+        ws: app
+          .withNewFile("dagger-module.toml", manifest)
+          .withNewFile("internal/dagger/entrypoint/main.dang", "# Code generated by dagger. Do not edit.\n"),
         isModule: true,
         name: "generate-app",
         clients: [],

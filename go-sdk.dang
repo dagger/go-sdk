@@ -2,15 +2,16 @@
 Manage Dagger modules and module clients that use the Go SDK.
 """
 type GoSdk {
-  """Runtime SDK version for generated clients, independent of a target's schema version."""
+  """Runtime SDK override, independent of a target's schema version. Unified outputs default to a published immutable runtime; legacy outputs retain their schema pin."""
   clientVersion: String! = ""
 
   """
-  Reuse dagger.io/dagger/core types and one lazy shared session. Requires a
-  published SDK containing the core split and ModuleGraphQLClient, or a
-  local replacement of dagger.io/dagger for development.
+  Reuse dagger.io/dagger/core types and one lazy shared session. Unset uses
+  unified clients for new entrypoint modules, while retaining the mode of
+  existing embedded and standalone packages. Explicit false keeps
+  embedded bindings; explicit true migrates them to shared core types.
   """
-  unifiedClients: Boolean! = false
+  unifiedClients: Boolean
 
   """
   Retain the generated module's global `dag` for existing author code.
@@ -51,9 +52,11 @@ type GoSdk {
   importable packages with a go.mod in the module directory. Manifest v2
   needs beta.14; collections need beta.15. Correct cache policies and
   unified clients also require the subsequent engine fixes documented in
-  docs/compatibility.md. This mode remains opt-in until those fixes ship.
+  docs/compatibility.md. Unset enables entrypoints for new modules and keeps
+  the runner of existing modules. Explicit true migrates a supported existing
+  module; false keeps the Go runtime.
   """
-  dangEntrypoint: Boolean! = false
+  dangEntrypoint: Boolean
 
   """Find the nearest Go module root from Workspace.cwd. Return null if no go.mod exists."""
   findClientRoot(ws: Workspace!): String {
@@ -86,37 +89,109 @@ type GoSdk {
     clients: [ModuleSource!]!,
   ): Workspace! {
     let hadManifest = exists(ws, "dagger-module.toml") or exists(ws, "dagger.json")
-    if (isModule) {
-      if (!dangEntrypoint and globalClient == false) {
-        raise "globalClient = false requires dangEntrypoint = true; legacy Go runtime codegen retains its global client"
-      }
-      checkEntrypointScope(ws, hadManifest, clients)
+    let entrypoint = isModule and usesEntrypoint(ws, hadManifest)
+    let unified = usesUnifiedModule(ws, entrypoint)
+    if (isModule and !entrypoint and globalClient == false) {
+      raise "globalClient = false requires dangEntrypoint = true; legacy Go runtime codegen retains its global client"
     }
     let initialized = if (isModule and !hadManifest) {
-      ws.withDirectory(".", renderedTemplate(ws, name, template))
+      ws.withDirectory(".", renderedTemplate(ws, name, template, entrypoint))
     } else {
       ws
     }
+    if (isModule) {
+      checkEntrypointScope(initialized, hadManifest, clients, entrypoint, unified)
+    }
 
-    if (isModule and dangEntrypoint) {
-      let withClients = if (unifiedClients) {
-        generateStandaloneClients(initialized, clients)
+    if (isModule and entrypoint) {
+      let withClients = if (unified) {
+        generateStandaloneClients(initialized, clients, true)
       } else { initialized }
-      entrypointModule(withClients, name)
+      entrypointModule(withClients, name, unified)
+    } else if (isModule and hasCustomRunner(initialized)) {
+      # A runtime or entrypoint the user chose remains theirs. Only explicitly
+      # requested standalone clients are generated beside it.
+      if (clients.length == 0) { initialized } else {
+        generateStandaloneClients(initialized, clients, false)
+      }
     } else if (isModule) {
       let configured = generatedManifest(initialized, name, clients)
       let generated = configured.withDirectory(".", generatedModuleCode(configured))
       # generatedModuleCode excludes manifests, so the configured ones survive
       # the merge. Rewriting them here would repeat the same workspace edit.
       if (dualClients) {
-        generateStandaloneClients(generated, clients)
+        generateStandaloneClients(generated, clients, false)
       } else {
         generated
       }
     } else {
       # Standalone clients are the only output here, so dualClients does not apply.
-      generateStandaloneClients(initialized, clients)
+      generateStandaloneClients(initialized, clients, false)
     }
+  }
+
+  """Choose the new layout for fresh modules and retain existing runners."""
+  let usesEntrypoint(ws: Workspace!, hadManifest: Boolean!): Boolean! {
+    if (dangEntrypoint != null) {
+      dangEntrypoint ?? false
+    } else if (hadManifest) {
+      hasGeneratedEntrypoint(ws)
+    } else {
+      !fat and template != "legacy"
+    }
+  }
+
+  """Existing embedded bindings keep their API unless migration is requested."""
+  let usesUnifiedModule(ws: Workspace!, entrypoint: Boolean!): Boolean! {
+    if (unifiedClients != null) { return unifiedClients ?? false }
+    if (!entrypoint) { return false }
+    if (exists(ws, "internal/dagger/dagger.gen.go")) {
+      ws.file("internal/dagger/dagger.gen.go").contents.contains("dagger.DefaultGraphQLClient(")
+    } else { true }
+  }
+
+  """The SDK's generated entrypoint, rather than a runner chosen by the user."""
+  let hasGeneratedEntrypoint(ws: Workspace!): Boolean! {
+    let manifest = decodedManifest(ws)
+    if (manifest == null or !manifest.fields.contains("entrypoint")) { return false }
+    let entrypoint = manifest.field(["entrypoint"])
+    stringField(entrypoint, "kind") == "dang" and
+      normalizePath(stringField(entrypoint, "source")) == entrypointPath and
+      ownsEntrypoint(ws)
+  }
+
+  let ownsEntrypoint(ws: Workspace!): Boolean! {
+    let path = entrypointPath + "/main.dang"
+    if (exists(ws, path)) {
+      # A user replacing the file takes precedence over old ownership.
+      return ws.file(path).contents.hasPrefix("# Code generated by dagger. Do not edit.\n")
+    }
+    if (!exists(ws, ".dagger-generated.json")) { return false }
+    let ownership = Dagger.json.withContents(ws.file(".dagger-generated.json").contents :: Dagger.JSON!)
+    ownership.fields.contains("files") and ownership.field(["files"]).fields.contains(path)
+  }
+
+  """A custom runtime or entrypoint remains unchanged by automatic selection."""
+  let hasCustomRunner(ws: Workspace!): Boolean! {
+    let manifest = if (exists(ws, "dagger-module.toml")) {
+      decodedManifest(ws)
+    } else if (exists(ws, "dagger.json")) {
+      Dagger.json.withContents(ws.file("dagger.json").contents :: Dagger.JSON!)
+    } else { null }
+    if (manifest == null) { return false }
+    let fields = manifest.fields
+    if (fields.contains("entrypoint") and !hasGeneratedEntrypoint(ws)) { return true }
+    let key = if (fields.contains("runtime")) { "runtime" } else if (fields.contains("sdk")) { "sdk" } else { "" }
+    if (key == "") { return false }
+    let source = runtimeSource(manifest.field([key]))
+    source != "" and source != "go"
+  }
+
+  """Unified generation uses a published runtime independently of engine/schema versions."""
+  let runtimeVersion(unified: Boolean!): String! {
+    if (clientVersion != "") { clientVersion } else if (unified) {
+      "v1.0.0-beta.16.0.20261008202843-134540fec551"
+    } else { "" }
   }
 
   let normalizePath(p: String!): String! {
@@ -136,6 +211,7 @@ type GoSdk {
   let generateStandaloneClients(
     ws: Workspace!,
     clients: [ModuleSource!]!,
+    moduleUnified: Boolean!,
   ): Workspace! {
     let originalScope = normalizePath(ws.cwd)
     let goScope = findClientRoot(ws)
@@ -151,7 +227,7 @@ type GoSdk {
       # Keep prior client outputs and go.mod updates in the same container.
       # Only the completed batch needs to be merged into the workspace.
       let generated = clients.reduce(base) { current, target =>
-        generateStandaloneClient(current, target)
+        generateStandaloneClient(current, target, moduleUnified)
       }
       let pruned = generated.withExec([
         "dagger-go-sdk-codegen", "prune-clients",
@@ -232,13 +308,13 @@ type GoSdk {
   Without dangEntrypoint, refuse a module generated with one: the Go runtime
   cannot load the importable package it uses.
   """
-  let checkEntrypointScope(ws: Workspace!, hadManifest: Boolean!, clients: [ModuleSource!]!): Void {
-    if (dangEntrypoint) {
+  let checkEntrypointScope(ws: Workspace!, hadManifest: Boolean!, clients: [ModuleSource!]!, entrypoint: Boolean!, unified: Boolean!): Void {
+    if (entrypoint) {
       let enclosingRoot = findClientRoot(ws)
       if (enclosingRoot != null and enclosingRoot != normalizePath(ws.cwd)) {
         raise "Dang entrypoints need a go.mod in the module directory; keep dangEntrypoint = false for modules using a parent go.mod"
       }
-      if (clients.length > 0 and !unifiedClients) {
+      if (clients.length > 0 and !unified) {
         raise "a Dang entrypoint cannot use other modules yet: a manifest with an entrypoint has no dependencies; set dangEntrypoint = false"
       }
       if (!hadManifest and template == "legacy") {
@@ -254,7 +330,7 @@ type GoSdk {
         null
       }
       refuseManifestSettings("dagger.json", legacyJSON, "sdk")
-    } else if (hasLocalDangEntrypoint(ws)) {
+    } else if (hasGeneratedEntrypoint(ws)) {
       raise "this module is generated with a Dang entrypoint, and the Go runtime cannot load its importable package; set dangEntrypoint = true, or change the package to main and remove the [entrypoint] table from dagger-module.toml"
     }
     null
@@ -366,7 +442,7 @@ type GoSdk {
   command, and the entrypoint into the module's Go root. sdk-helpers then
   writes the manifest that names the entrypoint and removes dagger.json.
   """
-  let entrypointModule(ws: Workspace!, name: String!): Workspace! {
+  let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!): Workspace! {
     let scopePath = normalizePath(ws.cwd)
     # A module whose manifest names an entrypoint and no dependencies loads
     # through that entrypoint, which is not generated yet. A fresh runtime
@@ -393,8 +469,8 @@ type GoSdk {
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
-      "--dagger-version", if (unifiedClients) { clientVersion } else { schemaVersion },
-      "--unified=" + JSON.encode(unifiedClients),
+      "--dagger-version", if (unified) { runtimeVersion(true) } else { schemaVersion },
+      "--unified=" + JSON.encode(unified),
       "--global-client=" + globalClientPolicy,
       "--removed-list", "/removed.txt",
     ])
@@ -512,11 +588,20 @@ type GoSdk {
   }
 
   """Generate one target client in the batch's Go module at /out."""
-  let generateStandaloneClient(ctr: Container!, target: ModuleSource!): Container! {
+  let generateStandaloneClient(ctr: Container!, target: ModuleSource!, moduleUnified: Boolean!): Container! {
     let targetName = target.moduleOriginalName
     let outputPath = "internal/dagger/clients/" + targetName
+    # The existing package's transport tells auto whether it already uses
+    # shared core. New packages beside a legacy app retain embedded bindings;
+    # new entrypoint modules explicitly select their unified layout.
+    let generatedPath = "/out/" + outputPath + "/dagger.gen.go"
+    let existing = ctr.directory("/out").exists(outputPath + "/dagger.gen.go")
+    let retained = if (existing) {
+      ctr.file(generatedPath).contents.contains("dagger.ModuleGraphQLClient(")
+    } else { false }
+    let unified = unifiedClients ?? (moduleUnified or retained)
     let metaJSON = "{\"engineVersion\":" + JSON.encode(target.engineVersion) +
-      ",\"clientVersion\":" + JSON.encode(clientVersion) +
+      ",\"clientVersion\":" + JSON.encode(runtimeVersion(unified)) +
       ",\"module\":" + boundModuleJSON(
         JSON.encode(target.kind),
         target.sourceRootSubpath,
@@ -532,7 +617,7 @@ type GoSdk {
         "--client-meta-path", "/meta.json",
         "--output", "/out/" + outputPath,
         "--module-root", "/out",
-        "--unified=" + JSON.encode(unifiedClients),
+        "--unified=" + JSON.encode(unified),
         "--removed-list", "/removed-clients.txt",
       ])
   }
@@ -543,7 +628,7 @@ type GoSdk {
   The Go runtime needs package main. A module with a Dang entrypoint is an
   importable package named after the module.
   """
-  let renderedTemplate(ws: Workspace!, name: String!, selected: String!): Directory! {
+  let renderedTemplate(ws: Workspace!, name: String!, selected: String!, entrypoint: Boolean!): Directory! {
     if (currentModule.source.exists("templates/" + selected) == false) {
       raise "unknown init template: " + selected
     } else {
@@ -556,19 +641,18 @@ type GoSdk {
         .withDirectory("/template", currentModule.source.directory("templates/" + selected))
         .withWorkdir("/helper")
         .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
-      let rendered = if (dangEntrypoint) {
-        # The starter imports the embedded client through the Go module that
-        # the generator uses: the nearest go.mod, or a new one in the module.
-        let goRoot = findClientRoot(ws)
-        if (goRoot == null) {
-          builder.withExec(["render-template", "--importable-package", name, "/template", "/rendered"])
+      let rendered = if (entrypoint) {
+        # A fresh entrypoint owns its Go root even when the project above
+        # has go.mod. The starter and dispatcher must agree on this path.
+        if (!exists(ws, "go.mod")) {
+          builder.withExec(["render-template", "--importable-package", "--standalone-go-module", name, "/template", "/rendered"])
         } else {
           builder
-            .withFile("/go.mod", ws.withWorkdir(goRoot).file("go.mod"))
+            .withFile("/go.mod", ws.file("go.mod"))
             .withExec([
               "render-template", "--importable-package",
               "--go-mod", "/go.mod",
-              "--module-subpath", moduleSubpath(goRoot, normalizePath(ws.cwd)),
+              "--module-subpath", ".",
               name, "/template", "/rendered",
             ])
         }
