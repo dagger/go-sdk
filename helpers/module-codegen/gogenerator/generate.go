@@ -84,6 +84,14 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
+	typeName := strcase.ToCamel(cfg.ModuleName)
+	mainFile, err := findMainFile(root, typeName)
+	if err != nil {
+		return err
+	}
+	if err := checkIncludeCoverage(root, mainFile, typeName); err != nil {
+		return err
+	}
 	moduleSubpath, err := filepath.Rel(filepath.Dir(goModPath), root)
 	if err != nil {
 		return fmt.Errorf("resolve module path relative to go.mod: %w", err)

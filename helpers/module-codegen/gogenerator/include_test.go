@@ -285,3 +285,119 @@ func TestReadIncludesSkipsOtherModules(t *testing.T) {
 	require.Len(t, includes.Include, 1)
 	require.Equal(t, "lib", includes.Include[0].Pattern)
 }
+
+func coverageTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	buildRoot := t.TempDir()
+	base := map[string]string{
+		"ci/go.mod":  "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n",
+		"ci/main.go": "package ci\n\nimport \"example.com/lib/greet\"\n\ntype Ci struct{}\n\nvar _ = greet.Hello\n",
+	}
+	for name, contents := range files {
+		base[name] = contents
+	}
+	for name, contents := range base {
+		if contents == "" {
+			delete(base, name)
+		}
+	}
+	writeModuleFiles(t, buildRoot, base)
+	return filepath.Join(buildRoot, "ci")
+}
+
+func TestCheckIncludeCoverage(t *testing.T) {
+	lib := map[string]string{
+		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n",
+		"lib/greet/greet.go": "package greet\n\nfunc Hello() {}\n",
+	}
+	with := func(extra map[string]string) map[string]string {
+		files := map[string]string{}
+		for name, contents := range lib {
+			files[name] = contents
+		}
+		for name, contents := range extra {
+			files[name] = contents
+		}
+		return files
+	}
+	for name, test := range map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"covered": {files: lib},
+		"replace go.mod missing": {
+			files: map[string]string{"lib/greet/greet.go": lib["lib/greet/greet.go"]},
+			want:  "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod; add it to //go:mod:include in main.go",
+		},
+		"package missing": {
+			files: map[string]string{"lib/go.mod": lib["lib/go.mod"]},
+			want:  "main.go:3:8: package example.com/lib/greet is in ../lib (go.mod:7); add ../lib/greet to //go:mod:include in main.go",
+		},
+		"package without Go files": {
+			files: map[string]string{"lib/go.mod": lib["lib/go.mod"], "lib/greet/greeting.txt": "hello\n"},
+			want:  "main.go:3:8: package example.com/lib/greet is in ../lib (go.mod:7); add ../lib/greet to //go:mod:include in main.go",
+		},
+		"build-tagged import": {
+			files: with(map[string]string{
+				"ci/other.go": "//go:build never\n\npackage ci\n\nimport _ \"example.com/lib/tagged\"\n",
+			}),
+			want: "other.go:5:8: package example.com/lib/tagged is in ../lib (go.mod:7); add ../lib/tagged to //go:mod:include in main.go",
+		},
+		"test import": {
+			files: with(map[string]string{
+				"ci/main_test.go": "package ci\n\nimport _ \"example.com/lib/testutil\"\n",
+			}),
+			want: "main_test.go:3:8: package example.com/lib/testutil is in ../lib (go.mod:7); add ../lib/testutil to //go:mod:include in main.go",
+		},
+		"transitive import": {
+			files: with(map[string]string{
+				"lib/greet/greet.go": "package greet\n\nimport _ \"example.com/lib/words\"\n\nfunc Hello() {}\n",
+			}),
+			want: "../lib/greet/greet.go:3:8: package example.com/lib/words is in ../lib (go.mod:7); add ../lib/words to //go:mod:include in main.go",
+		},
+		"transitive replace": {
+			files: with(map[string]string{
+				"ci/go.mod":          "module example.com/ci\n\ngo 1.26.1\n\nrequire (\n\texample.com/lib v0.0.0\n\texample.com/tools v0.0.0\n)\n\nreplace example.com/lib => ../lib\n\nreplace example.com/tools => ../tools\n",
+				"lib/greet/greet.go": "package greet\n\nimport _ \"example.com/tools/fmt\"\n\nfunc Hello() {}\n",
+				"tools/go.mod":       "module example.com/tools\n\ngo 1.26.1\n",
+			}),
+			want: "../lib/greet/greet.go:3:8: package example.com/tools/fmt is in ../tools (go.mod:12); add ../tools/fmt to //go:mod:include in main.go",
+		},
+		"required by a replace target": {
+			files: with(map[string]string{
+				"ci/go.mod":  "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/tools v1.0.0 => ../tools\n",
+				"lib/go.mod": "module example.com/lib\n\ngo 1.26.1\n\nrequire example.com/tools v1.0.0\n",
+			}),
+			want: "go.mod:9: replace example.com/tools v1.0.0 => ../tools reads ../tools/go.mod; add it to //go:mod:include in main.go",
+		},
+		"replace not required": {
+			files: with(map[string]string{
+				"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/unused => ../unused\n",
+			}),
+		},
+		"replace inside the module": {
+			files: map[string]string{
+				"ci/go.mod":            "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ./third_party/lib\n",
+				"ci/third_party/lib/x": "",
+			},
+		},
+		"no main object": {
+			files: map[string]string{
+				"ci/main.go": "package ci\n\nimport \"example.com/lib/greet\"\n\nvar _ = greet.Hello\n",
+			},
+			want: "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod; add it to //go:mod:include in the file that declares type Ci",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := coverageTree(t, test.files)
+			mainFile, err := findMainFile(root, "Ci")
+			require.NoError(t, err)
+			err = checkIncludeCoverage(root, mainFile, "Ci")
+			if test.want == "" {
+				require.NoError(t, err)
+			} else {
+				require.EqualError(t, err, test.want)
+			}
+		})
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/iancoleman/strcase"
+	"golang.org/x/mod/modfile"
 )
 
 const includeDirective = "//go:mod:include"
@@ -353,4 +354,240 @@ func splitIncludeArgs(text string) ([]string, error) {
 			text = text[end:]
 		}
 	}
+}
+
+type localReplace struct {
+	module string
+	text   string
+	dir    string
+	line   int
+	inside bool
+}
+
+// checkIncludeCoverage refuses a module whose build reads a local replace
+// target outside the module directory without the files of that target the
+// build needs: its go.mod, and the directory of every package imported from
+// it. Imports count under every build tag and test files of the module count,
+// as go mod tidy loads them.
+func checkIncludeCoverage(root, mainFile, typeName string) error {
+	goModPath := filepath.Join(root, "go.mod")
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(goModPath, data, nil)
+	if err != nil {
+		return err
+	}
+	var replaces []localReplace
+	outside := false
+	for _, replace := range mod.Replace {
+		if replace.New.Version != "" || !modfile.IsDirectoryPath(replace.New.Path) {
+			continue
+		}
+		dir := replace.New.Path
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(root, filepath.FromSlash(dir))
+		}
+		rel, err := filepath.Rel(root, dir)
+		inside := err == nil && filepath.IsLocal(rel)
+		outside = outside || !inside
+		replaces = append(replaces, localReplace{
+			module: replace.Old.Path,
+			text:   strings.TrimSpace(replace.Old.Path + " " + replace.Old.Version),
+			dir:    dir,
+			line:   replace.Syntax.Start.Line,
+			inside: inside,
+		})
+	}
+	if !outside {
+		return nil
+	}
+	home := "the file that declares type " + typeName
+	if mainFile != "" {
+		home = mainFile
+	}
+
+	// A required module's go.mod is read even when no package is imported
+	// from it, and a replace target's own requirements are required too.
+	required := map[string]bool{}
+	for _, req := range mod.Require {
+		required[req.Mod.Path] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, replace := range replaces {
+			if !required[replace.module] {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(replace.dir, "go.mod"))
+			if err != nil {
+				continue
+			}
+			target, err := modfile.ParseLax("go.mod", data, nil)
+			if err != nil {
+				continue
+			}
+			for _, req := range target.Require {
+				if !required[req.Mod.Path] {
+					required[req.Mod.Path] = true
+					changed = true
+				}
+			}
+		}
+	}
+
+	checkGoMod := func(replace localReplace) error {
+		if _, err := os.Stat(filepath.Join(replace.dir, "go.mod")); err == nil {
+			return nil
+		}
+		target := path.Join(filepath.ToSlash(replaceText(root, replace.dir)), "go.mod")
+		return fmt.Errorf("go.mod:%d: replace %s => %s reads %s; add it to %s in %s",
+			replace.line, replace.text, replaceText(root, replace.dir), target, includeDirective, home)
+	}
+	for _, replace := range replaces {
+		if !replace.inside && required[replace.module] {
+			if err := checkGoMod(replace); err != nil {
+				return err
+			}
+		}
+	}
+
+	type pkg struct {
+		dir   string
+		tests bool
+	}
+	var queue []pkg
+	err = filepath.WalkDir(root, func(file string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		if file != root && skipPackageDir(file, entry.Name()) {
+			return fs.SkipDir
+		}
+		queue = append(queue, pkg{dir: file, tests: true})
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	visited := map[string]bool{}
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		if visited[next.dir] {
+			continue
+		}
+		visited[next.dir] = true
+		imports, err := packageImports(root, next.dir, next.tests)
+		if err != nil {
+			return err
+		}
+		for _, imported := range imports {
+			var match *localReplace
+			for i, replace := range replaces {
+				if (imported.path == replace.module || strings.HasPrefix(imported.path, replace.module+"/")) &&
+					(match == nil || len(replace.module) > len(match.module)) {
+					match = &replaces[i]
+				}
+			}
+			if match == nil {
+				continue
+			}
+			if !match.inside {
+				if err := checkGoMod(*match); err != nil {
+					return err
+				}
+			}
+			dir := filepath.Join(match.dir, filepath.FromSlash(strings.TrimPrefix(imported.path, match.module)))
+			if !match.inside && !hasGoFiles(dir) {
+				return fmt.Errorf("%s: package %s is in %s (go.mod:%d); add %s to %s in %s",
+					imported.position, imported.path, replaceText(root, match.dir), match.line,
+					replaceText(root, dir), includeDirective, home)
+			}
+			queue = append(queue, pkg{dir: dir})
+		}
+	}
+	return nil
+}
+
+// replaceText is a directory as a go.mod or //go:mod:include line names it.
+func replaceText(root, dir string) string {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return filepath.ToSlash(dir)
+	}
+	rel = filepath.ToSlash(rel)
+	if !strings.HasPrefix(rel, "../") && rel != ".." {
+		rel = "./" + rel
+	}
+	return rel
+}
+
+// skipPackageDir reports a directory that Go builds nothing from, or that
+// holds another module.
+func skipPackageDir(dir, name string) bool {
+	if name == "testdata" || name == "vendor" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(dir, "go.mod"))
+	return err == nil
+}
+
+func hasGoFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") {
+			return true
+		}
+	}
+	return false
+}
+
+type packageImport struct {
+	path     string
+	position string
+}
+
+// packageImports lists the imports of every Go file of a package directory,
+// whatever its build constraints, in file order.
+func packageImports(root, dir string, tests bool) ([]packageImport, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	var imports []packageImport
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || (!tests && strings.HasSuffix(name, "_test.go")) {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ImportsOnly)
+		if err != nil {
+			return nil, err
+		}
+		for _, spec := range file.Imports {
+			value, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				continue
+			}
+			position := fset.Position(spec.Pos())
+			rel, err := filepath.Rel(root, position.Filename)
+			if err != nil {
+				rel = position.Filename
+			}
+			imports = append(imports, packageImport{
+				path:     value,
+				position: fmt.Sprintf("%s:%d:%d", filepath.ToSlash(rel), position.Line, position.Column),
+			})
+		}
+	}
+	return imports, nil
 }
