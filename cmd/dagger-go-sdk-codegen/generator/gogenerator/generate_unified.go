@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"github.com/psanford/memfs"
 	"golang.org/x/tools/imports"
@@ -129,6 +130,9 @@ import (
  "encoding/json"
  "fmt"
  "reflect"
+ "runtime"
+ "sync"
+ "weak"
  "dagger.io/dagger"
  "dagger.io/dagger/core"
  "github.com/dagger/querybuilder"
@@ -137,7 +141,7 @@ import (
 %s
 // Client borrows a shared connection. Its API contains only the bound module.
 type Client struct { *Query }
-type Query struct { query *querybuilder.Selection %s }
+type Query struct { query *querybuilder.Selection; refetchID bool %s }
 type DaggerObject = core.DaggerObject
 type ExecError = dagger.ExecError
 var marshalCtx = context.Background()
@@ -161,7 +165,8 @@ func selectNode(q *querybuilder.Selection,id any,name string)*querybuilder.Selec
 func assertNotNil(name string,value any){if reflect.ValueOf(value).IsNil(){panic(fmt.Sprintf("unexpected nil pointer for argument %%q",name))}}
 func Ref[T core.Loadable[T]](client *Client,id core.ID)T{return core.Ref[T](new(core.Query).WithGraphQLQuery(client.query),id)}
 func Load[T core.Loadable[T]](ctx context.Context,client *Client,id core.ID)(T,error){return core.Load[T](ctx,new(core.Query).WithGraphQLQuery(client.query),id)}
-`, name, aliases.String(), embeddedCore, transport, initQuery)
+
+%s`, name, aliases.String(), embeddedCore, transport, initQuery, templates.IDMemoHelper)
 	formatted, err := imports.Process(filepath.Join(g.Config.OutputDir, "dagger.gen.go"), []byte(source), nil)
 	if err != nil {
 		return nil, err

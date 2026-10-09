@@ -156,6 +156,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"IsPartial":               funcs.isPartial,
 		"IsModuleCode":            funcs.isModuleCode,
 		"MemoizeIDs":              funcs.memoizeIDs,
+		"IDMemoHelper":            func() string { return IDMemoHelper },
 		"HasString":               slices.Contains[[]string, string],
 		"IsStandaloneClient":      funcs.isStandaloneClient,
 		"IsSharedCoreObject":      funcs.isSharedCoreObject,
