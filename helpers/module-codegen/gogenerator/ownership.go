@@ -58,34 +58,47 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
+	buildRoot := root
+	if cfg.BuildRoot != "" {
+		buildRoot, err = filepath.Abs(cfg.BuildRoot)
+		if err != nil {
+			return err
+		}
+	}
+	modulePath, err := filepath.Rel(buildRoot, root)
+	if err != nil {
+		return fmt.Errorf("resolve module path in build root: %w", err)
+	}
 	stage, err := os.MkdirTemp("", "dagger-module-generate-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(stage)
-	if err := os.CopyFS(stage, os.DirFS(root)); err != nil {
+	if err := os.CopyFS(stage, os.DirFS(buildRoot)); err != nil {
 		return fmt.Errorf("stage module generation: %w", err)
 	}
+	stagedModule := filepath.Join(stage, modulePath)
 	// Remove unchanged prior outputs from the staged copy. Current generation
 	// recreates the paths it still owns; renamed dispatchers and collection
 	// runtime sources therefore cannot survive as stale artifacts.
-	if err := generator.PruneOwnedClient(ctx, stage); err != nil {
+	if err := generator.PruneOwnedClient(ctx, stagedModule); err != nil {
 		return err
 	}
 
 	stagedCfg := cfg
-	stagedCfg.ModuleRoot = stage
+	stagedCfg.ModuleRoot = stagedModule
+	stagedCfg.BuildRoot = stage
 	stagedCfg.RemovedPath = filepath.Join(stage, "removed-paths.txt")
 	if err := generate(ctx, stagedCfg); err != nil {
 		return err
 	}
 
-	removed, err := applyGeneratedTree(ctx, root, stage, old, stagedCfg.RemovedPath)
+	removed, err := applyGeneratedTree(ctx, root, stagedModule, old, stagedCfg.RemovedPath)
 	if err != nil {
 		return err
 	}
 	for _, name := range []string{"go.mod", "go.sum"} {
-		data, err := os.ReadFile(filepath.Join(stage, name))
+		data, err := os.ReadFile(filepath.Join(stagedModule, name))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
