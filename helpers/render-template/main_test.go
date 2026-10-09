@@ -87,6 +87,50 @@ func TestRunDefaultImport(t *testing.T) {
 	}
 }
 
+func TestRunDefaultClientCallFollowsLayout(t *testing.T) {
+	for _, tc := range []struct {
+		flags      []string
+		want       string
+		importCore bool
+	}{
+		{[]string{"--global-client"}, "return dag.Container().", false},
+		{[]string{"--importable-package"}, "return dagger.Connect().Container().", false},
+		{[]string{"--importable-package", "--unified-clients=false", "--global-client=false"}, "return dagger.Connect().Container().", false},
+		{[]string{"--importable-package", "--global-client"}, "return dag.Container().", false},
+		{[]string{"--importable-package", "--unified-clients"}, "return core.NewContainer().", true},
+		{[]string{"--importable-package", "--unified-clients", "--global-client"}, "return dag.Container().", false},
+	} {
+		out := t.TempDir()
+		args := append(append([]string{}, tc.flags...), "hello-world", filepath.Join("..", "..", "templates", "default"), out)
+		if err := run(args); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(out, "main.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		starter := string(data)
+		if !strings.Contains(starter, tc.want) || strings.Contains(starter, `"dagger.io/dagger/core"`) != tc.importCore {
+			t.Errorf("flags %v: starter does not call %q with core imported=%v:\n%s", tc.flags, tc.want, tc.importCore, starter)
+		}
+	}
+}
+
+// Only Go runtime modules use the legacy starter, and they always keep dag.
+func TestRunLegacyUsesGlobalClient(t *testing.T) {
+	out := t.TempDir()
+	if err := run([]string{"hello-world", filepath.Join("..", "..", "templates", "legacy"), out}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "dag.Container()") != 2 || strings.Contains(string(data), "Connect()") {
+		t.Errorf("legacy starter does not use the global dag:\n%s", data)
+	}
+}
+
 func TestRunStandaloneModuleInsideProject(t *testing.T) {
 	project := t.TempDir()
 	parentMod := "module example.com/project\n\ngo 1.25\n"

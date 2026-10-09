@@ -96,7 +96,7 @@ type GoSdk {
       raise "unifiedClients = true requires dangEntrypoint = true for embedded module bindings; built-in Go runtime codegen cannot generate shared core types"
     }
     let initialized = if (isModule and !hadManifest) {
-      ws.withDirectory(".", renderedTemplate(ws, name, template, entrypoint))
+      ws.withDirectory(".", renderedTemplate(ws, name, template, entrypoint, unified))
     } else {
       ws
     }
@@ -614,9 +614,12 @@ type GoSdk {
   Render one templates/<name> starter for a new module.
 
   The Go runtime needs package main. A module with a Dang entrypoint is an
-  importable package named after the module.
+  importable package named after the module. A starter with the global dag
+  calls it as before; the Go runtime always generates it. Without it,
+  embedded bindings declare their own core types, so only unified bindings
+  use core constructors.
   """
-  let renderedTemplate(ws: Workspace!, name: String!, selected: String!, entrypoint: Boolean!): Directory! {
+  let renderedTemplate(ws: Workspace!, name: String!, selected: String!, entrypoint: Boolean!, unified: Boolean!): Directory! {
     if (currentModule.source.exists("templates/" + selected) == false) {
       raise "unknown init template: " + selected
     } else {
@@ -633,19 +636,21 @@ type GoSdk {
         # A fresh entrypoint owns its Go root even when the project above
         # has go.mod. The starter and dispatcher must agree on this path.
         if (!exists(ws, "go.mod")) {
-          builder.withExec(["render-template", "--importable-package", "--standalone-go-module", name, "/template", "/rendered"])
+          builder.withExec(["render-template", "--importable-package", "--unified-clients=" + JSON.encode(unified), "--global-client=" + JSON.encode(globalClient ?? false), "--standalone-go-module", name, "/template", "/rendered"])
         } else {
           builder
             .withFile("/go.mod", ws.file("go.mod"))
             .withExec([
               "render-template", "--importable-package",
+              "--unified-clients=" + JSON.encode(unified),
+              "--global-client=" + JSON.encode(globalClient ?? false),
               "--go-mod", "/go.mod",
               "--module-subpath", ".",
               name, "/template", "/rendered",
             ])
         }
       } else {
-        builder.withExec(["render-template", name, "/template", "/rendered"])
+        builder.withExec(["render-template", "--global-client", name, "/template", "/rendered"])
       }
       rendered.directory("/rendered")
     }

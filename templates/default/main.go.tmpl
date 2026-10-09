@@ -1,6 +1,9 @@
 package {{ .ModulePackage }}
 
 import (
+{{- if and .UnifiedClients (not .GlobalClient) }}
+	"dagger.io/dagger/core"
+{{ end }}
 	"{{ .ModuleImport }}/internal/dagger"
 )
 
@@ -27,7 +30,13 @@ func New(
 
 // A container with the source mounted, ready to build on.
 func (m *{{ .ModuleType }}) Container() *dagger.Container {
+{{- if .GlobalClient }}
+	return dag.Container().
+{{- else if .UnifiedClients }}
+	return core.NewContainer().
+{{- else }}
 	return dagger.Connect().Container().
+{{- end }}
 		From(m.BaseImageAddress).
 		WithDirectory("/src", m.Source).
 		WithWorkdir("/src")
