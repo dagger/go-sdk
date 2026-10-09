@@ -151,7 +151,7 @@ type EntrypointChecks {
       .withNewFile(appPath + "/dagger.json", legacyJSON)
       .withNewFile(appPath + "/dagger-module.toml", legacyTOML)
       .withWorkdir(appPath)
-    let generated = goSdk(dangEntrypoint: true).generateScope(
+    let generated = goSdk(dangEntrypoint: true, globalClient: true).generateScope(
       ws: input,
       isModule: true,
       name: "generate-app",
@@ -170,10 +170,10 @@ type EntrypointChecks {
     assert("migration removed the legacy module's global client") {
       generated.file("dagger.gen.go").contents.contains("var dag ")
     }
-    let compatibilityRepeated = goSdk(dangEntrypoint: true).generateScope(
+    let compatibilityRepeated = goSdk(dangEntrypoint: true, globalClient: true).generateScope(
       ws: generated, isModule: true, name: "generate-app", clients: [],
     )
-    assert("migration did not preserve its compatibility decision") {
+    assert("explicit compatibility regeneration changed the module") {
       compatibilityRepeated.changes(generated).isEmpty
     }
 
@@ -320,7 +320,7 @@ type EntrypointChecks {
     null
   }
 
-  """Automatic mode preserves existing legacy and custom runners."""
+  """Automatic runner selection preserves existing legacy and custom runners."""
   defaultCompatibilityCheck(ws: Workspace!): Void @check {
     let legacyManifest = "name = 'generate-app'\n[runtime]\nsource = 'go'\n"
     let input = ws.withWorkdir(appPath).withNewFile("dagger-module.toml", legacyManifest)
@@ -332,10 +332,10 @@ type EntrypointChecks {
     assert("automatic generation removed the legacy API global") {
       legacy.file("dagger.gen.go").contents.contains("var dag ")
     }
-    let embedded = goSdk(dangEntrypoint: true, unifiedClients: false).generateScope(
+    let embedded = goSdk(dangEntrypoint: true, unifiedClients: false, globalClient: true).generateScope(
       ws: input, isModule: true, name: "generate-app", clients: [],
     )
-    let retainedEmbedded = goSdk.generateScope(
+    let retainedEmbedded = goSdk(globalClient: true).generateScope(
       ws: embedded, isModule: true, name: "generate-app", clients: [],
     )
     assert("automatic regeneration changed existing embedded entrypoint bindings") {
