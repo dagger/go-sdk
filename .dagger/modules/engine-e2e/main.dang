@@ -244,6 +244,7 @@ type EngineE2e {
       .withExec(["test", "!", "-e", ".dagger/modules/sdk-smoke/dagger.json"])
       .withExec(["test", "-f", ".dagger/modules/sdk-smoke/dagger.gen.go"])
       .withExec(["test", "-f", ".dagger/modules/sdk-smoke/internal/dagger/dagger.gen.go"])
+      .withExec(["grep", "-qF", "dag.Container().", ".dagger/modules/sdk-smoke/main.go"])
 
     let fat = initialized
       .withExec([
@@ -293,6 +294,7 @@ type EngineE2e {
       .withExec(["test", "!", "-e", entrypointPath + "/dagger.json"])
       .withExec(["test", "-f", entrypointPath + "/internal/dagger/entrypoint/main.dang"])
       .withExec(["test", "-f", entrypointPath + "/cmd/sdk-entrypoint-dispatch/main.go"])
+      .withExec(["grep", "-qF", "core.NewContainer().", entrypointPath + "/main.go"])
       .withExec([
         "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "-m", entrypointPath,
@@ -305,7 +307,34 @@ type EngineE2e {
     assert("module with a Dang entrypoint did not run") {
       entrypoint.trimSpace != ""
     }
+
+    let global = starterRelease(thin, "sdk-global", ["--global-client=true"], "dag.Container().")
+    let embedded = starterRelease(thin, "sdk-embedded", ["--unified-clients=false"], "dagger.Connect().Container().")
+    assert("a starter with the global dag or embedded bindings did not run") {
+      global.trimSpace != "" and embedded.trimSpace != ""
+    }
     null
+  }
+
+  """Initialize a module from the default starter, check its client call, and run it."""
+  let starterRelease(client: Container!, name: String!, settings: [String!]!, call: String!): String! {
+    let path = ".dagger/modules/" + name
+    client
+      .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+        "dagger", "--auto-apply", "module", "init", "go",
+        "--name", name,
+        "--path", path,
+      ] + settings)
+      .withExec(["grep", "-qF", call, path + "/main.go"])
+      .withExec([
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+        "dagger", "-m", path,
+        "call", "container", "file",
+        "--path", "/etc/alpine-release",
+        "contents",
+      ])
+      .stdout
   }
 
   """

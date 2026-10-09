@@ -28,12 +28,14 @@ func run(args []string) error {
 	standalone := flags.Bool("standalone-go-module", false, "create the new module's own go.mod")
 	goMod := flags.String("go-mod", "", "go.mod of the Go module that contains the new module")
 	moduleSubpath := flags.String("module-subpath", ".", "path of the new module relative to the directory of --go-mod")
+	unifiedClients := flags.Bool("unified-clients", false, "the new module's client package aliases dagger.io/dagger/core types")
+	globalClient := flags.Bool("global-client", false, "the new module's package declares the global dag client")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	args = flags.Args()
 	if len(args) != 3 {
-		return fmt.Errorf("usage: render-template [--importable-package] [--standalone-go-module | --go-mod GO_MOD --module-subpath SUBPATH] MODULE_NAME TEMPLATE_DIR OUT_DIR")
+		return fmt.Errorf("usage: render-template [--importable-package] [--unified-clients] [--global-client] [--standalone-go-module | --go-mod GO_MOD --module-subpath SUBPATH] MODULE_NAME TEMPLATE_DIR OUT_DIR")
 	}
 	if *standalone && (!*importable || *goMod != "" || *moduleSubpath != ".") {
 		return fmt.Errorf("--standalone-go-module requires --importable-package and cannot use an enclosing Go module")
@@ -58,11 +60,13 @@ func run(args []string) error {
 			return err
 		}
 	}
-	data := map[string]string{
-		"ModuleName":    moduleName,
-		"ModuleType":    strcase.ToCamel(moduleName),
-		"ModulePackage": packageName,
-		"ModuleImport":  moduleImport,
+	data := map[string]any{
+		"ModuleName":     moduleName,
+		"ModuleType":     strcase.ToCamel(moduleName),
+		"ModulePackage":  packageName,
+		"ModuleImport":   moduleImport,
+		"UnifiedClients": *unifiedClients,
+		"GlobalClient":   *globalClient,
 	}
 
 	if err := filepath.WalkDir(templateDir, func(path string, entry os.DirEntry, err error) error {
