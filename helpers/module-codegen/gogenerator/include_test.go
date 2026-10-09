@@ -401,3 +401,23 @@ func TestCheckIncludeCoverage(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteCollectionBuildOverlaysTheIncludedModuleSource(t *testing.T) {
+	root := t.TempDir()
+	entrypoint := []byte("  let assembled(workspace: Workspace!): Directory! {\n" +
+		"    if (here.file(mark).contents != currentModule.source.file(mark).contents) {\n" +
+		"    }\n" +
+		"    let source = currentModule.source\n" +
+		"    workspace\n" +
+		"      .directory(\"..\", include: [\"lib\"], exclude: [\"app\"], gitignore: true)\n" +
+		"      .withDirectory(\"app\", source)\n" +
+		"  }\n\n" +
+		"  let dispatch(workspace: Workspace!): File! {\n" +
+		"    let source = assembled(workspace)\n")
+	got, err := writeCollectionBuild(root, entrypoint, map[string][]byte{"main.go": []byte("package app\n")})
+	require.NoError(t, err)
+	require.Contains(t, string(got), "    let source = currentModule.source\n"+
+		"      .withFile(\"main.go\", currentModule.source.file(\"internal/dagger/entrypoint/runtime/main.go.src\"))\n"+
+		"    workspace\n")
+	require.Contains(t, string(got), "    let source = assembled(workspace)\n")
+}

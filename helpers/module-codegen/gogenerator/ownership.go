@@ -64,6 +64,12 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 		if err != nil {
 			return err
 		}
+	} else {
+		includes, err := ReadIncludes(root, cfg.ModuleName, "")
+		if err != nil {
+			return err
+		}
+		buildRoot = filepath.Join(root, filepath.FromSlash(includes.Anchor))
 	}
 	modulePath, err := filepath.Rel(buildRoot, root)
 	if err != nil {

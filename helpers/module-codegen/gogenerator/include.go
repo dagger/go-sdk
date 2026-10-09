@@ -16,6 +16,8 @@ import (
 
 	"github.com/iancoleman/strcase"
 	"golang.org/x/mod/modfile"
+
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 )
 
 const includeDirective = "//go:mod:include"
@@ -36,6 +38,25 @@ type Includes struct {
 	Exclude []string
 	// ModuleExclude holds patterns relative to the module directory.
 	ModuleExclude []string
+}
+
+// entrypoint is the include list the generated entrypoint carries, or nil
+// for a module without one.
+func (includes *Includes) entrypoint() *templates.EntrypointInclude {
+	if len(includes.Include) == 0 {
+		return nil
+	}
+	patterns := make([]string, len(includes.Include))
+	for i, include := range includes.Include {
+		patterns[i] = include.Pattern
+	}
+	return &templates.EntrypointInclude{
+		Anchor:        includes.Anchor,
+		ModulePath:    includes.ModulePath,
+		Include:       patterns,
+		Exclude:       includes.Exclude,
+		ModuleExclude: includes.ModuleExclude,
+	}
 }
 
 type IncludePattern struct {
