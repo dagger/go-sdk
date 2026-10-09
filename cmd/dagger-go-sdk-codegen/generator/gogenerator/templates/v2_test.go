@@ -208,3 +208,64 @@ func TestEntrypointSourceGolden(t *testing.T) {
 	got := string(source)
 	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint.golden", got), got)
 }
+
+func includeFixture() *v2Module {
+	mod := entrypointFixture()
+	main := mod.objects[0]
+	main.methods = main.methods[:3]
+	mod.include = &EntrypointInclude{
+		Anchor:        "..",
+		ModulePath:    "hello-world",
+		Include:       []string{"lib/go.mod", "lib/greet"},
+		Exclude:       []string{"lib/greet/testdata"},
+		ModuleExclude: []string{"data"},
+	}
+	return mod
+}
+
+func TestEntrypointIncludeGolden(t *testing.T) {
+	source, err := includeFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.NoError(t, err)
+	got := string(source)
+	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint_include.golden", got), got)
+}
+
+func TestEntrypointIncludeCachesPerSession(t *testing.T) {
+	source, err := includeFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.NoError(t, err)
+	text := string(source)
+	// Hello, Session, Name and the constructor; Fresh keeps Never.
+	require.Equal(t, 4, strings.Count(text, ".withCachePolicy(FunctionCachePolicy.PerSession)"))
+	require.Equal(t, 1, strings.Count(text, ".withCachePolicy(FunctionCachePolicy.Never)"))
+	require.NotContains(t, text, "timeToLive")
+	require.Contains(t, text, `.withConstructor(function("", typeDef.withObject("HelloWorld")).withCachePolicy(FunctionCachePolicy.PerSession))`)
+}
+
+func TestEntrypointIncludeCachesExplicitConstructorPerSession(t *testing.T) {
+	mod := includeFixture()
+	mod.objects[0].constructor = &funcTypeSpec{
+		name:       "New",
+		returnSpec: &parsedObjectTypeReference{name: "HelloWorld", moduleName: "hello-world"},
+	}
+	source, err := mod.renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.NoError(t, err)
+	require.Contains(t, string(source), ".withConstructor(\n          function(\"\", typeDef.withObject(\"HelloWorld\"))\n            .withCachePolicy(FunctionCachePolicy.PerSession)\n        )")
+}
+
+func TestEntrypointIncludeRefusesTimeToLive(t *testing.T) {
+	mod := includeFixture()
+	mod.objects[0].methods = entrypointFixture().objects[0].methods
+	_, err := mod.renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.EqualError(t, err, `main.go:14:1: +cache="1h" would serve stale results when included files change; use "session" or "never"`)
+}
+
+func TestEntrypointIncludeKeepsInterfacePolicies(t *testing.T) {
+	mod := includeFixture()
+	mod.interfaces = []*parsedIfaceType{{
+		name:    "Greeter",
+		methods: []*funcTypeSpec{{name: "Greet", cachePolicy: "1h", returnSpec: &parsedPrimitiveType{goType: types.Typ[types.String]}}},
+	}}
+	source, err := mod.renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.NoError(t, err)
+	require.Contains(t, string(source), `timeToLive: "1h"`)
+}
