@@ -13,6 +13,7 @@ import (
   {{ if eq .Kind "OBJECT" }}
     {{ if IsExtendableType . }}
       {{ template "_types/object_fields.go.tmpl" . }}
+      {{- if and (eq .Name "Query") IsUnifiedClient IsStandaloneClient }}{{ template "_types/query_shortcuts.go.tmpl" . }}{{ end }}
     {{ else }}
       {{ template "_types/object.go.tmpl" . }}
     {{ end }}

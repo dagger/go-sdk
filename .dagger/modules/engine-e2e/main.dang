@@ -109,7 +109,7 @@ type EngineE2e {
         "-m", ".dagger/modules/e2e", "call", "entrypoint", check, "--ws", ".", "pass",
       ])
     }
-    ["calls-check", "changed-target-check", "stale-target-check", "removed-client-check", "git-calls-check"].each { check =>
+    ["calls-check", "changed-target-check", "stale-target-check", "removed-client-check", "git-calls-check", "shortcut-calls-check"].each { check =>
       runModuleCheck(client, boundary + [
         "-m", ".dagger/modules/e2e", "call", "unified",
         "--runtime-sdk", "/integrated-runtime-sdk", "--legacy-version", "v0.21.7",

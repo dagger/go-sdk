@@ -3,9 +3,11 @@ package unified_app
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"time"
 
+	"dagger.io/dagger"
 	"dagger.io/dagger/core"
 	dep "example.com/unified/internal/dagger/clients/client-dep"
 )
@@ -27,6 +29,32 @@ func (*UnifiedApp) LegacyContainer(value string) *core.Container {
 
 func (*UnifiedApp) LegacyRead(ctx context.Context, value *core.Container) (string, error) {
 	return dep.New().ClientDep().Read(ctx, value)
+}
+
+func (*UnifiedApp) ShortcutGreet(ctx context.Context) (string, error) {
+	return dep.NewClientDep().Greet(ctx, "shortcut")
+}
+
+func (*UnifiedApp) ShortcutRead(ctx context.Context) (string, error) {
+	return dep.NewClientDep().Read(ctx, core.NewContainer().WithNewFile("/value", "shortcut handle"))
+}
+
+func (*UnifiedApp) ExplicitClosed(ctx context.Context) (string, error) {
+	conn, err := dagger.Connect(ctx)
+	if err != nil {
+		return "", err
+	}
+	if _, err := dep.New(conn).ClientDep().Greet(ctx, "explicit"); err != nil {
+		conn.Close()
+		return "", err
+	}
+	if err := conn.Close(); err != nil {
+		return "", err
+	}
+	if _, err := dep.New(conn).ClientDep().Greet(ctx, "closed"); !errors.Is(err, dagger.ErrClientClosed) {
+		return "", fmt.Errorf("closed connection returned %v, want %v", err, dagger.ErrClientClosed)
+	}
+	return dep.NewClientDep().Greet(ctx, "default")
 }
 
 func (*UnifiedApp) Echo(value *core.Container) *core.Container { return value }

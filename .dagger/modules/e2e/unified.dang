@@ -70,6 +70,37 @@ type UnifiedChecks {
     null
   }
 
+  """
+  A standalone program reaches its target through the default connection
+  again after core.Close. The target is a fixture inside this module's tree,
+  because a nested client resolves local addresses there.
+  """
+  shortcutCallsCheck(ws: Workspace!): Void @check {
+    let scope = ".dagger/modules/e2e/out/unified-standalone"
+    let input = ws
+      .withNewFile(scope + "/go.mod", "module example.com/shortcut\n\ngo 1.26.1\n")
+      .withFile(scope + "/main.go", ws.file("/" + fixtures + "/unified-standalone/main.go"))
+      .withWorkdir(scope)
+    let generated = goSdk(unifiedClients: true).generateScope(
+      ws: input, isModule: false, name: "unified-standalone",
+      clients: [ws.moduleSource("/" + fixtures + "/client/dep")],
+    )
+    let called = container.from("golang:1.26-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/runtime-sdk", runtimeSdk)
+      .withDirectory("/src", generated.directory("."))
+      .withWorkdir("/src")
+      .withExec(["go", "mod", "edit", "-replace", "dagger.io/dagger=/runtime-sdk"])
+      .withExec(["go", "mod", "tidy"])
+      .withExec(["go", "run", "-buildvcs=false", "."],
+        experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    assert("standalone shortcut calls failed:\n" + called.stdout + called.stderr) {
+      called.exitCode == 0 and called.stdout == "hello first\nhello reopened\n"
+    }
+    null
+  }
+
   """A changed target takes effect without regenerating the caller bindings."""
   changedTargetCheck(ws: Workspace!): Void @check {
     let ready = generated(ws)
