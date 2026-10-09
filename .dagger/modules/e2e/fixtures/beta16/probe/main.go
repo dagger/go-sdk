@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -54,17 +56,31 @@ func main() {
 		panic("a shared core handle did not decode and round trip")
 	}
 
-	// Check the persisted decision structurally as well as exercising its API.
 	data, err := os.ReadFile(".dagger-generated.json")
 	check(err)
-	var metadata struct {
-		Compatibility struct {
-			GlobalClient *bool `json:"globalClient"`
-		} `json:"compatibility"`
+	var ownership struct {
+		Version       int               `json:"version"`
+		Files         map[string]string `json:"files"`
+		Compatibility json.RawMessage   `json:"compatibility"`
 	}
-	check(json.Unmarshal(data, &metadata))
-	if metadata.Compatibility.GlobalClient == nil || !*metadata.Compatibility.GlobalClient {
-		panic("the migrated compatibility decision was not preserved")
+	check(json.Unmarshal(data, &ownership))
+	if ownership.Version != 1 {
+		panic("the migrated generated-file ownership has an unexpected version")
+	}
+	if len(ownership.Compatibility) != 0 {
+		panic("the migrated generated-file ownership retained compatibility state")
+	}
+	for _, path := range []string{"dagger.gen.go", "internal/dagger/dagger.gen.go"} {
+		want, ok := ownership.Files[path]
+		if !ok {
+			panic("the migrated generated-file ownership does not track " + path)
+		}
+		contents, err := os.ReadFile(path)
+		check(err)
+		sum := sha256.Sum256(contents)
+		if hex.EncodeToString(sum[:]) != want {
+			panic("the migrated generated-file ownership has a stale hash for " + path)
+		}
 	}
 	fmt.Println("beta16 migration passed")
 }

@@ -57,7 +57,7 @@ type Beta16Checks {
         "\nremoved: " + JSON.encode(regeneration.removedPaths) +
         "\n" + regeneration.asPatch.contents
     }
-    assert("automatic regeneration changed the migrated files" + difference) {
+    assert("explicit regeneration changed the migrated files" + difference) {
       regeneration.isEmpty
     }
 
