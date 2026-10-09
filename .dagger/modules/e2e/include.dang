@@ -1,0 +1,174 @@
+"""
+Run modules whose build reads files outside the module directory, listed
+with //go:mod:include in the header of main.go.
+"""
+type IncludeChecks {
+  let root: String! = ".dagger/modules/e2e/fixtures/include"
+  let appPath: String! = root + "/app"
+  let directive: String! = "//go:mod:include ../lib/go.mod ../lib/greet !../lib/greet/testdata"
+  let identity: String! = "module include-app reads files outside its directory (//go:mod:include), so it must run from its own checkout"
+
+  let generated(ws: Workspace!): Workspace! {
+    goSdk(dangEntrypoint: true).generateScope(
+      ws: ws.withWorkdir(appPath),
+      isModule: true,
+      name: "include-app",
+      clients: [],
+    )
+  }
+
+  """
+  The generated entrypoint reads the listed paths beside the module, builds
+  with GOWORK=off, caches every function per session, and regenerates
+  without changes. Generation writes no file outside the module.
+  """
+  generateCheck(ws: Workspace!): Void @check {
+    let input = ws.withWorkdir(appPath)
+    let ready = generated(ws)
+    let entrypoint = ready.file("internal/dagger/entrypoint/main.dang").contents
+    [
+      ".directory(\"..\", include: [\"lib/go.mod\", \"lib/greet\"], exclude: [\"lib/greet/testdata\", \"app\"], gitignore: true)",
+      ".withDirectory(\"app\", source)",
+      ".withWorkdir(\"/workspace/app\")",
+      ".withEnvVariable(\"GOWORK\", \"off\")",
+      ".withFile(\"/usr/local/bin/dispatch\", dispatch(workspace), permissions: 755)",
+      ".withMountedDirectory(\"/workspace\", assembled(workspace))",
+      ".withConstructor(function(\"\", typeDef.withObject(\"IncludeApp\")).withCachePolicy(FunctionCachePolicy.PerSession))",
+    ].each { literal =>
+      assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
+    }
+    # Greeting, Runtime, Excluded and the constructor.
+    assert("a function of the module is not cached per session") {
+      entrypoint.split("FunctionCachePolicy.PerSession").length == 5
+    }
+    assert("the manifest is not the entrypoint manifest") {
+      ready.file("dagger-module.toml").contents ==
+        "name = \"include-app\"\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+    }
+    assert("generation changed main.go") {
+      ready.file("main.go").contents == input.file("main.go").contents
+    }
+    ["/" + root + "/lib/go.mod", "/" + root + "/lib/greet/greet.go"].each { path =>
+      assert("generation changed " + path) {
+        ready.file(path).contents == ws.file(path).contents
+      }
+    }
+    let repeated = goSdk(dangEntrypoint: true).generateScope(
+      ws: ready, isModule: true, name: "include-app", clients: [],
+    )
+    assert("regeneration changed files") { repeated.changes(ready).isEmpty }
+    null
+  }
+
+  """
+  A module with a collection prepares its runtime sources beside the
+  included paths, and places them in the module directory it assembles.
+  """
+  collectionCheck(ws: Workspace!): Void @check {
+    let input = ws.withNewFile("/" + appPath + "/items.go",
+      "package include_app\n\nimport \"example.com/lib/greet\"\n\n" +
+      "func (*IncludeApp) Items() *Items { return &Items{Keys: []string{greet.Greeting()}} }\n\n" +
+      "// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n" +
+      "// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
+      "type Item struct{ Name string }\n")
+    let entrypoint = generated(input).file("internal/dagger/entrypoint/main.dang").contents
+    [
+      ".withFile(\"items.go\", currentModule.source.file(\"internal/dagger/entrypoint/runtime/items.go.src\"))",
+      ".withDirectory(\"app\", source)",
+    ].each { literal =>
+      assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
+    }
+    null
+  }
+
+  let withDirective(ws: Workspace!, replacement: String!): Workspace! {
+    let main = "/" + appPath + "/main.go"
+    ws.withNewFile(main, ws.file(main).contents.replace(directive, replacement))
+  }
+
+  let expectRefusal(input: Workspace!, want: String!): Void {
+    let got = goSdk(dangEntrypoint: true).generateScope(
+      ws: input.withWorkdir(appPath),
+      isModule: true,
+      name: "include-app",
+      clients: [],
+    ).file("dagger.gen.go").contents rescue { err: Error => err.message }
+    assert("generation did not refuse with " + want + ": " + got) { got.contains(want) }
+    null
+  }
+
+  """Every refusal of //go:mod:include names the place to fix."""
+  refusalsCheck(ws: Workspace!): Void @check {
+    let header = "//go:mod:include ../lib/go.mod ../lib/greet"
+    expectRefusal(withDirective(ws, "//go:mod:include \"unterminated"),
+      "main.go:1:1: invalid quoted string in //go:mod:include: \"unterminated")
+    expectRefusal(withDirective(ws, "//go:mod:include"),
+      "main.go:1:1: //go:mod:include needs at least one path")
+    expectRefusal(ws.withNewFile("/" + appPath + "/extra.go", "package include_app\n\n//go:mod:include ../lib\nfunc extra() {}\n"),
+      "extra.go:3:1: //go:mod:include belongs in the header of main.go, the file that declares type IncludeApp")
+    expectRefusal(withDirective(ws, "//go:mod:include /lib"),
+      "main.go:1:1: //go:mod:include path \"/lib\" is absolute; write it relative to the module directory")
+    expectRefusal(withDirective(ws, header + " ../../../../../../../x"),
+      "main.go:1:1: //go:mod:include path \"../../../../../../../x\" leaves the workspace root")
+    expectRefusal(withDirective(ws, header + " data"),
+      "main.go:1:1: //go:mod:include path \"data\" is inside the module directory; only \"!data\" is allowed there")
+    expectRefusal(withDirective(ws, header + " ../lbi"),
+      "main.go:1:1: //go:mod:include path \"../lbi\" matches nothing in the workspace")
+    # The engine applies .gitignore files from the host only, so the ignored
+    # fixture directory is committed rather than written as a workspace edit.
+    expectRefusal(withDirective(ws, header + " ../ignored"),
+      "main.go:1:1: //go:mod:include path \"../ignored\" matches only files ignored by .gitignore")
+    expectRefusal(withDirective(ws, "//go:mod:include ../lib/greet"),
+      "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod; add it to //go:mod:include in main.go")
+    expectRefusal(withDirective(ws, "//go:mod:include ../lib/go.mod"),
+      "package example.com/lib/greet is in ../lib (go.mod:7); add ../lib/greet to //go:mod:include in main.go")
+    expectRefusal(ws.withNewFile("/" + appPath + "/cached.go", "package include_app\n\n// +cache=\"10m\"\nfunc (*IncludeApp) Cached() string { return \"\" }\n"),
+      "cached.go:4:1: +cache=\"10m\" would serve stale results when included files change; use \"session\" or \"never\"")
+    expectRefusal(ws.withNewFile("/" + appPath + "/dagger-module.toml", "name = \"include-app\"\ninclude = [\"../shared\", \"./data\"]\n\n[runtime]\n  source = \"go\"\n"),
+      "dagger-module.toml has settings a Dang entrypoint cannot carry (include); remove them or set dangEntrypoint = false. A Dang entrypoint reads include from main.go: add //go:mod:include ../shared and remove include")
+    null
+  }
+
+  """
+  The generated fixture repository: the module and the files it includes.
+  The control copy drops the per-session cache policies, so a check can show
+  that its results go stale across sessions.
+  """
+  fixture(ws: Workspace!, control: Boolean! = false): Directory! {
+    let tree = generated(ws).directory("/" + root)
+    let path = "app/internal/dagger/entrypoint/main.dang"
+    if (control) {
+      tree.withNewFile(path, tree.file(path).contents.replace(".withCachePolicy(FunctionCachePolicy.PerSession)", ""))
+    } else { tree }
+  }
+
+  """
+  A git source cannot reach the files outside its module directory, so a
+  call fails with the identity message. cli is this engine's dagger CLI: it
+  runs nested in this session, where the git service is reachable.
+  """
+  gitSourceRefusal(ws: Workspace!, cli: File!): Void {
+    let server = container.from("alpine:3.22").withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
+      .withDirectory("/srv/repo", fixture(ws))
+      .withWorkdir("/srv/repo")
+      .withExec(["git", "init", "-q", "-b", "main"])
+      .withExec(["git", "config", "user.name", "SDK test"])
+      .withExec(["git", "config", "user.email", "sdk-test@example.com"])
+      .withExec(["git", "add", "."])
+      .withExec(["git", "commit", "-q", "-m", "include fixture"])
+      .withExec(["git", "clone", "-q", "--bare", ".", "/srv/repo.git"])
+      .withExposedPort(9418)
+      .withDefaultArgs(["git", "daemon", "--export-all", "--base-path=/srv", "/srv"])
+      .asService
+    let called = container.from("alpine:3.22").withoutEntrypoint
+      .withFile("/usr/local/bin/dagger", cli, permissions: 755)
+      .withServiceBinding(server.hostname, server)
+      .withExec(["dagger", "-m", "git://" + server.hostname + "/repo.git#main:app", "call", "greeting"],
+        experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    assert("a git module with includes ran outside its checkout:\n" + called.stdout + called.stderr) {
+      called.exitCode != 0 and called.stderr.contains(identity)
+    }
+    null
+  }
+}
