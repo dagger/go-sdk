@@ -53,6 +53,15 @@ type GoSdk {
   require later engine fixes. Unset enables entrypoints for new modules and keeps
   the runner of existing modules. Explicit true migrates a supported existing
   module; false keeps the Go runtime.
+
+  Files outside the module directory reach the build only through
+  `//go:mod:include` lines in the header of the file that declares the main
+  object, with paths relative to the module directory, such as
+  `//go:mod:include ../lib/go.mod ../lib/greet !../lib/greet/testdata`.
+  Generation checks that they cover the local replace targets the build
+  reads. Every function of such a module is cached per session, and the
+  module runs only from its own checkout inside the caller's workspace, not
+  from a git source.
   """
   dangEntrypoint: Boolean
 
@@ -356,9 +365,34 @@ type GoSdk {
     }
     let objections = manifestObjections(manifest, runtimeKey)
     if (objections.length > 0) {
-      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false"
+      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false" + includeHint(manifest)
     }
     null
+  }
+
+  """
+  How a manifest's include list carries over: a Dang entrypoint reads the
+  files outside its module directory from //go:mod:include in main.go.
+  """
+  let includeHint(manifest: Dagger.JSONValue!): String! {
+    let fields = manifest.fields
+    if (fields.contains("include") == false) {
+      return ""
+    }
+    let excluded = if (fields.contains("exclude")) {
+      manifest.field(["exclude"]).asArray.{{asString}}.map { value => "!" + value.asString }
+    } else { [] :: [String!]! }
+    let args = (manifest.field(["include"]).asArray.{{asString}}.map { value => value.asString } + excluded).map { value =>
+      let negation = if (value.hasPrefix("!")) { "!" } else { "" }
+      let p = value.trimPrefix("!").trimPrefix("./")
+      let arg = negation + p
+      if (p.hasPrefix("../") == false) { "" } else if (arg.contains(" ")) { JSON.encode(arg) } else { arg }
+    }.filter { arg => arg != "" }
+    if (args.isEmpty) {
+      ". A Dang entrypoint builds its whole module directory; list files outside it with //go:mod:include in main.go"
+    } else {
+      ". A Dang entrypoint reads include from main.go: add //go:mod:include " + args.join(" ") + " and remove include"
+    }
   }
 
   """
