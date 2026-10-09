@@ -20,23 +20,23 @@ var ownSource string
 func (*UnifiedApp) OwnSource() string { return ownSource }
 
 func (*UnifiedApp) Greet(ctx context.Context) (string, error) {
-	return dep.New().ClientDep().Greet(ctx, "entrypoint")
+	return dep.Connect().ClientDep().Greet(ctx, "entrypoint")
 }
 
 func (*UnifiedApp) LegacyContainer(value string) *core.Container {
-	return dep.New().ClientDep().Container(value)
+	return dep.Connect().ClientDep().Container(value)
 }
 
 func (*UnifiedApp) LegacyRead(ctx context.Context, value *core.Container) (string, error) {
-	return dep.New().ClientDep().Read(ctx, value)
+	return dep.Connect().ClientDep().Read(ctx, value)
 }
 
 func (*UnifiedApp) ShortcutGreet(ctx context.Context) (string, error) {
-	return dep.NewClientDep().Greet(ctx, "shortcut")
+	return dep.New().Greet(ctx, "shortcut")
 }
 
 func (*UnifiedApp) ShortcutRead(ctx context.Context) (string, error) {
-	return dep.NewClientDep().Read(ctx, core.NewContainer().WithNewFile("/value", "shortcut handle"))
+	return dep.New().Read(ctx, core.NewContainer().WithNewFile("/value", "shortcut handle"))
 }
 
 func (*UnifiedApp) ExplicitClosed(ctx context.Context) (string, error) {
@@ -44,17 +44,17 @@ func (*UnifiedApp) ExplicitClosed(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := dep.New(conn).ClientDep().Greet(ctx, "explicit"); err != nil {
+	if _, err := dep.Connect(conn).ClientDep().Greet(ctx, "explicit"); err != nil {
 		conn.Close()
 		return "", err
 	}
 	if err := conn.Close(); err != nil {
 		return "", err
 	}
-	if _, err := dep.New(conn).ClientDep().Greet(ctx, "closed"); !errors.Is(err, dagger.ErrClientClosed) {
+	if _, err := dep.Connect(conn).ClientDep().Greet(ctx, "closed"); !errors.Is(err, dagger.ErrClientClosed) {
 		return "", fmt.Errorf("closed connection returned %v, want %v", err, dagger.ErrClientClosed)
 	}
-	return dep.NewClientDep().Greet(ctx, "default")
+	return dep.New().Greet(ctx, "default")
 }
 
 func (*UnifiedApp) Echo(value *core.Container) *core.Container { return value }

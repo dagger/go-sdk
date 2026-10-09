@@ -4,7 +4,7 @@
 {{- if $name }}
 
 // {{ $name }} calls {{ $field.Name | FormatName }} on the default connection.
-// Use New(connection).{{ $field.Name | FormatName }} to call it on an explicit connection.
+// Use Connect(connection).{{ $field.Name | FormatName }} to call it on an explicit connection.
 {{- with $field.Description }}
 //
 {{ . | Comment }}
@@ -18,7 +18,7 @@
 {{ $field.Directives.ExperimentalReason | FormatExperimental }}
 {{- end }}
 {{ FieldFunction $field true $supportsVoid "" }} {
-	return New().{{ $field.Name | FormatName }}(
+	return Connect().{{ $field.Name | FormatName }}(
 		{{- if or (not $field.TypeRef.IsObject) (IsNullableObject $field.TypeRef) -}}
 		ctx,
 		{{- end -}}

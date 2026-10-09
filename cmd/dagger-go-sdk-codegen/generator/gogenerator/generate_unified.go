@@ -146,11 +146,9 @@ type DaggerObject = core.DaggerObject
 type ExecError = dagger.ExecError
 var marshalCtx = context.Background()
 func SetMarshalContext(ctx context.Context) {marshalCtx=ctx;core.SetMarshalContext(ctx)}
-// Connect is retained for module dispatchers generated before New was introduced.
-func Connect() *Client {return New()}
-// New constructs lazy bindings. An omitted connection uses the shared session.
-func New(connections ...*dagger.Client) *Client {
- if len(connections)>1 {panic("New accepts at most one connection")}
+// Connect constructs lazy bindings. An omitted connection uses the shared session.
+func Connect(connections ...*dagger.Client) *Client {
+ if len(connections)>1 {panic("Connect accepts at most one connection")}
  var connection *dagger.Client
  if len(connections)==1 {connection=connections[0]}
  q := querybuilder.Query().Client(%s)

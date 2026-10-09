@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
+	"github.com/iancoleman/strcase"
 )
 
 // isCoreLibrary is true when generating the core bindings of dagger.io/dagger
@@ -29,6 +30,7 @@ func (funcs goTemplateFuncs) isUnifiedClient() bool {
 // A unified client package also declares aliases of core types, so its
 // fields are checked against the full schema. It returns "" when the name is
 // still declared in that package; the method on Query remains available.
+// The main constructor of a bound module is named New instead of New<Object>.
 func (funcs goTemplateFuncs) coreConstructorName(f introspection.Field) string {
 	name := formatName(f.Name)
 	if !funcs.isUnifiedClient() {
@@ -36,6 +38,14 @@ func (funcs goTemplateFuncs) coreConstructorName(f introspection.Field) string {
 			return "New" + name
 		}
 		return name
+	}
+	source := f.Directives.SourceMap()
+	if funcs.isStandaloneClient() && source != nil && source.Module != "" &&
+		formatName(strcase.ToLowerCamel(source.Module)) == name && f.TypeRef.IsObject() {
+		if funcs.unifiedClientSchemaDeclares("New") {
+			return ""
+		}
+		return "New"
 	}
 	if funcs.fullSchema.Types.Get(name) != nil {
 		name = "New" + name
@@ -46,8 +56,8 @@ func (funcs goTemplateFuncs) coreConstructorName(f introspection.Field) string {
 	return name
 }
 
-// unifiedClientNames are the exported names GenerateUnifiedClient writes into
-// every unified client package. Keep them in sync with that function.
+// unifiedClientNames are reserved for the shared client and its main module
+// constructor. Keep them in sync with GenerateUnifiedClient and the shortcuts.
 var unifiedClientNames = []string{
 	"Client", "Query", "DaggerObject", "ExecError", "SetMarshalContext",
 	"Connect", "New", "Ref", "Load",
@@ -59,6 +69,10 @@ func (funcs goTemplateFuncs) unifiedClientDeclares(name string) bool {
 	if slices.Contains(unifiedClientNames, name) {
 		return true
 	}
+	return funcs.unifiedClientSchemaDeclares(name)
+}
+
+func (funcs goTemplateFuncs) unifiedClientSchemaDeclares(name string) bool {
 	for _, t := range funcs.fullSchema.Types {
 		typeName := formatName(t.Name)
 		if name == typeName || name == typeName+"Client" || name == "With"+typeName+"Func" {

@@ -18,7 +18,7 @@ type GoSdk {
   Generate the module's global `dag` for author code that still needs it.
   It is omitted by default. Unified modules use core constructors such as
   core.NewContainer() and dependency client constructors such as
-  mydep.NewMyDep(); embedded bindings use dagger.Connect().
+  mydep.New(); embedded bindings use dagger.Connect().
   This setting applies to Dang entrypoints. Legacy runtime codegen keeps
   its existing global API.
   """
