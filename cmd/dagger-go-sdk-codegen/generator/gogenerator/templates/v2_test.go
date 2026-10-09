@@ -161,3 +161,50 @@ func DaggerDispatch(context.Context, []byte, string, string, map[string][]byte) 
 		})
 	}
 }
+
+// entrypointFixture covers each part of the entrypoint that varies with the
+// module: functions with every cache pragma, an implicit constructor, a
+// second object, and an enum.
+func entrypointFixture() *v2Module {
+	str := &parsedPrimitiveType{goType: types.Typ[types.String]}
+	fn := func(file, name, cachePolicy string, line int) *funcTypeSpec {
+		return &funcTypeSpec{
+			name:        name,
+			cachePolicy: cachePolicy,
+			returnSpec:  str,
+			sourceMap:   &sourceMap{filename: file, line: line, column: 1},
+		}
+	}
+	return &v2Module{
+		objects: []*parsedObjectType{
+			{
+				name:      "HelloWorld",
+				doc:       "Greets.",
+				sourceMap: &sourceMap{filename: "main.go", line: 3, column: 6},
+				methods: []*funcTypeSpec{
+					fn("main.go", "Hello", "", 5),
+					fn("main.go", "Fresh", "never", 8),
+					fn("main.go", "Session", "session", 11),
+					fn("main.go", "Hourly", "1h", 14),
+				},
+			},
+			{
+				name:      "Item",
+				sourceMap: &sourceMap{filename: "item.go", line: 3, column: 6},
+				methods:   []*funcTypeSpec{fn("item.go", "Name", "", 5)},
+			},
+		},
+		enums: []*parsedEnumType{{
+			name:      "Status",
+			sourceMap: &sourceMap{filename: "main.go", line: 17, column: 6},
+			values:    []*parsedEnumMember{{name: "READY", value: "ready"}},
+		}},
+	}
+}
+
+func TestEntrypointSourceGolden(t *testing.T) {
+	source, err := entrypointFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.NoError(t, err)
+	got := string(source)
+	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint.golden", got), got)
+}
