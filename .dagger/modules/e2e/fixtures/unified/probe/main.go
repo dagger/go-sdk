@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 
 	"dagger.io/dagger"
 	"dagger.io/dagger/core"
@@ -29,9 +30,13 @@ func main() {
 		check(c.Do(ctx, &dagger.Request{Query: text}, &dagger.Response{Data: &value}))
 		return value["unifiedApp"].(map[string]any)
 	}
-	got := query(`{unifiedApp{state(status:READY) logged ownSource greet legacyContainer(value:"legacy handle"){file(path:"/value"){contents}} items{keys list{name} get(key:"a"){name} subset(keys:["b"]){keys list{name}}}}}`)
+	got := query(`{unifiedApp{state(status:READY) logged ownSource greet shortcutGreet shortcutRead explicitClosed legacyContainer(value:"legacy handle"){file(path:"/value"){contents}} items{keys list{name} get(key:"a"){name} subset(keys:["b"]){keys list{name}}}}}`)
+	greeting := os.Getenv("EXPECTED_GREETING")
 	want := map[string]any{
-		"state": "READY", "logged": "result", "greet": os.Getenv("EXPECTED_GREETING"),
+		"state": "READY", "logged": "result", "greet": greeting,
+		"shortcutGreet":   strings.Replace(greeting, "entrypoint", "shortcut", 1),
+		"shortcutRead":    "shortcut handle",
+		"explicitClosed":  strings.Replace(greeting, "entrypoint", "default", 1),
 		"ownSource":       "own module",
 		"legacyContainer": map[string]any{"file": map[string]any{"contents": "legacy handle"}},
 		"items": map[string]any{
