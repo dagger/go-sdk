@@ -2,6 +2,12 @@
 type {{ .Name | FormatName }} struct {
 {{- with .Directives.SourceMap -}} // {{ .Module }} ({{ .Filelink | ModuleRelPath }}) {{- end }}
 	query *querybuilder.Selection
+	{{- if MemoizeIDs }}
+	// refetchID is set when this object is built through a field marked
+	// @reevaluate: it fetches its ID on every use, so each use evaluates that
+	// field again.
+	refetchID bool
+	{{- end }}
 {{ range $field := .Fields }}
 	{{- if $field.TypeRef.IsScalar }}
 	{{ $field.Name | FormatParamName }} *{{ FormatFieldOutputType $field }}
@@ -14,6 +20,11 @@ type {{ .Name | FormatName }}Client = {{ .Name | FormatName }}
 func (r *{{ .Name | FormatName }}) WithGraphQLQuery(q *querybuilder.Selection) *{{ .Name | FormatName }} {
 	return &{{ .Name | FormatName }}{
 		query: q,
+		{{- if MemoizeIDs }}
+		// The query's origin is unknown: it may go through a field that
+		// must be reevaluated.
+		refetchID: true,
+		{{- end }}
 	}
 }
 
@@ -114,6 +125,9 @@ return new({{ $typeName | InterfaceClientName }}).WithGraphQLQuery(q)
 {{- else }}
 return &{{ $typeName | InterfaceClientName }}{
 		query: q,
+		{{- if MemoizeIDs }}
+		refetchID: true,
+		{{- end }}
 	}
 {{- end }}
 	{{- else if $field.TypeRef.IsObject }}
@@ -122,6 +136,9 @@ return new({{ $typeName }}).WithGraphQLQuery(q)
 {{- else }}
 return &{{ $typeName }}{
 		query: q,
+		{{- if MemoizeIDs }}
+		refetchID: true,
+		{{- end }}
 	}
 {{- end }}
 	{{- else if or $field.TypeRef.IsScalar $field.TypeRef.IsList }}
@@ -186,7 +203,21 @@ return &{{ $typeName }}{
 		{{- else }}
 	var response {{ FormatFieldOutputType $field }}
 	q = q.Bind(&response)
+		{{- if eq $field.Name "id" }}
+	{{- if MemoizeIDs }}
+	if r.refetchID {
+		return response, q.Execute(ctx)
+	}
+	return memoizedID(ctx, r.query, func() ({{ FormatFieldOutputType $field }}, error) {
+		err := q.Execute(ctx)
+		return response, err
+	})
+	{{- else }}
 	return response, q.Execute(ctx)
+	{{- end }}
+		{{- else }}
+	return response, q.Execute(ctx)
+		{{- end }}
 		{{- end }}
 	{{- end }}
 }

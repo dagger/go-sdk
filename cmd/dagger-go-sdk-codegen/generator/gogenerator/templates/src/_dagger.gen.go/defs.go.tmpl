@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
-	{{- if IsModuleCode }}
 	"sync"
-	{{- end }}
+	"weak"
 
 
 	{{- if not IsCoreLibrary }}
@@ -308,6 +308,7 @@ func selectNode(q *querybuilder.Selection, id any, typeName string) *querybuilde
 	return q.Select("node").Arg("id", id).InlineFragment(typeName)
 }
 
+{{ IDMemoHelper }}
 // Loadable is the constraint for types that can be loaded from an ID.
 // Every generated object and interface client type satisfies this.
 type Loadable[T any] interface {
