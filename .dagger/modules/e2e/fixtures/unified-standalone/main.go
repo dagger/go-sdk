@@ -11,7 +11,7 @@ import (
 func main() {
 	ctx := context.Background()
 	for _, name := range []string{"first", "reopened"} {
-		greeting, err := clientdep.NewClientDep().Greet(ctx, name)
+		greeting, err := clientdep.New().Greet(ctx, name)
 		if err != nil {
 			panic(err)
 		}

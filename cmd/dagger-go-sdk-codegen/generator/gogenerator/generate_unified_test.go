@@ -41,7 +41,8 @@ func TestUnifiedClientConstructorShortcut(t *testing.T) {
 	for _, schemaVersion := range []string{"v0.18.0", "v0.21.10", "v1.0.0-beta.15"} {
 		t.Run(schemaVersion, func(t *testing.T) {
 			bindings := generateUnifiedHello(t, buildClientSchema(), schemaVersion, true)
-			require.Contains(t, bindings, "func NewHello() *Hello {\n\treturn New().Hello()\n}")
+			require.Contains(t, bindings, "func New() *Hello {\n\treturn Connect().Hello()\n}")
+			require.NotContains(t, bindings, "func NewHello(")
 		})
 	}
 }
@@ -64,38 +65,72 @@ func TestUnifiedClientConstructorShortcutSignatures(t *testing.T) {
 	)
 	generator.SetSchemaParents(schema)
 	bindings := generateUnifiedHello(t, schema, "v1.0.0-beta.15", true)
-	require.Contains(t, bindings, "func NewHello(ctr *Container, opts ...HelloOpts) *Hello {\n\treturn New().Hello(ctr, opts...)\n}")
-	require.Contains(t, bindings, "func HelloVersion(ctx context.Context) (string, error) {\n\treturn New().HelloVersion(ctx)\n}")
+	require.Contains(t, bindings, "func New(ctr *Container, opts ...HelloOpts) *Hello {\n\treturn Connect().Hello(ctr, opts...)\n}")
+	require.Contains(t, bindings, "func HelloVersion(ctx context.Context) (string, error) {\n\treturn Connect().HelloVersion(ctx)\n}")
 	// A field named like a core alias must not redeclare it.
-	require.Contains(t, bindings, "func NewContainer() *Hello {\n\treturn New().Container()\n}")
+	require.Contains(t, bindings, "func NewContainer() *Hello {\n\treturn Connect().Container()\n}")
 }
 
 func TestUnifiedClientConstructorShortcutSkipsCollisions(t *testing.T) {
 	schema := buildClientSchema()
-	schema.Types = append(schema.Types, &introspection.Type{Kind: introspection.TypeKindObject, Name: "NewHello", Directives: introspection.Directives{newSourceMapDirective("hello")}})
+	schema.Types = append(schema.Types, &introspection.Type{Kind: introspection.TypeKindObject, Name: "New", Directives: introspection.Directives{newSourceMapDirective("hello")}})
 	generator.SetSchemaParents(schema)
 	bindings := generateUnifiedHello(t, schema, "v1.0.0-beta.15", true)
-	require.Contains(t, bindings, "type NewHello struct")
+	require.Contains(t, bindings, "type New struct")
 	require.Contains(t, bindings, "func (r *Query) Hello() *Hello")
-	require.NotContains(t, bindings, "func NewHello(")
+	require.NotContains(t, bindings, "func New(")
+}
+
+func TestUnifiedClientConstructorUsesModuleName(t *testing.T) {
+	schema := buildClientSchema()
+	schema.Types[1].Name = "MyModule"
+	schema.Types[1].Directives = introspection.Directives{newSourceMapDirective("my-module")}
+	constructor := schema.Query().Fields[0]
+	constructor.Name = "myModule"
+	constructor.TypeRef.OfType.Name = "MyModule"
+	constructor.Directives = introspection.Directives{newSourceMapDirective("my-module")}
+	gen := &GoGenerator{Config: generator.Config{
+		UnifiedClient: true, OutputDir: t.TempDir(), PackageImport: "example.com/app/renamed", PackageName: "renamed",
+		ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "another-directory"}},
+	}}
+	state, err := gen.GenerateClient(t.Context(), schema, "v1.0.0-beta.15")
+	require.NoError(t, err)
+	bindings := readOverlay(t, state, "my-module.gen.go")
+	require.Contains(t, bindings, "func New() *MyModule {\n\treturn Connect().MyModule()\n}")
+	require.NotContains(t, bindings, "func NewMyModule(")
+}
+
+func TestUnifiedClientReservesNewForModuleConstructor(t *testing.T) {
+	schema := buildClientSchema()
+	schema.Query().Fields = append(schema.Query().Fields, &introspection.Field{
+		Name: "new", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "String"}},
+		Directives: introspection.Directives{newSourceMapDirective("hello")},
+	})
+	bindings := generateUnifiedHello(t, schema, "v1.0.0-beta.15", true)
+	require.Contains(t, bindings, "func New() *Hello")
+	require.Contains(t, bindings, "func (r *Query) New(ctx context.Context) (string, error)")
+	require.NotContains(t, bindings, "func New(ctx context.Context)")
 }
 
 // Adding a client must never change the module's own package, so only
 // packages bound to a module get constructors.
 func TestUnifiedModulePackageHasNoConstructorShortcut(t *testing.T) {
-	require.Contains(t, generateUnifiedHello(t, buildClientSchema(), "v1.0.0-beta.15", true), "func NewHello() *Hello")
+	require.Contains(t, generateUnifiedHello(t, buildClientSchema(), "v1.0.0-beta.15", true), "func New() *Hello")
 	gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: t.TempDir(), ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "hello"}}}
 	state, err := gen.GenerateEmbeddedClient(t.Context(), buildClientSchema(), "v1.0.0-beta.15", "example.com/hello/internal/dagger")
 	require.NoError(t, err)
 	own := readOverlay(t, state, "internal/dagger/hello.gen.go")
 	require.Contains(t, own, "func (r *Query) Hello() *Hello")
 	require.NotContains(t, own, "func NewHello(")
+	require.NotContains(t, own, "func New(")
+	require.Contains(t, readOverlay(t, state, "internal/dagger/dagger.gen.go"), "func Connect(connections ...*dagger.Client) *Client")
 }
 
 func TestEmbeddedClientHasNoConstructorShortcut(t *testing.T) {
 	bindings := generateUnifiedHello(t, buildClientSchema(), "v1.0.0-beta.15", false)
 	require.Contains(t, bindings, "func (r *Query) Hello() *Hello")
 	require.NotContains(t, bindings, "func NewHello(")
+	require.NotContains(t, bindings, "func New(")
 }
 
 func generateUnifiedHello(t *testing.T, schema *introspection.Schema, schemaVersion string, unified bool) string {
@@ -114,6 +149,7 @@ func testUnifiedClientSharesCoreObjects(t *testing.T, schemaVersion string) {
 	}
 	schema.Types = append(schema.Types, &introspection.Type{Kind: introspection.TypeKindObject, Name: "Container"})
 	expected := `"Container"`
+	schema.Query().Fields[0].Args = introspection.InputValues{{Name: "ctr", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "ID"}}, Directives: []*introspection.Directive{{Name: "expectedType", Args: []*introspection.DirectiveArg{{Name: "name", Value: &expected}}}}}}
 	schema.Types[1].Fields = append(schema.Types[1].Fields, &introspection.Field{Name: "echo", TypeRef: ref("Container"), Args: introspection.InputValues{{Name: "value", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "ID"}}, Directives: []*introspection.Directive{{Name: "expectedType", Args: []*introspection.DirectiveArg{{Name: "name", Value: &expected}}}}}}})
 	gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: root, PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
 	state, err := gen.GenerateClient(t.Context(), schema, schemaVersion)
@@ -134,13 +170,20 @@ func testUnifiedClientSharesCoreObjects(t *testing.T, schemaVersion string) {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.26\n\nrequire dagger.io/dagger v1.0.0-beta.15\nreplace dagger.io/dagger => "+sdkPath+"\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "client_test.go"), []byte(`package app_test
-import("context";"testing";"dagger.io/dagger/core";"example.com/app/client")
+import("testing";"dagger.io/dagger";"dagger.io/dagger/core";"example.com/app/client")
 func TestObjectIdentity(t *testing.T){
- var got *core.Container = client.New().Hello().Echo(core.NewContainer())
+ var got *core.Container = client.Connect().Hello(core.NewContainer()).Echo(core.NewContainer())
  _ = got
- var shortcut *core.Container = client.NewHello().Echo(core.NewContainer())
+ var shortcut *core.Container = client.New(core.NewContainer()).Echo(core.NewContainer())
  _ = shortcut
- _ = context.Background()
+ var explicit *core.Container = client.Connect(new(dagger.Client)).Hello(core.NewContainer()).Echo(core.NewContainer())
+ _ = explicit
+ var withNil *core.Container = client.Connect(nil).Hello(core.NewContainer()).Echo(core.NewContainer())
+ _ = withNil
+}
+func TestConnectRejectsMultipleConnections(t *testing.T){
+ defer func(){if recover()==nil{t.Fatal("Connect accepted multiple connections")}}()
+ client.Connect(new(dagger.Client),new(dagger.Client))
 }
 `), 0644))
 	cmd := exec.CommandContext(t.Context(), "go", "test", "-mod=mod", "-buildvcs=false", "./...")
@@ -186,7 +229,7 @@ func TestUnifiedClientRemembersIDs(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.26\n\nrequire dagger.io/dagger v1.0.0-beta.15\nreplace dagger.io/dagger => "+sdkPath+"\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "client_test.go"), []byte(`package app_test
 import("testing";"example.com/app/client")
-func TestCompiles(t *testing.T){ _ = client.New().Hello().Fresh() }
+func TestCompiles(t *testing.T){ _ = client.Connect().Hello().Fresh() }
 `), 0644))
 	cmd := exec.CommandContext(t.Context(), "go", "test", "-mod=mod", "-buildvcs=false", "./...")
 	cmd.Dir = root
