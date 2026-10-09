@@ -199,6 +199,103 @@ type EngineE2e {
   }
 
   """
+  A module that lists //go:mod:include reads its included files again in
+  each new session, and refuses to run outside its own checkout.
+  """
+  includeCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
+    includeCalls(sdkClient(
+      ws,
+      engineDev(ws: selectedEngineSource(engineSource)).installClient(client: clientBase),
+      engineCommit,
+    ))
+  }
+
+  """Run the //go:mod:include calls on the entrypoint floor engine."""
+  includeFloorCheck(ws: Workspace!): Void @check {
+    includeCalls(sdkClient(
+      ws,
+      entrypointFloorEngineDev(ws: daggerSource(entrypointFloorCommit)).installClient(client: clientBase),
+      entrypointFloorCommit,
+    ))
+  }
+
+  """Run one dagger command in its own process, and so in its own session."""
+  let session(client: Container!, dir: String!, args: [String!]!): Container! {
+    client.withWorkdir(dir).withExec(
+      ["env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN", "dagger"] + args,
+      expect: ReturnType.ANY,
+    )
+  }
+
+  let succeeded(run: Container!): String! {
+    if (run.exitCode != 0) {
+      raise "dagger failed:\n" + run.stdout + run.stderr
+    }
+    run.stdout.trimSpace
+  }
+
+  """
+  Call the generated include fixture, one session per call. Between the
+  first and second sessions only lib/greet/greeting.txt changes. The control
+  copy has no per-session cache policy: its stale result shows that the
+  engine kept results across sessions, so the fresh result is the policy's.
+  """
+  let includeCalls(client: Container!): Void {
+    let sdkDir = client.workdir
+    let identity = "module include-app reads files outside its directory (//go:mod:include), so it must run from its own checkout"
+    let manifest = "[modules.include-app]\nsource = \"app\"\n"
+    let fixture = ["-m", ".dagger/modules/e2e", "call", "include", "fixture", "--ws", "."]
+    let exported = session(session(client, sdkDir, fixture + ["export", "--path", "/repo"]), sdkDir,
+      fixture + ["--control", "export", "--path", "/control"])
+    succeeded(exported)
+    let ready = exported
+      .withNewFile("/repo/dagger.toml", manifest)
+      .withNewFile("/control/dagger.toml", manifest)
+      .withExec(["git", "-C", "/repo", "init", "-q"])
+      .withExec(["git", "-C", "/control", "init", "-q"])
+
+    let greeting = ["call", "include-app", "greeting"]
+    let first = session(ready, "/repo", greeting)
+    let firstControl = session(first, "/control", greeting)
+    let changed = firstControl
+      .withNewFile("/repo/lib/greet/greeting.txt", "two")
+      .withNewFile("/control/lib/greet/greeting.txt", "two")
+    let second = session(changed, "/repo", greeting)
+    let secondControl = session(second, "/control", greeting)
+    assert("the first sessions did not read the included file") {
+      succeeded(first) == "one" and succeeded(firstControl) == "one"
+    }
+    assert("the control module returned a fresh result, so this check cannot detect a stale one: " + succeeded(secondControl)) {
+      succeeded(secondControl) == "one"
+    }
+    assert("a new session returned a stale result after an included file changed: " + succeeded(second)) {
+      succeeded(second) == "two"
+    }
+
+    let runtime = session(secondControl, "/repo", ["call", "include-app", "runtime"])
+    assert("the function did not read the included file at call time: " + succeeded(runtime)) {
+      succeeded(runtime) == "two"
+    }
+    let excluded = session(runtime, "/repo", ["call", "include-app", "excluded"])
+    assert("the excluded directory reached the module") { succeeded(excluded) == "false" }
+
+    let fromSubdirectory = session(excluded, "/repo/lib", greeting)
+    let byPath = session(fromSubdirectory, "/repo/lib", ["-m", "../app", "call", "greeting"])
+    assert("the module failed from a subdirectory of its workspace") {
+      succeeded(fromSubdirectory) == "two" and succeeded(byPath) == "two"
+    }
+
+    let outside = session(byPath.withExec(["git", "init", "-q", "/other"]), "/other", ["-m", "/repo/app", "call", "greeting"])
+    assert("the module ran from another repository:\n" + outside.stdout + outside.stderr) {
+      outside.exitCode != 0 and outside.stderr.contains(identity)
+    }
+    succeeded(session(outside, sdkDir, [
+      "-m", ".dagger/modules/e2e", "call", "include", "git-source-refusal", "--ws", ".", "--cli", "/.dagger-cli",
+    ]))
+    null
+  }
+
+  """
   Build the pinned main engine and use this checkout as its Go SDK.
   """
   devSdkCheck(ws: Workspace!, checks: [String!]! = []): Void @check {
