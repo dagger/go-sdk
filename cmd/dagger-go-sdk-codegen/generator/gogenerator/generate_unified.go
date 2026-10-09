@@ -33,7 +33,7 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 	}
 	name := g.Config.PackageName
 	if name == "" {
-		name = clientPackageName(filepath.Base(g.Config.PackageImport))
+		name = clientPackageName(g.Config.OutputDir, g.Config.PackageImport)
 	}
 	pkg := &PackageInfo{PackageName: name, PackageImport: g.Config.PackageImport}
 	mfs := memfs.New()
@@ -303,17 +303,4 @@ func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, 
 		})
 	}
 	return nil
-}
-func clientPackageName(value string) string {
-	var b strings.Builder
-	for _, r := range value {
-		if r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	name := b.String()
-	if name == "" || name[0] >= '0' && name[0] <= '9' || token.IsKeyword(name) {
-		return "client"
-	}
-	return name
 }

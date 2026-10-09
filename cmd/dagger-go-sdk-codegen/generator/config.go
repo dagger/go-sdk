@@ -10,7 +10,9 @@ type Config struct {
 
 	// UnifiedClient uses shared core bindings and a borrowed lazy session.
 	UnifiedClient bool
-	PackageName   string
+	// PackageName overrides the standalone client's output-directory-derived
+	// package name. Embedded and core generation set it explicitly.
+	PackageName string
 
 	// GlobalClient emits the legacy unqualified dag API in a module's package.
 	// It does not control the shared default transport session.

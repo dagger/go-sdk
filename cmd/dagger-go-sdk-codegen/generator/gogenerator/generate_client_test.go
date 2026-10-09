@@ -83,6 +83,7 @@ func generateClientForVersion(t *testing.T, clientConfig *generator.ClientGenera
 	gen := &GoGenerator{Config: generator.Config{
 		OutputDir:     outputDir,
 		PackageImport: "example.com/client",
+		PackageName:   "client",
 		ClientConfig:  clientConfig,
 	}}
 	state, err := gen.GenerateClient(t.Context(), buildClientSchema(), schemaVersion)
@@ -160,7 +161,7 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		}, t.TempDir())
 
 		dep := readOverlay(t, state, "hello.gen.go")
-		require.Contains(t, dep, "package dagger")
+		require.Contains(t, dep, "package client")
 		require.Contains(t, dep, "type Hello struct")
 		require.Contains(t, dep, "func (r *Query) Hello(")
 		// The core file no longer holds the module-contributed types...
@@ -172,6 +173,29 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		dag := readOverlay(t, state, "dag/dag.gen.go")
 		require.Contains(t, dag, "func Hello(")
 	})
+}
+
+func TestGenerateClientPackageFollowsOutputDirectory(t *testing.T) {
+	for _, unified := range []bool{false, true} {
+		t.Run(map[bool]string{false: "embedded types", true: "shared types"}[unified], func(t *testing.T) {
+			gen := &GoGenerator{Config: generator.Config{
+				OutputDir:     "internal/dagger/engine-dev",
+				PackageImport: "example.com/app/internal/dagger/engine-dev",
+				UnifiedClient: unified,
+				ClientConfig: &generator.ClientGeneratorConfig{
+					BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: ".dagger/modules/hello"},
+				},
+			}}
+			state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v1.0.0")
+			require.NoError(t, err)
+			for _, name := range []string{"dagger.gen.go", "hello.gen.go"} {
+				require.Contains(t, readOverlay(t, state, name), "package enginedev\n")
+			}
+			if !unified {
+				require.Contains(t, readOverlay(t, state, "dag/dag.gen.go"), "package dag\n")
+			}
+		})
+	}
 }
 
 func TestGenerateClient_PackageMode(t *testing.T) {

@@ -251,6 +251,10 @@ type E2e {
     assert("second target client was not generated") {
       exists(generated, secondTargetPath + "/client-app.gen.go")
     }
+    assert("target package was not named after its output directory") {
+      generated.file(targetPath + "/dagger.gen.go").contents.contains("package clientdep\n") and
+        generated.file(secondTargetPath + "/dagger.gen.go").contents.contains("package clientapp\n")
+    }
     assert("local target path was not preserved") {
       generated.file(targetPath + "/dagger.gen.go").contents.contains("ModuleSource(\"/" + clientTargetPath + "\")")
     }
