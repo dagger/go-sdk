@@ -443,12 +443,21 @@ type GoSdk {
       requiredGoVersion(workspaceRoot.file("go.mod"))
     } else { "1.26.1" }
     let goImage = "golang:" + goVersion + "-alpine"
-    let inputs = moduleCodegenBuilder(goImage)
-      .withDirectory("/src", workspaceRoot.directory(".", exclude: ["**/.git"]))
+    let builder = moduleCodegenBuilder(goImage)
+    let moduleSource = workspaceRoot.directory(".", exclude: ["**/.git"])
+    let includes = moduleIncludes(builder, moduleSource, moduleRoot, name, scopePath)
+    let included = lines(includes.file("include")).length > 0
+    # A module with includes is generated where its build sees it: under its
+    # anchor, beside the paths it includes.
+    let buildRoot = if (included) { "/src/" + includes.file("module").contents } else { "/src" }
+    let tree = if (included) { includedTree(ws, moduleSource, includes) } else { moduleSource }
+    let inputs = builder
+      .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJSON)
-    let codegen = runTool(inputs, [
+    let goInputs = if (included) { inputs.withEnvVariable("GOWORK", "off") } else { inputs }
+    let codegen = runTool(goInputs, [
       "module-codegen",
-      "--module-root", "/src/" + moduleRoot,
+      "--module-root", buildRoot + "/" + moduleRoot,
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
@@ -460,9 +469,9 @@ type GoSdk {
     ])
     let generated = runTool(codegen, [
       "entrypoint-contract",
-      "--entrypoint-dir", "/src/" + prefix + entrypointPath,
+      "--entrypoint-dir", buildRoot + "/" + prefix + entrypointPath,
       "--introspection-json-path", "/schema.json",
-    ]).directory("/src")
+    ]).directory(buildRoot)
     # Merge only what the generator owns, so the user's files are not
     # written back.
     let owned = directory.withDirectory(".", generated, include: [
@@ -488,6 +497,74 @@ type GoSdk {
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
       .generate(pruned, lock: false, legacyJson: false)
+  }
+
+  """
+  The //go:mod:include list of the module's main file: the files anchor and
+  module, and the lists include, exclude and module-exclude, with one JSON
+  value per line. Paths are relative to the anchor, the directory that holds
+  the module and every included path. The include list is empty for a
+  module without the directive.
+  """
+  let moduleIncludes(builder: Container!, moduleSource: Directory!, moduleRoot: String!, name: String!, scopePath: String!): Directory! {
+    runTool(builder.withDirectory("/src", moduleSource), [
+      "module-codegen", "includes",
+      "--module-root", "/src/" + moduleRoot,
+      "--module-name", name,
+      "--workspace-path", scopePath,
+      "--output", "/includes",
+    ]).directory("/includes")
+  }
+
+  let lines(file: File!): [String!]! {
+    file.contents.split("\n").filter { line => line != "" }
+  }
+
+  let decoded(line: String!): Dagger.JSONValue! {
+    Dagger.json.withContents(line :: Dagger.JSON!)
+  }
+
+  """
+  The files of a directory. A directory whose files a filter removed is
+  still listed, so it does not count.
+  """
+  let files(dir: Directory!): [String!]! {
+    dir.glob(pattern: "**").filter { p => p.hasSuffix("/") == false }
+  }
+
+  """Where an include entry is written, for an error about it."""
+  let includeLabel(line: String!): String! {
+    let entry = decoded(line)
+    stringField(entry, "position") + ": //go:mod:include path " + JSON.encode(stringField(entry, "path"))
+  }
+
+  """
+  The module directory and the workspace paths its include list names, laid
+  out under their anchor as the generated entrypoint assembles them at call
+  time. Refuses a path that matches nothing or only ignored files.
+  """
+  let includedTree(ws: Workspace!, moduleSource: Directory!, includes: Directory!): Directory! {
+    let anchor = rootedPath(includes.file("anchor").contents)
+    let modulePath = includes.file("module").contents
+    let entries = lines(includes.file("include"))
+    let unmatched = entries.filter { line =>
+      files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"])).isEmpty
+    }
+    if (unmatched.length > 0) {
+      raise includeLabel(unmatched[0] ?? "") + " matches nothing in the workspace"
+    }
+    let ignored = entries.filter { line =>
+      files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"], gitignore: true)).isEmpty
+    }
+    if (ignored.length > 0) {
+      raise includeLabel(ignored[0] ?? "") + " matches only files ignored by .gitignore"
+    }
+    let patterns = entries.map { line => stringField(decoded(line), "pattern") }
+    let excludes = lines(includes.file("exclude")).map { line => decoded(line).asString }
+    let moduleExcludes = lines(includes.file("module-exclude")).map { line => decoded(line).asString }
+    directory
+      .withDirectory(".", ws.directory(anchor, include: patterns, exclude: excludes + [modulePath, "**/.git"], gitignore: true))
+      .withDirectory(modulePath, moduleSource, exclude: moduleExcludes)
   }
 
   """
