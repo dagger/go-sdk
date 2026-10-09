@@ -18,7 +18,7 @@ import (
 //
 // testdata/core/schema.json is the introspection of a v1.0.0-beta.14 engine.
 // The golden files are the output of "cmd/codegen generate-library" in
-// dagger/dagger at commit a695c9056 (dagger/dagger#14186), for that schema.
+// dagger/dagger at commit 0bf4122718 (dagger/dagger#14593), for that schema.
 // Update them the same way. Do not update them from the output of this
 // generator: then the test does not check parity.
 func TestGenerateCore_Parity(t *testing.T) {
