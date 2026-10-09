@@ -2,9 +2,8 @@
 
 This document records the beta.14 entrypoint prototype and is retained for
 design history. The defaults, restrictions, source paths, and verification
-results below describe that prototype. For current generation, migration,
-supported modes, and engine requirements, see
-[Go SDK compatibility](../docs/compatibility.md).
+results below describe that prototype. Current settings and defaults are
+documented on [GoSdk](../go-sdk.dang).
 
 The `dangEntrypoint` setting generates Go modules that the engine loads through
 a manifest v2 Dang entrypoint. The engine reads the module's types from the

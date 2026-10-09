@@ -50,9 +50,8 @@ type GoSdk {
   Generate a Dang entrypoint and a static dispatch command, so the engine
   loads the module's types without running it. Supports package main and
   importable packages with a go.mod in the module directory. Manifest v2
-  needs beta.14; collections need beta.15. Correct cache policies and
-  unified clients also require the subsequent engine fixes documented in
-  docs/compatibility.md. Unset enables entrypoints for new modules and keeps
+  needs beta.14; collections need beta.15. Shared clients and cache policies
+  require later engine fixes. Unset enables entrypoints for new modules and keeps
   the runner of existing modules. Explicit true migrates a supported existing
   module; false keeps the Go runtime.
   """
