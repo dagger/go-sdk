@@ -28,7 +28,7 @@ type Beta16Checks {
       .withNewFile(root + "/go.mod", frozen.file("go.mod").contents +
         "\nreplace dagger.io/dagger => ./runtime-sdk\n")
       .withWorkdir(root)
-    let migrated = goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
+    let migrated = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
       ws: input, isModule: true, name: "beta16-frozen", clients: [],
     )
     assert("migration changed the beta.16 author source") {
@@ -36,10 +36,6 @@ type Beta16Checks {
     }
     assert("migration removed the author's global dag API") {
       migrated.file("dagger.gen.go").contents.contains("var dag ")
-    }
-    let metadata = migrated.file(".dagger-generated.json").contents
-    assert("migration did not persist its compatibility choice") {
-      metadata.contains("\"compatibility\"") and metadata.contains("\"globalClient\": true")
     }
     let manifest = migrated.file("dagger-module.toml").contents
     assert("migration retained the legacy Go runtime") {
@@ -51,7 +47,7 @@ type Beta16Checks {
     assert("migration did not reuse shared core types") {
       migrated.file("internal/dagger/dagger.gen.go").contents.contains("dagger.io/dagger/core")
     }
-    let repeated = goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
+    let repeated = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
       ws: migrated, isModule: true, name: "beta16-frozen", clients: [],
     )
     let regeneration = repeated.changes(migrated)

@@ -20,15 +20,8 @@ import (
 const OwnershipFile = ".dagger-generated.json"
 
 type Ownership struct {
-	Version       int               `json:"version"`
-	Files         map[string]string `json:"files"`
-	Compatibility *Compatibility    `json:"compatibility,omitempty"`
-}
-
-// Compatibility records migration choices independently of the generated
-// source layout. A scope setting supplied by the user still overrides them.
-type Compatibility struct {
-	GlobalClient *bool `json:"globalClient,omitempty"`
+	Version int               `json:"version"`
+	Files   map[string]string `json:"files"`
 }
 
 func digest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
@@ -39,22 +32,16 @@ func generated(data []byte) bool {
 // WriteOwnedOverlay validates every collision before writing and prunes only
 // files that still match the generator's recorded content. User files survive.
 func WriteOwnedOverlay(ctx context.Context, overlay fs.FS, root string) ([]string, error) {
-	return ownedOverlay(ctx, overlay, root, true, nil)
-}
-
-// WriteOwnedOverlayWithCompatibility persists a module's resolved migration
-// mode together with its successfully generated and collision-checked files.
-func WriteOwnedOverlayWithCompatibility(ctx context.Context, overlay fs.FS, root string, compatibility Compatibility) ([]string, error) {
-	return ownedOverlay(ctx, overlay, root, true, &compatibility)
+	return ownedOverlay(ctx, overlay, root, true)
 }
 
 // ValidateOwnedOverlay checks all paths before callers update other files.
 func ValidateOwnedOverlay(ctx context.Context, overlay fs.FS, root string) error {
-	_, err := ownedOverlay(ctx, overlay, root, false, nil)
+	_, err := ownedOverlay(ctx, overlay, root, false)
 	return err
 }
 
-func ownedOverlay(ctx context.Context, overlay fs.FS, root string, write bool, compatibility *Compatibility) ([]string, error) {
+func ownedOverlay(ctx context.Context, overlay fs.FS, root string, write bool) ([]string, error) {
 	if err := checkOwnedParents(root, OwnershipFile); err != nil {
 		return nil, err
 	}
@@ -62,10 +49,7 @@ func ownedOverlay(ctx context.Context, overlay fs.FS, root string, write bool, c
 	if err != nil {
 		return nil, err
 	}
-	next := Ownership{Version: 1, Files: map[string]string{}, Compatibility: old.Compatibility}
-	if compatibility != nil {
-		next.Compatibility = compatibility
-	}
+	next := Ownership{Version: 1, Files: map[string]string{}}
 	dataByPath := map[string][]byte{}
 	err = fs.WalkDir(overlay, ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

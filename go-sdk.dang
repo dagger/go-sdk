@@ -15,10 +15,8 @@ type GoSdk {
   unifiedClients: Boolean
 
   """
-  Retain the generated module's global `dag` for existing author code.
-  Unset: preserve a recognized legacy module's API, or the decision saved
-  in .dagger-generated.json. New entrypoint modules omit it. Explicit false
-  removes it; use dagger.Connect() or core constructors instead.
+  Generate the module's global `dag` for author code that still needs it.
+  It is omitted by default; use dagger.Connect() or core constructors instead.
   This setting applies to Dang entrypoints. Legacy runtime codegen keeps
   its existing global API.
   """
@@ -445,7 +443,6 @@ type GoSdk {
       requiredGoVersion(workspaceRoot.file("go.mod"))
     } else { "1.26.1" }
     let goImage = "golang:" + goVersion + "-alpine"
-    let globalClientPolicy = if (globalClient == null) { "auto" } else { JSON.encode(globalClient) }
     let inputs = moduleCodegenBuilder(goImage)
       .withDirectory("/src", workspaceRoot.directory(".", exclude: ["**/.git"]))
       .withFile("/schema.json", source.introspectionSchemaJSON)
@@ -458,7 +455,7 @@ type GoSdk {
       "--go-image", goImage,
       "--dagger-version", if (unified) { runtimeVersion(true) } else { schemaVersion },
       "--unified=" + JSON.encode(unified),
-      "--global-client=" + globalClientPolicy,
+      "--global-client=" + JSON.encode(globalClient ?? false),
       "--removed-list", "/removed.txt",
     ])
     let generated = runTool(codegen, [

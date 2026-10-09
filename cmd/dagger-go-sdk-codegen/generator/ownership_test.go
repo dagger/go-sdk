@@ -44,25 +44,6 @@ func TestOwnershipChecksAllCollisionsBeforeWriting(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestOwnershipCollisionPreservesCompatibilityChoice(t *testing.T) {
-	root := t.TempDir()
-	enabled := false
-	_, err := WriteOwnedOverlayWithCompatibility(t.Context(), ownedFixture(map[string]string{"a.gen.go": "old"}), root, Compatibility{GlobalClient: &enabled})
-	require.NoError(t, err)
-	before, err := os.ReadFile(filepath.Join(root, OwnershipFile))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "z.gen.go"), []byte("author code"), 0644))
-	enabled = true
-	_, err = WriteOwnedOverlayWithCompatibility(t.Context(), ownedFixture(map[string]string{"a.gen.go": "new", "z.gen.go": "new"}), root, Compatibility{GlobalClient: &enabled})
-	require.ErrorContains(t, err, "user changes")
-	after, err := os.ReadFile(filepath.Join(root, OwnershipFile))
-	require.NoError(t, err)
-	require.Equal(t, before, after)
-	generated, err := os.ReadFile(filepath.Join(root, "a.gen.go"))
-	require.NoError(t, err)
-	require.Contains(t, string(generated), "old")
-}
-
 func TestOwnershipPreservesEditedGeneratedFiles(t *testing.T) {
 	root := t.TempDir()
 	_, err := WriteOwnedOverlay(t.Context(), ownedFixture(map[string]string{"a.gen.go": "old"}), root)

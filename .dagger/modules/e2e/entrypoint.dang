@@ -273,8 +273,8 @@ type EntrypointChecks {
   }
 
   """
-  Explicit removal overrides legacy detection. The SDK keeps author source
-  unchanged on failure, and remembers the choice after the author migrates.
+  Global compatibility is explicitly opt-in. The SDK keeps author source
+  unchanged when removing the global would leave it uncompilable.
   """
   globalClientCompatibilityCheck(ws: Workspace!): Void @check {
     let input = ws
@@ -296,10 +296,10 @@ type EntrypointChecks {
     assert("generation changed migrated author source") {
       noGlobal.file("main.go").contents == migratedSource
     }
-    let repeated = goSdk(dangEntrypoint: true).generateScope(
+    let repeated = goSdk(dangEntrypoint: true, globalClient: false).generateScope(
       ws: noGlobal, isModule: true, name: "generate-app", clients: [],
     )
-    assert("automatic regeneration forgot explicit false") {
+    assert("explicit global removal was not stable") {
       repeated.changes(noGlobal).isEmpty
     }
     let built = container.from("golang:1.26-alpine").withoutEntrypoint

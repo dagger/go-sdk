@@ -38,10 +38,8 @@ type GenerateConfig struct {
 	// merges the remaining files back, so it needs the list to remove the rest.
 	RemovedPath   string
 	UnifiedClient bool
-	// GlobalClient is auto, true, or false. Auto preserves recognized legacy
-	// projects and leaves new modules without an unqualified global dag API.
-	GlobalClient string
-	globalClient bool
+	// GlobalClient emits the compatibility unqualified dag API.
+	GlobalClient bool
 }
 
 func generate(ctx context.Context, cfg GenerateConfig) error {
@@ -123,7 +121,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	genCfg := generator.Config{
 		OutputDir:     root,
 		UnifiedClient: cfg.UnifiedClient,
-		GlobalClient:  cfg.globalClient,
+		GlobalClient:  cfg.GlobalClient,
 		ClientConfig:  &generator.ClientGeneratorConfig{},
 		ModuleConfig: &generator.ModuleGeneratorConfig{
 			ModuleName: cfg.ModuleName,
@@ -137,7 +135,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if _, err := generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, false); err != nil {
 		return fmt.Errorf("bootstrap module client: %w", err)
 	}
-	if err := writeBootstrap(root, packageName, packageImport, cfg.globalClient); err != nil {
+	if err := writeBootstrap(root, packageName, packageImport, cfg.GlobalClient); err != nil {
 		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {

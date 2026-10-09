@@ -3,7 +3,6 @@ module module-codegen
 go 1.26.1
 
 require (
-	github.com/BurntSushi/toml v1.6.0
 	github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen v0.0.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/psanford/memfs v0.0.0-20241019191636-4ef911798f9b
