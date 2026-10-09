@@ -75,6 +75,7 @@ func TestEntrypointBuildsOnlyItsOwnSource(t *testing.T) {
 	require.Contains(t, text, "let source = currentModule.source")
 	require.NotContains(t, text, "workspace.directory")
 	require.NotContains(t, text, "workspace.findUp")
+	require.NotContains(t, text, "resources")
 	require.Contains(t, text, "callDigest: String,")
 	require.Contains(t, text, `.withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")`)
 	require.Contains(t, text, `.file("/dagger/result.json")`)
@@ -207,4 +208,36 @@ func TestEntrypointSourceGolden(t *testing.T) {
 	require.NoError(t, err)
 	got := string(source)
 	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint.golden", got), got)
+}
+
+func includeFixture() *v2Module {
+	mod := entrypointFixture()
+	mod.include = &EntrypointInclude{
+		Anchor:     "..",
+		ModulePath: "hello-world",
+		Resources:  []string{"../lib/go.mod", "../lib/greet", "!../lib/greet/testdata", "!data"},
+	}
+	return mod
+}
+
+func TestEntrypointIncludeGolden(t *testing.T) {
+	source, err := includeFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.NoError(t, err)
+	got := string(source)
+	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint_include.golden", got), got)
+}
+
+func TestEntrypointIncludeBuildsFromResources(t *testing.T) {
+	source, err := includeFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.NoError(t, err)
+	text := string(source)
+	require.Contains(t, text, "  pub resources: [String!]! {\n    [\"../lib/go.mod\", \"../lib/greet\", \"!../lib/greet/testdata\", \"!data\"]\n  }\n")
+	for _, literal := range []string{`"../lib/go.mod"`, `"../lib/greet"`, `"!../lib/greet/testdata"`, `"!data"`} {
+		require.Equal(t, 1, strings.Count(text, literal), literal)
+	}
+	for _, literal := range []string{`"lib/go.mod"`, `"lib/greet"`, `"lib/greet/testdata"`, `"data"`} {
+		require.NotContains(t, text, literal)
+	}
+	require.Equal(t, 1, strings.Count(text, ".directory(\"..\", include: anchored(included), exclude: anchored(outside) + [\"hello-world\"], gitignore: true)"))
+	require.Equal(t, 2, strings.Count(text, "assembled(workspace)"))
 }
