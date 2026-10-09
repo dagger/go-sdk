@@ -160,6 +160,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"IsSharedCoreObjectType":  funcs.isSharedCoreObjectType,
 		"IsSharedCoreHandle":      funcs.isSharedCoreHandle,
 		"IsCoreLibrary":           funcs.isCoreLibrary,
+		"IsUnifiedClient":         funcs.isUnifiedClient,
 		"CoreConstructorName":     funcs.coreConstructorName,
 		"ModuleMainSrc":           funcs.moduleMainSrc,
 		"ModuleRelPath":           funcs.moduleRelPath,
@@ -435,13 +436,13 @@ func (funcs goTemplateFuncs) fieldFunction(f introspection.Field, topLevel bool,
 	if !topLevel {
 		signature += `(r *` + structName + `) `
 	}
-	if topLevel && funcs.isCoreLibrary() && !hasTypeScope(scopes) {
-		// In the core library package, top-level Query fields and generated
-		// types share one namespace. Fields that would otherwise redeclare
-		// their own return type (e.g. "container" -> Container, *Container)
-		// get a "New" prefix instead. A package that refers to the types
-		// through a scope (e.g. dag, with "core") has no collision, so it
-		// keeps the plain name.
+	if topLevel && (funcs.isCoreLibrary() || funcs.isUnifiedClient()) && !hasTypeScope(scopes) {
+		// In the core library and unified client packages, top-level Query
+		// fields and generated types share one namespace. Fields that would
+		// otherwise redeclare their own return type (e.g. "container" ->
+		// Container, *Container) get a "New" prefix instead. A package that
+		// refers to the types through a scope (e.g. dag, with "core") has no
+		// collision, so it keeps the plain name.
 		signature += funcs.coreConstructorName(f)
 	} else {
 		signature += formatName(f.Name)

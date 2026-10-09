@@ -53,6 +53,7 @@ func New(ws *dagger.Workspace) *Hello {
 }
 func (h *Hello) Container() *dagger.Container { return dagger.Connect().Container().WithDirectory("/src", h.Source) }
 func (h *Hello) Echo(value string) string { return helper.Echo(value) }
+func (h *Hello) Base() *dagger.Container { return core.NewContainer().WithDirectory("/src", h.Source) }
 `
 	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "helper"), 0755))
@@ -89,6 +90,10 @@ func main() { _ = dagger.ContainerWithEnvVariableOpts{} }
 	require.Contains(t, string(bindings), "type ContainerWithExecOpts = core.ContainerWithExecOpts")
 	require.Contains(t, string(bindings), "type ContainerWithEnvVariableOpts = core.ContainerWithEnvVariableOpts")
 	require.NotContains(t, string(bindings), "var dag ")
+	self, err := os.ReadFile(filepath.Join(root, "internal/dagger/hello.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(self), "func (r *Query) Hello(")
+	require.NotContains(t, string(self), "func NewHello(")
 	require.NoError(t, Generate(t.Context(), cfg), "published-pin regeneration")
 	regenerated, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
