@@ -1,0 +1,80 @@
+"""Preserve old author code while migrating genuine beta.16 generated files."""
+type Beta16Checks {
+  frozen: Directory!
+  runtimeSdk: Directory!
+  let root: String! = ".dagger/modules/e2e/out/beta16-migration"
+  let fixture: String! = ".dagger/modules/e2e/fixtures/beta16"
+
+  """
+  The harness supplies files generated and called on the released beta.16
+  engine. Migration retains the author-facing dag API, while generated
+  bindings and dispatchers move to shared core handles and a Dang entrypoint.
+  """
+  migrationCheck(ws: Workspace!): Void @check {
+    assert("the fixture has no released generated global client") {
+      frozen.file("dagger.gen.go").contents.contains("var dag ")
+    }
+    assert("the fixture was already generated with the core split") {
+      frozen.exists("internal/dagger/core") == false
+    }
+    assert("the fixture does not declare its beta.16 engine version") {
+      frozen.file("dagger-module.toml").contents.contains("v1.0.0-beta.16")
+    }
+    assert("the frozen author differs from the released fixture") {
+      frozen.file("main.go").contents == ws.file("/" + fixture + "/main.go").contents
+    }
+    let input = ws.withDirectory(root, frozen)
+      .withDirectory(root + "/runtime-sdk", runtimeSdk)
+      .withNewFile(root + "/go.mod", frozen.file("go.mod").contents +
+        "\nreplace dagger.io/dagger => ./runtime-sdk\n")
+      .withWorkdir(root)
+    let migrated = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: input, isModule: true, name: "beta16-frozen", clients: [],
+    )
+    assert("migration changed the beta.16 author source") {
+      migrated.file("main.go").contents == frozen.file("main.go").contents
+    }
+    assert("migration removed the author's global dag API") {
+      migrated.file("dagger.gen.go").contents.contains("var dag ")
+    }
+    let manifest = migrated.file("dagger-module.toml").contents
+    assert("migration retained the legacy Go runtime") {
+      manifest.contains("[entrypoint]") and manifest.contains("[runtime]") == false
+    }
+    assert("migration retained a fat manifest") {
+      migrated.directory(".").exists("dagger.json") == false
+    }
+    assert("migration did not reuse shared core types") {
+      migrated.file("internal/dagger/dagger.gen.go").contents.contains("dagger.io/dagger/core")
+    }
+    let repeated = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: migrated, isModule: true, name: "beta16-frozen", clients: [],
+    )
+    let regeneration = repeated.changes(migrated)
+    let difference = if (regeneration.isEmpty) { "" } else {
+      "\nadded: " + JSON.encode(regeneration.addedPaths) +
+        "\nmodified: " + JSON.encode(regeneration.modifiedPaths) +
+        "\nremoved: " + JSON.encode(regeneration.removedPaths) +
+        "\n" + regeneration.asPatch.contents
+    }
+    assert("explicit regeneration changed the migrated files" + difference) {
+      regeneration.isEmpty
+    }
+
+    # Run actual module calls after the second generation. Both directions
+    # carry core object IDs across the generated entrypoint, including a
+    # caller-created handle decoded without the generated client's old global.
+    let called = container.from("golang:1.26-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/workspace", repeated.directory("/"))
+      .withFile("/probe.go", ws.file("/" + fixture + "/probe/main.go"))
+      .withWorkdir("/workspace/" + root)
+      .withExec(["go", "run", "-buildvcs=false", "/probe.go"],
+        experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    assert("migrated beta.16 module calls failed:\n" + called.stdout + called.stderr) {
+      called.exitCode == 0 and called.stdout.contains("beta16 migration passed")
+    }
+    null
+  }
+}

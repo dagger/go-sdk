@@ -8,6 +8,16 @@ type Config struct {
 	// module.
 	PackageImport string
 
+	// UnifiedClient uses shared core bindings and a borrowed lazy session.
+	UnifiedClient bool
+	// PackageName overrides the standalone client's output-directory-derived
+	// package name. Embedded and core generation set it explicitly.
+	PackageName string
+
+	// GlobalClient emits the legacy unqualified dag API in a module's package.
+	// It does not control the shared default transport session.
+	GlobalClient bool
+
 	// ModuleConfig is the specific config to generate a module.
 	//
 	// Client generation never sets it; it only remains so template helpers

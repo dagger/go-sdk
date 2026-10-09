@@ -4,10 +4,10 @@ Checks the Go SDK against the Dagger development engine.
 type EngineE2e {
   """
   Current main commit shared by engine-dev and the target engine. Includes
-  beta.15 collections and the later call-digest and module-loading fixes.
+  the core split, shared client sessions, enum fixes, and collection closure.
   Keep it aligned with the dependency in dagger-module.toml.
   """
-  let engineCommit: String! = "195b09187512b7e114f47048c773310701af87a7"
+  let engineCommit: String! = "f350d7bcee8633d3046e645ca9a820c0baa3d9c8"
 
   """
   Commit of release v1.0.0-beta.12, shared by the runtime-floor-engine-dev
@@ -26,6 +26,11 @@ type EngineE2e {
 
   let daggerSource(commit: String!): Workspace! {
     git("https://github.com/dagger/dagger").ref(commit).asWorkspace
+  }
+
+  """Use the pinned engine unless a caller supplies a local source directory."""
+  let selectedEngineSource(source: Directory): Workspace! {
+    if (source == null) { daggerSource(engineCommit) } else { source.asWorkspace }
   }
 
   let clientBase: Container! {
@@ -76,6 +81,123 @@ type EngineE2e {
     null
   }
 
+  """A check's pass field returns false on failure without a failing exit code."""
+  let runModuleCheck(client: Container!, args: [String!]!): Void {
+    let checked = client.withExec(args)
+    let result = checked.stdout.trimSpace
+    assert("nested check failed: " + args.join(" ") + "\n" + result + checked.stderr) {
+      result == "true"
+    }
+    null
+  }
+
+  """
+  Validate the complete engine/runtime contribution stack before publishing
+  its immutable pin. Unlike standalone-client floor checks, these execute
+  entrypoint modules and shared core handles on the supplied engine source.
+  """
+  integratedSdkCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
+    let source = selectedEngineSource(engineSource)
+    let client = sdkClient(
+      ws,
+      engineDev(ws: source).installClient(client: clientBase),
+      engineCommit,
+    ).withMountedDirectory("/integrated-runtime-sdk", source.directory("/sdk/go"))
+    let boundary = ["env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN", "dagger"]
+    ["module-init-check", "generate-check", "global-client-compatibility-check"].each { check =>
+      runModuleCheck(client, boundary + [
+        "-m", ".dagger/modules/e2e", "call", "entrypoint", check, "--ws", ".", "pass",
+      ])
+    }
+    ["calls-check", "changed-target-check", "stale-target-check", "removed-client-check", "git-calls-check"].each { check =>
+      runModuleCheck(client, boundary + [
+        "-m", ".dagger/modules/e2e", "call", "unified",
+        "--runtime-sdk", "/integrated-runtime-sdk", "--legacy-version", "v0.21.7",
+        check, "--ws", ".", "pass",
+      ])
+    }
+    ["v0.20.8", "v0.18.0", "v0.16.0", "v0.15.0"].each { version =>
+      runModuleCheck(client, boundary + [
+        "-m", ".dagger/modules/e2e", "call", "unified",
+        "--runtime-sdk", "/integrated-runtime-sdk", "--legacy-version", version,
+        "calls-check", "--ws", ".", "pass",
+      ])
+    }
+    runModuleCheck(client, boundary + [
+      "-m", ".dagger/modules/e2e", "call", "unified",
+      "--runtime-sdk", "/integrated-runtime-sdk", "--package-main",
+      "calls-check", "--ws", ".", "pass",
+    ])
+    null
+  }
+
+  """Run selected older target versions without repeating the complete suite."""
+  integratedLegacyClientsCheck(
+    ws: Workspace!,
+    engineSource: Directory = null,
+    versions: [String!]! = ["v0.16.0", "v0.15.0"],
+  ): Void @check {
+    let source = selectedEngineSource(engineSource)
+    let client = sdkClient(ws, engineDev(ws: source).installClient(client: clientBase), engineCommit)
+      .withMountedDirectory("/integrated-runtime-sdk", source.directory("/sdk/go"))
+    versions.each { version =>
+      runModuleCheck(client, [
+        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+        "dagger", "-m", ".dagger/modules/e2e", "call", "unified",
+        "--runtime-sdk", "/integrated-runtime-sdk", "--legacy-version", version,
+        "calls-check", "--ws", ".", "pass",
+      ])
+    }
+    null
+  }
+
+  """
+  Generate and call a Go module on the released beta.16 engine, then migrate
+  its frozen files with this SDK on the complete supplied engine stack.
+  """
+  beta16MigrationCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
+    let source = selectedEngineSource(engineSource)
+    let boundary = ["env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN", "dagger"]
+    let released = entrypointFloorEngineDev(ws: daggerSource(entrypointFloorCommit))
+      .installClient(client: clientBase)
+      .withFile("/beta16-frozen/main.go", ws.file("/.dagger/modules/e2e/fixtures/beta16/main.go"))
+      .withNewFile("/beta16-frozen/go.mod", "module example.com/beta16-frozen\n\ngo 1.26.1\n")
+      .withNewFile("/beta16-frozen/dagger-module.toml", "name = \"beta16-frozen\"\nengineVersion = \"v1.0.0-beta.16\"\n\n[runtime]\nsource = \"go\"\n")
+      .withWorkdir("/beta16-frozen")
+      .withExec(boundary + ["query"],
+        stdin: "{moduleSource(refString:\".\"){generatedContextDirectory{export(path:\".\")}}}")
+      .withExec(boundary + ["-m", ".", "call", "message"])
+    assert("the released beta.16 fixture failed before migration: " + released.stdout) {
+      released.stdout.trimSpace == "beta16 generated global"
+    }
+    let frozen = released.directory(".")
+    assert("the released fixture already has split bindings") {
+      frozen.exists("internal/dagger/core") == false
+    }
+    let client = sdkClient(
+      ws,
+      engineDev(ws: source).installClient(client: clientBase),
+      engineCommit,
+    ).withMountedDirectory("/beta16-frozen", frozen)
+      .withMountedDirectory("/integrated-runtime-sdk", source.directory("/sdk/go"))
+    let unchanged = client.withWorkdir("/beta16-frozen")
+      .withExec(boundary + ["-m", ".", "call", "message"])
+    assert("the unchanged beta.16 module failed on the new engine: " + unchanged.stdout) {
+      unchanged.stdout.trimSpace == "beta16 generated global"
+    }
+    ["main.go", "go.mod", "dagger-module.toml", "dagger.gen.go", "internal/dagger/dagger.gen.go"].each { path =>
+      assert("loading the unchanged beta.16 module rewrote " + path) {
+        unchanged.file(path).contents == frozen.file(path).contents
+      }
+    }
+    runModuleCheck(client, boundary + [
+      "-m", ".dagger/modules/e2e", "call", "beta-16",
+      "--frozen", "/beta16-frozen", "--runtime-sdk", "/integrated-runtime-sdk",
+      "migration-check", "--ws", ".", "pass",
+    ])
+    null
+  }
+
   """
   Build the pinned main engine and use this checkout as its Go SDK.
   """
@@ -98,10 +220,17 @@ type EngineE2e {
       listed.stdout.contains("go")
     }
 
-    let checked = listed.withExec([
+    let checkCommand = [
       "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
       "dagger", "check",
-    ] + checks)
+    ]
+    # A check invocation succeeds when any pattern matches. Run selected
+    # patterns separately so a missing check cannot hide behind another one.
+    let checked = if (checks.isEmpty) {
+      listed.withExec(checkCommand)
+    } else {
+      checks.reduce(listed) { current, check => current.withExec(checkCommand + [check]) }
+    }
 
     let initialized = checked
       .withExec([
@@ -109,6 +238,7 @@ type EngineE2e {
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-smoke",
         "--path", ".dagger/modules/sdk-smoke",
+        "--dang-entrypoint=false", "--unified-clients=false",
       ])
       .withExec(["test", "-f", ".dagger/modules/sdk-smoke/dagger-module.toml"])
       .withExec(["test", "!", "-e", ".dagger/modules/sdk-smoke/dagger.json"])
@@ -121,6 +251,7 @@ type EngineE2e {
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-smoke",
         "--path", ".dagger/modules/sdk-smoke",
+        "--dang-entrypoint=false", "--unified-clients=false",
         "--fat",
       ])
       .withExec(["test", "-f", ".dagger/modules/sdk-smoke/dagger.json"])
@@ -131,6 +262,7 @@ type EngineE2e {
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-smoke",
         "--path", ".dagger/modules/sdk-smoke",
+        "--dang-entrypoint=false", "--unified-clients=false",
         "--fat=false",
       ])
       .withExec(["test", "!", "-e", ".dagger/modules/sdk-smoke/dagger.json"])
@@ -156,7 +288,6 @@ type EngineE2e {
         "dagger", "--auto-apply", "module", "init", "go",
         "--name", "sdk-entrypoint",
         "--path", entrypointPath,
-        "--dang-entrypoint",
       ])
       .withExec(["grep", "-qx", "\\[entrypoint\\]", entrypointPath + "/dagger-module.toml"])
       .withExec(["test", "!", "-e", entrypointPath + "/dagger.json"])

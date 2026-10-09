@@ -7,13 +7,15 @@ import (
 	"github.com/psanford/memfs"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 const (
 	// CoreGenFile is the path of the generated dagger.io/dagger/core bindings,
 	// relative to the root of the dagger.io/dagger module.
-	CoreGenFile = "core/core.gen.go"
+	CoreGenFile       = "core/core.gen.go"
+	CoreCodecsGenFile = "core/codecs.gen.go"
 
 	// DagGenFile is the path of the generated dagger.io/dagger/dag package,
 	// relative to the root of the dagger.io/dagger module.
@@ -37,6 +39,13 @@ func (g *GoGenerator) GenerateCore(ctx context.Context, schema *introspection.Sc
 		PackageImport: "dagger.io/dagger/core",
 	}); err != nil {
 		return nil, fmt.Errorf("generate code: %w", err)
+	}
+	codecs, err := templates.GenerateCoreJSONCodecs(schema, schemaVersion)
+	if err != nil {
+		return nil, err
+	}
+	if err := mfs.WriteFile(CoreCodecsGenFile, codecs, 0644); err != nil {
+		return nil, err
 	}
 
 	return &generator.GeneratedState{

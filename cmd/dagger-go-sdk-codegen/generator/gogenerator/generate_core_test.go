@@ -45,6 +45,11 @@ func TestGenerateCore_Parity(t *testing.T) {
 			require.Equal(t, string(want), string(got))
 		})
 	}
+	codecs, err := fs.ReadFile(state.Overlay, CoreCodecsGenFile)
+	require.NoError(t, err)
+	require.Contains(t, string(codecs), "func (r *Container) UnmarshalJSON(data []byte) error")
+	require.Contains(t, string(codecs), "func (r *NodeClient) UnmarshalJSON(data []byte) error")
+	require.Contains(t, string(codecs), "selectNode(initRoot().QueryBuilder(), id, \"Container\")")
 }
 
 func TestGenerateCore_RejectsModuleTypes(t *testing.T) {

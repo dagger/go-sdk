@@ -15,23 +15,45 @@ import (
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/psanford/memfs"
+	"golang.org/x/mod/modfile"
 )
 
-// Generate stages the complete operation, then applies only successfully
-// generated, ownership-checked files to the module tree.
+// Generate stages the complete operation, including package loading. Only a
+// successfully generated, collision-checked tree is copied back to the author.
 func Generate(ctx context.Context, cfg GenerateConfig) error {
 	root, err := filepath.Abs(cfg.ModuleRoot)
 	if err != nil {
-		return fmt.Errorf("resolve module root: %w", err)
+		return err
 	}
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); errors.Is(err, os.ErrNotExist) {
-		for parent := filepath.Dir(root); parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
+		for parent := filepath.Dir(root); ; parent = filepath.Dir(parent) {
 			if _, err := os.Stat(filepath.Join(parent, "go.mod")); err == nil {
 				return fmt.Errorf("Dang entrypoints need a go.mod in the module directory; keep the Go runtime for modules using a parent go.mod")
 			}
+			if filepath.Dir(parent) == parent {
+				break
+			}
 		}
 	}
-
+	if cfg.UnifiedClient && cfg.DaggerVersion == "" {
+		data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+		if err != nil {
+			return fmt.Errorf("unified module generation needs a clientVersion containing the core split, or a local SDK replacement")
+		}
+		mod, err := modfile.Parse("go.mod", data, nil)
+		if err != nil {
+			return err
+		}
+		replaced := false
+		for _, replacement := range mod.Replace {
+			if replacement.Old.Path == "dagger.io/dagger" {
+				replaced = true
+			}
+		}
+		if !replaced {
+			return fmt.Errorf("unified module generation needs a clientVersion containing the core split, or a local SDK replacement")
+		}
+	}
 	old, err := generator.ReadOwnership(root)
 	if err != nil {
 		return err

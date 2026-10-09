@@ -27,7 +27,7 @@ func New(
 
 // A container with the source mounted, ready to build on.
 func (m *{{ .ModuleType }}) Container() *dagger.Container {
-	return dag.Container().
+	return dagger.Connect().Container().
 		From(m.BaseImageAddress).
 		WithDirectory("/src", m.Source).
 		WithWorkdir("/src")

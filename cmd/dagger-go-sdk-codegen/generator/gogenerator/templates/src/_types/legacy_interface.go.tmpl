@@ -100,18 +100,30 @@ type {{ $field | FieldOptionsStructName }} struct {
 	if err := q.Bind(&id).Execute(ctx); err != nil {
 		return nil, err
 	}
-	return &{{ $field | IDHandleClient }}{
+	{{- if IsSharedCoreHandle $field }}
+return new({{ $field | IDHandleClient }}).WithGraphQLQuery(selectNode(q.Root(), id, "{{ $field | IDHandleType }}"))
+{{- else }}
+return &{{ $field | IDHandleClient }}{
 		query: selectNode(q.Root(), id, "{{ $field | IDHandleType }}"),
-	}, nil
+	}
+{{- end }}, nil
 	{{- else if IsInterfaceRef $field.TypeRef }}
 	{{- /* Interface return: wrap in the interface's legacy query-builder struct */ -}}
-	return &{{ $typeName | InterfaceClientName }}{
+	{{- if IsSharedCoreObject $field.TypeRef }}
+return new({{ $typeName | InterfaceClientName }}).WithGraphQLQuery(q)
+{{- else }}
+return &{{ $typeName | InterfaceClientName }}{
 		query: q,
 	}
+{{- end }}
 	{{- else if $field.TypeRef.IsObject }}
-	return &{{ $typeName }}{
+	{{- if IsSharedCoreObject $field.TypeRef }}
+return new({{ $typeName }}).WithGraphQLQuery(q)
+{{- else }}
+return &{{ $typeName }}{
 		query: q,
 	}
+{{- end }}
 	{{- else if or $field.TypeRef.IsScalar $field.TypeRef.IsList }}
 		{{- if and $field.TypeRef.IsList (IsListOfInterface $field.TypeRef) }}
 	{{- /* List of interface: query IDs and wrap each in interface client */ -}}
@@ -127,9 +139,13 @@ type {{ $field | FieldOptionsStructName }} struct {
 	}
 	var results {{ $field.TypeRef | InterfaceListResultType }}
 	for _, idResult := range idResults {
-		results = append(results, &{{ $typeName | FormatArrayToSingleType | InterfaceClientName }}{
+		{{- if IsSharedCoreObject $field.TypeRef }}
+        results = append(results, new({{ $typeName | FormatArrayToSingleType | InterfaceClientName }}).WithGraphQLQuery(selectNode(q.Root(), idResult.Id, "{{ $typeName | FormatArrayToSingleType }}")))
+        {{- else }}
+        results = append(results, &{{ $typeName | FormatArrayToSingleType | InterfaceClientName }}{
 			query: selectNode(q.Root(), idResult.Id, "{{ $typeName | FormatArrayToSingleType }}"),
 		})
+        {{- end }}
 	}
 	return results, nil
 		{{- else if and $field.TypeRef.IsList (IsListOfObject $field.TypeRef) }}
@@ -146,8 +162,12 @@ type {{ $field | FieldOptionsStructName }} struct {
         out := {{ $field.TypeRef | FormatOutputType }}{}
 
         for i := range fields {
+            {{- if IsSharedCoreObject $eleType }}
+            val := *new({{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}).WithGraphQLQuery(selectNode(q.Root(), fields[i].Id, "{{$eleType | ObjectName}}"))
+            {{- else }}
             val := {{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}{{"{"}}{{ $field | GetArrayField | FormatArrayField }}{{"}"}}
-            {{- if $eleType | IsIDableObject }}
+            {{- end }}
+            {{- if and ($eleType | IsIDableObject) (not (IsSharedCoreObject $eleType)) }}
               val.query = selectNode(q.Root(), fields[i].Id, "{{$eleType | ObjectName}}")
             {{- end }}
             out = append(out, val)
@@ -206,7 +226,7 @@ func (r *{{ $.Name | FormatName }}) UnmarshalJSON(bs []byte) error {
   if err != nil {
     return err
   }
-  *r = {{ $.Name | FormatName }}{query: selectNode(dag.QueryBuilder(), id, "{{ $.Name }}")}
+  *r = {{ $.Name | FormatName }}{query: selectNode(Connect().QueryBuilder(), id, "{{ $.Name }}")}
   return nil
 }
 {{- end }}
@@ -233,7 +253,11 @@ func (r *{{ $.Name | FormatName }}) Concrete(ctx context.Context) (Node, error) 
 	switch typeName {
 	{{- range $pt := PossibleTypes . }}
 	case "{{ $pt.Name }}":
-		return &{{ $pt.Name | FormatName }}{query: selectNode(r.query.Root(), id, "{{ $pt.Name }}")}, nil
+		{{- if IsSharedCoreObjectType $pt }}
+        return new({{ $pt.Name | FormatName }}).WithGraphQLQuery(selectNode(r.query.Root(), id, "{{ $pt.Name }}")), nil
+        {{- else }}
+        return &{{ $pt.Name | FormatName }}{query: selectNode(r.query.Root(), id, "{{ $pt.Name }}")}, nil
+        {{- end }}
 	{{- end }}
 	default:
 		return nil, fmt.Errorf("unknown {{ $.Name }} implementation: %s", typeName)

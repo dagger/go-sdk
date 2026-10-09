@@ -84,17 +84,25 @@ type {{ $field | FieldOptionsStructName }} struct {
 	if err := q.Bind(&id).Execute(ctx); err != nil {
 		return nil, err
 	}
-	return &{{ $field | IDHandleClient }}{
+	{{- if IsSharedCoreHandle $field }}
+    return new({{ $field | IDHandleClient }}).WithGraphQLQuery(selectNode(q.Root(), id, "{{ $field | IDHandleType }}")), nil
+    {{- else }}
+    return &{{ $field | IDHandleClient }}{
 		query: selectNode(q.Root(), id, "{{ $field | IDHandleType }}"),
 	}, nil
+    {{- end }}
 
 	{{- else if $field.TypeRef.IsObject }}
-	return &{{ $typeName }} {
+	{{- if IsSharedCoreObject $field.TypeRef }}
+    return new({{ $typeName }}).WithGraphQLQuery(q)
+    {{- else }}
+    return &{{ $typeName }} {
 		query: q,
 		{{- if eq $typeName "Client" }}
 		client: r.client,
 		{{ end }}
 	}
+    {{- end }}
 
 	{{- else if or $field.TypeRef.IsScalar $field.TypeRef.IsList }}
 		{{- if and $field.TypeRef.IsList (IsListOfObject $field.TypeRef) }}
@@ -111,8 +119,12 @@ type {{ $field | FieldOptionsStructName }} struct {
         out := {{ $field.TypeRef | FormatOutputType }}{}
 
         for i := range fields {
+            {{- if IsSharedCoreObject $eleType }}
+            val := *new({{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}).WithGraphQLQuery(selectNode(q.Root(), fields[i].Id, "{{$eleType | ObjectName}}"))
+            {{- else }}
             val := {{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}{{"{"}}{{ $field | GetArrayField | FormatArrayField }}{{"}"}}
-            {{- if $eleType | IsIDableObject }}
+            {{- end }}
+            {{- if and ($eleType | IsIDableObject) (not (IsSharedCoreObject $eleType)) }}
               val.query = selectNode(q.Root(), fields[i].Id, "{{$eleType | ObjectName}}")
             {{- end }}
             out = append(out, val)

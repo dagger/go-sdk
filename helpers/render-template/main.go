@@ -25,6 +25,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("render-template", flag.ContinueOnError)
 	importable := flags.Bool("importable-package", false, "name the Go package after the module instead of main")
+	standalone := flags.Bool("standalone-go-module", false, "create the new module's own go.mod")
 	goMod := flags.String("go-mod", "", "go.mod of the Go module that contains the new module")
 	moduleSubpath := flags.String("module-subpath", ".", "path of the new module relative to the directory of --go-mod")
 	if err := flags.Parse(args); err != nil {
@@ -32,7 +33,10 @@ func run(args []string) error {
 	}
 	args = flags.Args()
 	if len(args) != 3 {
-		return fmt.Errorf("usage: render-template [--importable-package] [--go-mod GO_MOD --module-subpath SUBPATH] MODULE_NAME TEMPLATE_DIR OUT_DIR")
+		return fmt.Errorf("usage: render-template [--importable-package] [--standalone-go-module | --go-mod GO_MOD --module-subpath SUBPATH] MODULE_NAME TEMPLATE_DIR OUT_DIR")
+	}
+	if *standalone && (!*importable || *goMod != "" || *moduleSubpath != ".") {
+		return fmt.Errorf("--standalone-go-module requires --importable-package and cannot use an enclosing Go module")
 	}
 
 	moduleName := args[0]
@@ -61,7 +65,7 @@ func run(args []string) error {
 		"ModuleImport":  moduleImport,
 	}
 
-	return filepath.WalkDir(templateDir, func(path string, entry os.DirEntry, err error) error {
+	if err := filepath.WalkDir(templateDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -102,7 +106,24 @@ func run(args []string) error {
 			return err
 		}
 		return os.WriteFile(dst, buf.Bytes(), 0o644)
-	})
+	}); err != nil {
+		return err
+	}
+	if *standalone {
+		mod := new(modfile.File)
+		if err := mod.AddModuleStmt(moduleImport); err != nil {
+			return err
+		}
+		if err := mod.AddGoStmt("1.26.1"); err != nil {
+			return err
+		}
+		body, err := mod.Format()
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(outDir, "go.mod"), body, 0o644)
+	}
+	return nil
 }
 
 // enclosingImport returns the import path of a directory inside the Go module

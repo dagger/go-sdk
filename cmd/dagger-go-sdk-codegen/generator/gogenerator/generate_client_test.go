@@ -75,13 +75,18 @@ func buildClientSchema() *introspection.Schema {
 }
 
 func generateClient(t *testing.T, clientConfig *generator.ClientGeneratorConfig, outputDir string) *generator.GeneratedState {
+	return generateClientForVersion(t, clientConfig, outputDir, "v1.0.0")
+}
+
+func generateClientForVersion(t *testing.T, clientConfig *generator.ClientGeneratorConfig, outputDir, schemaVersion string) *generator.GeneratedState {
 	t.Helper()
 	gen := &GoGenerator{Config: generator.Config{
 		OutputDir:     outputDir,
 		PackageImport: "example.com/client",
+		PackageName:   "client",
 		ClientConfig:  clientConfig,
 	}}
-	state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v0.21.0")
+	state, err := gen.GenerateClient(t.Context(), buildClientSchema(), schemaVersion)
 	require.NoError(t, err)
 	return state
 }
@@ -118,6 +123,16 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		require.NotContains(t, core, "ConfigExists")
 	})
 
+	t.Run("legacy local module resolves through Query from the client cwd", func(t *testing.T) {
+		state := generateClientForVersion(t, &generator.ClientGeneratorConfig{
+			BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: ".dagger/modules/hello"},
+		}, t.TempDir(), "v0.17.1")
+
+		core := readOverlay(t, state, "dagger.gen.go")
+		require.NotContains(t, core, "CurrentWorkspace().")
+		require.Contains(t, core, `ModuleSource(".dagger/modules/hello").`)
+	})
+
 	t.Run("git module serves from its canonical ref + pin", func(t *testing.T) {
 		state := generateClient(t, &generator.ClientGeneratorConfig{
 			BoundModule: generator.BoundModule{Kind: "GIT_SOURCE", Ref: "github.com/foo/hello@main", Pin: "abcdef"},
@@ -130,13 +145,23 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		require.NotContains(t, core, "IncludeDependencies")
 	})
 
+	t.Run("legacy Void serve result is discarded", func(t *testing.T) {
+		state := generateClientForVersion(t, &generator.ClientGeneratorConfig{
+			BoundModule: generator.BoundModule{Kind: "GIT_SOURCE", Ref: "github.com/foo/hello@main", Pin: "abcdef"},
+		}, t.TempDir(), "v0.9.11")
+
+		core := readOverlay(t, state, "dagger.gen.go")
+		require.Contains(t, core, "_, err := client.")
+		require.Contains(t, core, "Serve(ctx)\n\treturn err")
+	})
+
 	t.Run("bound module splits into its own gen file", func(t *testing.T) {
 		state := generateClient(t, &generator.ClientGeneratorConfig{
 			BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: ".dagger/modules/hello"},
 		}, t.TempDir())
 
 		dep := readOverlay(t, state, "hello.gen.go")
-		require.Contains(t, dep, "package dagger")
+		require.Contains(t, dep, "package client")
 		require.Contains(t, dep, "type Hello struct")
 		require.Contains(t, dep, "func (r *Query) Hello(")
 		// The core file no longer holds the module-contributed types...
@@ -148,6 +173,29 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 		dag := readOverlay(t, state, "dag/dag.gen.go")
 		require.Contains(t, dag, "func Hello(")
 	})
+}
+
+func TestGenerateClientPackageFollowsOutputDirectory(t *testing.T) {
+	for _, unified := range []bool{false, true} {
+		t.Run(map[bool]string{false: "embedded types", true: "shared types"}[unified], func(t *testing.T) {
+			gen := &GoGenerator{Config: generator.Config{
+				OutputDir:     "internal/dagger/engine-dev",
+				PackageImport: "example.com/app/internal/dagger/engine-dev",
+				UnifiedClient: unified,
+				ClientConfig: &generator.ClientGeneratorConfig{
+					BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: ".dagger/modules/hello"},
+				},
+			}}
+			state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v1.0.0")
+			require.NoError(t, err)
+			for _, name := range []string{"dagger.gen.go", "hello.gen.go"} {
+				require.Contains(t, readOverlay(t, state, name), "package enginedev\n")
+			}
+			if !unified {
+				require.Contains(t, readOverlay(t, state, "dag/dag.gen.go"), "package dag\n")
+			}
+		})
+	}
 }
 
 func TestGenerateClient_PackageMode(t *testing.T) {

@@ -30,7 +30,7 @@ type GoGenerator struct {
 
 // PackageInfo describes the Go package the generated files belong to.
 type PackageInfo struct {
-	PackageName   string // Go package name, "dagger" for a standalone client
+	PackageName   string // Go package name
 	PackageImport string // import path of package in which this file appears
 }
 

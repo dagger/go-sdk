@@ -14,6 +14,14 @@ import (
 // dagger.gen.go with the core bindings, one <module>.gen.go for the bound
 // module, and a dag/ convenience package.
 func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
+	if g.Config.PackageName == "" {
+		cfg := g.Config
+		cfg.PackageName = clientPackageName(cfg.OutputDir, cfg.PackageImport)
+		g = &GoGenerator{Config: cfg}
+	}
+	if g.Config.UnifiedClient {
+		return g.GenerateUnifiedClient(ctx, schema, schemaVersion)
+	}
 	generator.SetSchema(schema)
 
 	mfs := memfs.New()
@@ -22,7 +30,7 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 	}
 
 	if err := generateCode(ctx, g.Config, schema, schemaVersion, mfs, &PackageInfo{
-		PackageName:   "dagger",
+		PackageName:   g.Config.PackageName,
 		PackageImport: g.Config.PackageImport,
 	}); err != nil {
 		return nil, fmt.Errorf("generate code: %w", err)

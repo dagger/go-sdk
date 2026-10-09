@@ -25,6 +25,8 @@ func run() error {
 	flag.StringVar(&cfg.DaggerVersion, "dagger-version", "", "dagger.io/dagger version")
 	flag.StringVar(&cfg.GoImage, "go-image", "golang:1.26-alpine", "Go image used by the generated entrypoint")
 	flag.StringVar(&cfg.RemovedPath, "removed-list", "", "file that receives the paths of removed generated files")
+	flag.BoolVar(&cfg.UnifiedClient, "unified", false, "reuse core bindings and shared sessions")
+	flag.BoolVar(&cfg.GlobalClient, "global-client", false, "generate the compatibility unqualified dag API")
 	flag.Parse()
 
 	if cfg.ModuleRoot == "" {

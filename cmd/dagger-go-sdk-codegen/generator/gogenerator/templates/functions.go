@@ -156,6 +156,9 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"IsPartial":               funcs.isPartial,
 		"IsModuleCode":            funcs.isModuleCode,
 		"IsStandaloneClient":      funcs.isStandaloneClient,
+		"IsSharedCoreObject":      funcs.isSharedCoreObject,
+		"IsSharedCoreObjectType":  funcs.isSharedCoreObjectType,
+		"IsSharedCoreHandle":      funcs.isSharedCoreHandle,
 		"IsCoreLibrary":           funcs.isCoreLibrary,
 		"CoreConstructorName":     funcs.coreConstructorName,
 		"ModuleMainSrc":           funcs.moduleMainSrc,
@@ -163,12 +166,19 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"BoundModule":             funcs.boundModule,
 		"Dependencies":            funcs.Dependencies,
 		"HasLocalDependencies":    funcs.HasLocalDependencies,
+		"LegacyModulePath":        funcs.legacyModulePath,
 		"IsExtendableType":        funcs.isExtendableType,
 		"FullSchemaTypes":         funcs.fullSchemaTypes,
 		"HasIDField":              funcs.hasIDField,
 		"IsLegacyIDAlias":         funcs.isLegacyIDAlias,
 		"json":                    funcs.json,
 	}
+}
+
+// legacyModulePath converts a workspace-root-relative module path back to the
+// cwd-relative form accepted by Query.moduleSource in pre-workspace schemas.
+func (funcs goTemplateFuncs) legacyModulePath(m generator.BoundModule) string {
+	return strings.TrimPrefix(m.Path, "/")
 }
 
 // legacyGoSDKCompatCutoverVersion is the first engine version whose Go SDK
@@ -178,6 +188,9 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 const legacyGoSDKCompatCutoverVersion = "v0.21.0-0"
 
 func (funcs goTemplateFuncs) legacyGoSDKCompat() bool {
+	if funcs.cfg.UnifiedClient {
+		return false
+	}
 	if funcs.schemaVersion == "" || funcs.CommonFunctions == nil {
 		return false
 	}
