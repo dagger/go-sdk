@@ -19,6 +19,23 @@ type EntrypointChecks {
       "\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
   }
 
+  """Explicit unified embedded bindings cannot be ignored by the Go runtime path."""
+  unifiedRequiresEntrypointCheck(ws: Workspace!): Void @check {
+    let input = ws
+      .withNewFile(appPath + "/dagger-module.toml", "name = \"generate-app\"\n\n[runtime]\n  source = \"go\"\n")
+      .withWorkdir(appPath)
+    let refused = goSdk(unifiedClients: true).generateScope(
+      ws: input,
+      isModule: true,
+      name: "generate-app",
+      clients: [],
+    ).file("dagger.gen.go").contents rescue { err: Error => err.message }
+    assert("unifiedClients was silently ignored by legacy runtime generation") {
+      refused.contains("unifiedClients = true requires dangEntrypoint = true")
+    }
+    null
+  }
+
   """
   A new module gets an importable starter, the entrypoint manifest, the
   shared-core client without a global dag, the dispatch command, and the Dang
