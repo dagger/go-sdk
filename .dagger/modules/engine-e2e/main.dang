@@ -199,6 +199,95 @@ type EngineE2e {
   }
 
   """
+  A module that lists //go:resources builds with its included files, reads
+  them at call time, and refuses to run outside its own checkout.
+  """
+  resourcesCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
+    resourcesCalls(sdkClient(
+      ws,
+      engineDev(ws: selectedEngineSource(engineSource)).installClient(client: clientBase),
+      engineCommit,
+    ))
+  }
+
+  """Run the //go:resources calls on the entrypoint floor engine."""
+  resourcesFloorCheck(ws: Workspace!): Void @check {
+    resourcesCalls(sdkClient(
+      ws,
+      entrypointFloorEngineDev(ws: daggerSource(entrypointFloorCommit)).installClient(client: clientBase),
+      entrypointFloorCommit,
+    ))
+  }
+
+  """Run one dagger command in the client, from dir."""
+  let runDagger(client: Container!, dir: String!, args: [String!]!): Container! {
+    client.withWorkdir(dir).withExec(
+      ["env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN", "dagger"] + args,
+      expect: ReturnType.ANY,
+    )
+  }
+
+  let succeeded(run: Container!): String! {
+    if (run.exitCode != 0) {
+      raise "dagger failed:\n" + run.stdout + run.stderr
+    }
+    run.stdout.trimSpace
+  }
+
+  """
+  Call the generated include fixture: a file embedded at build time, a file
+  read at call time, the exclude, the module API, calls from a subdirectory
+  and by path, and the refusals from another repository and a git source.
+  """
+  let resourcesCalls(client: Container!): Void {
+    let sdkDir = client.workdir
+    let identity = "module include-app reads files outside its directory (//go:resources), so it must run from its own checkout"
+    let exported = runDagger(client, sdkDir, [
+      "-m", ".dagger/modules/e2e", "call", "resources", "fixture", "--ws", ".", "export", "--path", "/repo",
+    ])
+    succeeded(exported)
+    let ready = exported
+      .withNewFile("/repo/dagger.toml", "[modules.include-app]\nsource = \"app\"\n")
+      .withExec(["git", "-C", "/repo", "init", "-q"])
+
+    # The checkout check runs only when no cached result answers the call, so
+    # the call from another repository comes first.
+    let outside = runDagger(ready.withExec(["git", "init", "-q", "/other"]), "/other", ["-m", "/repo/app", "call", "greeting"])
+    assert("the module ran from another repository:\n" + outside.stdout + outside.stderr) {
+      outside.exitCode != 0 and outside.stderr.contains(identity)
+    }
+
+    let greeting = ["call", "include-app", "greeting"]
+    let built = runDagger(outside, "/repo", greeting)
+    assert("the build did not embed the included file: " + succeeded(built)) {
+      succeeded(built) == "one"
+    }
+    let runtime = runDagger(built, "/repo", ["call", "include-app", "runtime"])
+    assert("the function did not read the included file at call time: " + succeeded(runtime)) {
+      succeeded(runtime) == "one"
+    }
+    let excluded = runDagger(runtime, "/repo", ["call", "include-app", "excluded"])
+    assert("the excluded directory reached the module") { succeeded(excluded) == "false" }
+
+    let functions = runDagger(excluded, "/repo", ["-m", "app", "functions"])
+    let api = succeeded(functions)
+    assert("the module API is not greeting, runtime and excluded:\n" + api) {
+      api.contains("greeting") and api.contains("runtime") and api.contains("excluded") and api.contains("resources") == false
+    }
+
+    let fromSubdirectory = runDagger(functions, "/repo/lib", greeting)
+    let byPath = runDagger(fromSubdirectory, "/repo/lib", ["-m", "../app", "call", "greeting"])
+    assert("the module failed from a subdirectory of its workspace") {
+      succeeded(fromSubdirectory) == "one" and succeeded(byPath) == "one"
+    }
+
+    succeeded(runDagger(byPath, sdkDir, [
+      "-m", ".dagger/modules/e2e", "call", "resources", "git-source-refusal", "--ws", ".", "--cli", "/.dagger-cli",
+    ]))
+    null
+  }
+
+  """
   Build the pinned main engine and use this checkout as its Go SDK.
   """
   devSdkCheck(ws: Workspace!, checks: [String!]! = []): Void @check {
