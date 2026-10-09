@@ -84,12 +84,11 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
-	typeName := strcase.ToCamel(cfg.ModuleName)
-	mainFile, err := findMainFile(root, typeName)
+	includes, err := ReadIncludes(root, cfg.ModuleName, "")
 	if err != nil {
 		return err
 	}
-	if err := checkIncludeCoverage(root, mainFile, typeName); err != nil {
+	if err := checkIncludeCoverage(root, includes.MainFile, strcase.ToCamel(cfg.ModuleName)); err != nil {
 		return err
 	}
 	moduleSubpath, err := filepath.Rel(filepath.Dir(goModPath), root)
@@ -187,7 +186,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("reload module package: %w", err)
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, nil,
+		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, includes.entrypoint(),
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)

@@ -16,6 +16,8 @@ import (
 
 	"github.com/iancoleman/strcase"
 	"golang.org/x/mod/modfile"
+
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 )
 
 const includeDirective = "//go:resources"
@@ -39,6 +41,19 @@ type Includes struct {
 	// Resources holds the same list as clean patterns relative to the module
 	// directory: the includes, then the excludes with a leading "!".
 	Resources []string
+}
+
+// entrypoint is the include list the generated entrypoint carries, or nil
+// for a module without one.
+func (includes *Includes) entrypoint() *templates.EntrypointInclude {
+	if len(includes.Include) == 0 {
+		return nil
+	}
+	return &templates.EntrypointInclude{
+		Anchor:     includes.Anchor,
+		ModulePath: includes.ModulePath,
+		Resources:  includes.Resources,
+	}
 }
 
 type IncludePattern struct {
