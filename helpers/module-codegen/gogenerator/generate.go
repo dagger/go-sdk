@@ -40,6 +40,10 @@ type GenerateConfig struct {
 	UnifiedClient bool
 	// GlobalClient emits the compatibility unqualified dag API.
 	GlobalClient bool
+	// BuildRoot holds the module root and every file its build reads.
+	// Generation stages and compiles copies of this tree. Empty means
+	// ModuleRoot.
+	BuildRoot string
 }
 
 func generate(ctx context.Context, cfg GenerateConfig) error {
@@ -78,6 +82,13 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	packageImport, goModPath, err := ensureGoModule(root, cfg.ModuleName)
 	if err != nil {
+		return err
+	}
+	includes, err := ReadIncludes(root, cfg.ModuleName, "")
+	if err != nil {
+		return err
+	}
+	if err := checkIncludeCoverage(root, includes.MainFile, strcase.ToCamel(cfg.ModuleName)); err != nil {
 		return err
 	}
 	moduleSubpath, err := filepath.Rel(filepath.Dir(goModPath), root)
@@ -175,7 +186,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("reload module package: %w", err)
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage,
+		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, includes.entrypoint(),
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
@@ -187,7 +198,14 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := writeFile(dispatchPath, artifacts.DispatchSource); err != nil {
 		return err
 	}
-	runtimeFiles, err := collectionBuildSources(ctx, root)
+	buildRoot := root
+	if cfg.BuildRoot != "" {
+		buildRoot, err = filepath.Abs(cfg.BuildRoot)
+		if err != nil {
+			return fmt.Errorf("resolve build root: %w", err)
+		}
+	}
+	runtimeFiles, err := collectionBuildSources(ctx, buildRoot, root)
 	if err != nil {
 		return fmt.Errorf("prepare collection build: %w", err)
 	}
@@ -211,7 +229,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if packageName == "main" {
 		target = "."
 	}
-	if err := compileGeneratedModule(ctx, root, target, runtimeFiles); err != nil {
+	if err := compileGeneratedModule(ctx, buildRoot, root, target, runtimeFiles); err != nil {
 		return err
 	}
 	if cfg.RemovedPath != "" {
@@ -497,27 +515,31 @@ func goModTidy(ctx context.Context, root string) error {
 // function bodies that declaration-only package analysis intentionally skips.
 // Collection modules compile against the private runtime source overlays that
 // the generated entrypoint applies before its own build.
-func compileGeneratedModule(ctx context.Context, root, target string, runtimeFiles map[string][]byte) error {
-	buildRoot := root
+func compileGeneratedModule(ctx context.Context, buildRoot, root, target string, runtimeFiles map[string][]byte) error {
+	dir := root
 	if len(runtimeFiles) > 0 {
-		var err error
-		buildRoot, err = os.MkdirTemp("", "dagger-module-compile-")
+		modulePath, err := filepath.Rel(buildRoot, root)
+		if err != nil {
+			return fmt.Errorf("resolve module path in build root: %w", err)
+		}
+		staged, err := os.MkdirTemp("", "dagger-module-compile-")
 		if err != nil {
 			return err
 		}
-		defer os.RemoveAll(buildRoot)
-		if err := os.CopyFS(buildRoot, os.DirFS(root)); err != nil {
+		defer os.RemoveAll(staged)
+		if err := os.CopyFS(staged, os.DirFS(buildRoot)); err != nil {
 			return fmt.Errorf("stage module compilation: %w", err)
 		}
+		dir = filepath.Join(staged, modulePath)
 		for name, data := range runtimeFiles {
-			if err := writeFile(filepath.Join(buildRoot, name), data); err != nil {
+			if err := writeFile(filepath.Join(dir, name), data); err != nil {
 				return err
 			}
 		}
 	}
 
 	cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", os.DevNull, target)
-	cmd.Dir = buildRoot
+	cmd.Dir = dir
 	for _, setting := range os.Environ() {
 		if !strings.HasPrefix(setting, "CGO_ENABLED=") {
 			cmd.Env = append(cmd.Env, setting)

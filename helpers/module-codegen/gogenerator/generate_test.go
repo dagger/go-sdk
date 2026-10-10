@@ -103,9 +103,54 @@ func TestCompileGeneratedModuleChecksFunctionBodies(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/hello\n\ngo 1.26.1\n")
 	writeTestFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() { missing() }\n")
 
-	err := compileGeneratedModule(t.Context(), root, ".", nil)
+	err := compileGeneratedModule(t.Context(), root, root, ".", nil)
 	if err == nil || !strings.Contains(err.Error(), "compile generated module") || !strings.Contains(err.Error(), "undefined: missing") {
 		t.Fatalf("compileGeneratedModule() error = %v, want undefined function error", err)
+	}
+}
+
+func TestCompileGeneratedModuleStagesBuildRoot(t *testing.T) {
+	buildRoot := t.TempDir()
+	root := filepath.Join(buildRoot, "app")
+	for _, dir := range []string{root, filepath.Join(buildRoot, "lib", "greet")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n")
+	writeTestFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() { missing() }\n")
+	writeTestFile(t, filepath.Join(buildRoot, "lib", "go.mod"), "module example.com/lib\n\ngo 1.26.1\n")
+	writeTestFile(t, filepath.Join(buildRoot, "lib", "greet", "greet.go"), "package greet\n\nfunc Hello() string { return \"hello\" }\n")
+
+	runtimeFiles := map[string][]byte{
+		"main.go": []byte("package main\n\nimport \"example.com/lib/greet\"\n\nfunc main() { _ = greet.Hello() }\n"),
+	}
+	if err := compileGeneratedModule(t.Context(), buildRoot, root, ".", runtimeFiles); err != nil {
+		t.Fatalf("compileGeneratedModule() error = %v", err)
+	}
+}
+
+func TestCollectionBuildSourcesStagesBuildRoot(t *testing.T) {
+	buildRoot := t.TempDir()
+	root := filepath.Join(buildRoot, "app")
+	for _, dir := range []string{root, filepath.Join(buildRoot, "lib", "greet")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n")
+	writeTestFile(t, filepath.Join(root, "main.go"), "package app\n\nimport \"example.com/lib/greet\"\n\n"+
+		"// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n"+
+		"func (items *Items) Greeting() string { return greet.Hello() }\n")
+	writeTestFile(t, filepath.Join(buildRoot, "lib", "go.mod"), "module example.com/lib\n\ngo 1.26.1\n")
+	writeTestFile(t, filepath.Join(buildRoot, "lib", "greet", "greet.go"), "package greet\n\nfunc Hello() string { return \"hello\" }\n")
+
+	runtimeFiles, err := collectionBuildSources(t.Context(), buildRoot, root)
+	if err != nil {
+		t.Fatalf("collectionBuildSources() error = %v", err)
+	}
+	if _, ok := runtimeFiles["main.go"]; !ok {
+		t.Fatalf("collectionBuildSources() = %v, want a runtime main.go", runtimeFiles)
 	}
 }
 
