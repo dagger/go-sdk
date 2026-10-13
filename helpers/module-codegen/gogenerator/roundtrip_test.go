@@ -40,19 +40,21 @@ func TestGenerateFreshUnifiedModuleWithoutLocalSDK(t *testing.T) {
 	source := `package hello
 import (
  "example.com/hello/internal/dagger"
- "example.com/hello/helper"
+ helperClient "example.com/hello/helper"
  "dagger.io/dagger/core"
 )
 type Hello struct {
  // +private
  Source *dagger.Directory
+ // +private
+ State *helperClient.State
 }
 var _ *core.Directory = (*dagger.Directory)(nil)
 func New(ws *dagger.Workspace) *Hello {
- return &Hello{Source:ws.Directory("/", dagger.WorkspaceDirectoryOpts{Exclude:[]string{"**/.git"}})}
+ return &Hello{Source:ws.Directory("/", dagger.WorkspaceDirectoryOpts{Exclude:[]string{"**/.git"}}), State:&helperClient.State{Value:"private"}}
 }
 func (h *Hello) Container() *dagger.Container { return dagger.Connect().Container().WithDirectory("/src", h.Source) }
-func (h *Hello) Echo(value string) string { return helper.Echo(value) }
+func (h *Hello) Echo(value string) string { return helperClient.Echo(value) }
 func (h *Hello) Base() *dagger.Container { return core.NewContainer().WithDirectory("/src", h.Source) }
 `
 	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
@@ -60,6 +62,7 @@ func (h *Hello) Base() *dagger.Container { return core.NewContainer().WithDirect
 	require.NoError(t, os.WriteFile(filepath.Join(root, "helper", "helper.go"), []byte(`package helper
 import client "example.com/hello/internal/dagger"
 type privateState struct { secret *client.Secret }
+type State struct { Value string }
 func Echo(value string) string { _ = client.ContainerWithExecOpts{}; return value }
 `), 0644))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "cmd", "probe"), 0755))

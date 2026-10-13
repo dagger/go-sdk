@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
@@ -1266,4 +1267,26 @@ func dealias(t types.Type) types.Type {
 		}
 		t = alias.Rhs()
 	}
+}
+
+// sourceImportName preserves author aliases when generating private field codecs.
+func sourceImportName(pkg *packages.Package, importPath string) string {
+	for _, file := range pkg.Syntax {
+		for _, spec := range file.Imports {
+			path, err := strconv.Unquote(spec.Path.Value)
+			if err != nil || path != importPath {
+				continue
+			}
+			if spec.Name != nil && spec.Name.Name != "_" {
+				return spec.Name.Name
+			}
+			if imported := pkg.Imports[importPath]; imported != nil {
+				return imported.Name
+			}
+		}
+	}
+	if imported := pkg.Imports[importPath]; imported != nil {
+		return imported.Name
+	}
+	return filepath.Base(importPath)
 }

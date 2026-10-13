@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"go/format"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"io/fs"
@@ -147,9 +148,18 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 	if funcs.cfg.UnifiedClient {
 		typeImports.WriteString("core \"dagger.io/dagger/core\"\n")
 	}
-	for path, pkg := range funcs.modulePkg.Imports {
-		if path != "dagger.io/dagger/core" {
-			fmt.Fprintf(&typeImports, "%s %q\n", pkg.Name, path)
+	parsedSource, err := parser.ParseFile(token.NewFileSet(), "dagger.gen.go", moduleSource, parser.ImportsOnly)
+	if err != nil {
+		return nil, fmt.Errorf("read dispatcher imports: %w", err)
+	}
+	existingImports := map[string]bool{}
+	for _, spec := range parsedSource.Imports {
+		path, _ := strconv.Unquote(spec.Path.Value)
+		existingImports[path] = true
+	}
+	for path := range funcs.modulePkg.Imports {
+		if path != "dagger.io/dagger/core" && !existingImports[path] {
+			fmt.Fprintf(&typeImports, "%s %q\n", sourceImportName(funcs.modulePkg, path), path)
 		}
 	}
 	moduleSource = bytes.Replace(moduleSource, []byte("import ("), []byte("import (\n"+typeImports.String()), 1)

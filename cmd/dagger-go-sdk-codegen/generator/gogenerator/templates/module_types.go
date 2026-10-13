@@ -28,6 +28,9 @@ type NamedParsedType interface {
 }
 
 func typeName(spec NamedParsedType) string {
+	if ref, ok := spec.(*parsedObjectTypeReference); ok && ref.goName != "" {
+		return ref.goName
+	}
 	if spec.ModuleName() == "" {
 		return fmt.Sprintf("dagger.%s", spec.Name())
 	}
@@ -106,7 +109,16 @@ func (ps *parseState) parseGoTypeReference(typ types.Type, named *types.Named, i
 		if !ps.isDaggerGenerated(named.Obj()) {
 			moduleName = ps.moduleName
 		}
+		goName := ""
+		if named.Obj().Pkg() != ps.pkg.Types && !ps.isDaggerGenerated(named.Obj()) {
+			alias := sourceImportName(ps.pkg, named.Obj().Pkg().Path())
+			goName = alias + "." + typeName
+			if alias == "." {
+				goName = typeName
+			}
+		}
 		return &parsedObjectTypeReference{
+			goName:     goName,
 			name:       typeName,
 			moduleName: moduleName,
 			isPtr:      isPtr,
@@ -222,6 +234,7 @@ func (spec *parsedSliceType) GoSubTypes() []types.Type {
 // parsedObjectTypeReference is a parsed object type that is referred to just by name rather
 // than with the full type definition
 type parsedObjectTypeReference struct {
+	goName     string
 	name       string
 	moduleName string
 
