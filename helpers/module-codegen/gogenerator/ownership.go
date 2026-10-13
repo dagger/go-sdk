@@ -65,7 +65,7 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 			return err
 		}
 	} else {
-		includes, err := ReadIncludes(root, cfg.ModuleName, "")
+		includes, err := ReadIncludes(root, "")
 		if err != nil {
 			return err
 		}

@@ -2,6 +2,7 @@ package gogenerator
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,283 +17,6 @@ func writeModuleFiles(t *testing.T, root string, files map[string]string) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 		require.NoError(t, os.WriteFile(path, []byte(contents), 0o644))
 	}
-}
-
-func readTestIncludes(t *testing.T, workspacePath string, files map[string]string) (*Includes, error) {
-	t.Helper()
-	root := t.TempDir()
-	writeModuleFiles(t, root, files)
-	return ReadIncludes(root, "ci", workspacePath)
-}
-
-func TestReadIncludesGrammar(t *testing.T) {
-	includes, err := readTestIncludes(t, "ci", map[string]string{
-		"main.go": "//go:resources ../lib/go.mod \"../with space\" `../raw dir`\n" +
-			"//go:resources\t../tabbed\n\npackage ci\n\ntype Ci struct{}\n",
-	})
-	require.NoError(t, err)
-	var paths, patterns []string
-	for _, include := range includes.Include {
-		paths = append(paths, include.Path)
-		patterns = append(patterns, include.Pattern)
-	}
-	require.Equal(t, []string{"../lib/go.mod", "../with space", "../raw dir", "../tabbed"}, paths)
-	require.Equal(t, []string{"lib/go.mod", "with space", "raw dir", "tabbed"}, patterns)
-	require.Equal(t, "main.go:1:1", includes.Include[0].Position)
-	require.Equal(t, "main.go:2:1", includes.Include[3].Position)
-}
-
-func TestReadIncludesIgnoresOtherComments(t *testing.T) {
-	includes, err := readTestIncludes(t, "ci", map[string]string{
-		"main.go": "// go:resources ../a\n//go:resourcesx ../b\n/* go:resources ../c */\n/*go:resources ../d*/\n" +
-			"package ci\n\ntype Ci struct{}\n\nconst text = `\n//go:resources ../e\n`\n",
-	})
-	require.NoError(t, err)
-	require.Empty(t, includes.Include)
-	require.Equal(t, "main.go", includes.MainFile)
-}
-
-func TestReadIncludesErrors(t *testing.T) {
-	for name, test := range map[string]struct {
-		workspacePath string
-		files         map[string]string
-		want          string
-	}{
-		"bad quote": {
-			files: map[string]string{"main.go": "//go:resources \"unterminated\npackage ci\n\ntype Ci struct{}\n"},
-			want:  `main.go:1:1: invalid quoted string in //go:resources: "unterminated`,
-		},
-		"bad escape": {
-			files: map[string]string{"main.go": "//go:resources \"\\q\"\npackage ci\n\ntype Ci struct{}\n"},
-			want:  `main.go:1:1: invalid quoted string in //go:resources: "\q"`,
-		},
-		"bad raw quote": {
-			files: map[string]string{"main.go": "//go:resources `open\npackage ci\n\ntype Ci struct{}\n"},
-			want:  "main.go:1:1: invalid quoted string in //go:resources: `open",
-		},
-		"no argument": {
-			files: map[string]string{"main.go": "//go:resources\npackage ci\n\ntype Ci struct{}\n"},
-			want:  "main.go:1:1: //go:resources needs at least one path",
-		},
-		"another file": {
-			files: map[string]string{
-				"main.go": "package ci\n\ntype Ci struct{}\n",
-				"lib.go":  "package ci\n\n\n\n//go:resources ../lib\nfunc lib() {}\n",
-			},
-			want: "lib.go:5:1: //go:resources belongs in the header of main.go, the file that declares type Ci",
-		},
-		"after the package clause": {
-			files: map[string]string{"main.go": "package ci\n\n//go:resources ../lib\ntype Ci struct{}\n"},
-			want:  "main.go:3:1: //go:resources belongs in the header of main.go, the file that declares type Ci",
-		},
-		"a subpackage": {
-			files: map[string]string{
-				"main.go":    "package ci\n\ntype Ci struct{}\n",
-				"sub/sub.go": "//go:resources ../lib\npackage sub\n",
-			},
-			want: "sub/sub.go:1:1: //go:resources belongs in the header of main.go, the file that declares type Ci",
-		},
-		"testdata": {
-			files: map[string]string{
-				"main.go":       "package ci\n\ntype Ci struct{}\n",
-				"testdata/x.go": "//go:resources ../lib\npackage x\n",
-			},
-			want: "testdata/x.go:1:1: //go:resources belongs in the header of main.go, the file that declares type Ci",
-		},
-		"a dot directory": {
-			files: map[string]string{
-				"main.go":      "package ci\n\ntype Ci struct{}\n",
-				".hidden/x.go": "//go:resources ../lib\npackage x\n",
-			},
-			want: ".hidden/x.go:1:1: //go:resources belongs in the header of main.go, the file that declares type Ci",
-		},
-		"an underscore directory": {
-			files: map[string]string{
-				"main.go":   "package ci\n\ntype Ci struct{}\n",
-				"_old/x.go": "//go:resources ../lib\npackage x\n",
-			},
-			want: "_old/x.go:1:1: //go:resources belongs in the header of main.go, the file that declares type Ci",
-		},
-		"no main object": {
-			files: map[string]string{"main.go": "//go:resources ../lib\npackage ci\n\ntype Other struct{}\n"},
-			want:  "main.go:1:1: //go:resources belongs in the header of the file that declares type Ci",
-		},
-		"absolute": {
-			files: map[string]string{"main.go": "//go:resources /x\npackage ci\n\ntype Ci struct{}\n"},
-			want:  `main.go:1:1: //go:resources path "/x" is absolute; write it relative to the module directory`,
-		},
-		"absolute exclude": {
-			files: map[string]string{"main.go": "//go:resources ../lib !/x\npackage ci\n\ntype Ci struct{}\n"},
-			want:  `main.go:1:1: //go:resources path "!/x" is absolute; write it relative to the module directory`,
-		},
-		"leaves the workspace": {
-			workspacePath: "ci",
-			files:         map[string]string{"main.go": "//go:resources ../../../x\npackage ci\n\ntype Ci struct{}\n"},
-			want:          `main.go:1:1: //go:resources path "../../../x" leaves the workspace root`,
-		},
-		"module at the workspace root": {
-			workspacePath: ".",
-			files:         map[string]string{"main.go": "//go:resources ../x\npackage ci\n\ntype Ci struct{}\n"},
-			want:          `main.go:1:1: //go:resources path "../x" leaves the workspace root`,
-		},
-		"inside the module": {
-			files: map[string]string{"main.go": "//go:resources data\npackage ci\n\ntype Ci struct{}\n"},
-			want:  `main.go:1:1: //go:resources path "data" is inside the module directory; only "!data" is allowed there`,
-		},
-		"back into the module": {
-			workspacePath: "apps/ci",
-			files:         map[string]string{"main.go": "//go:resources ../ci/data\npackage ci\n\ntype Ci struct{}\n"},
-			want:          `main.go:1:1: //go:resources path "../ci/data" is inside the module directory; only "!../ci/data" is allowed there`,
-		},
-		"whole module excluded": {
-			files: map[string]string{"main.go": "//go:resources ../lib !.\npackage ci\n\ntype Ci struct{}\n"},
-			want:  `main.go:1:1: //go:resources path "!." excludes the whole module directory`,
-		},
-		"empty exclude": {
-			files: map[string]string{"main.go": "//go:resources ../lib !\npackage ci\n\ntype Ci struct{}\n"},
-			want:  `main.go:1:1: //go:resources path "!" is empty`,
-		},
-		"excludes only": {
-			files: map[string]string{"main.go": "//go:resources !data !../lib\npackage ci\n\ntype Ci struct{}\n"},
-			want:  "main.go:1:1: //go:resources names no path outside the module directory",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			workspacePath := test.workspacePath
-			if workspacePath == "" {
-				workspacePath = "repo/ci"
-			}
-			_, err := readTestIncludes(t, workspacePath, test.files)
-			require.EqualError(t, err, test.want)
-		})
-	}
-}
-
-func TestReadIncludesHeaderAndPackageDoc(t *testing.T) {
-	includes, err := readTestIncludes(t, "ci", map[string]string{
-		"main.go": "//go:build !ignore\n\n//go:resources ../lib/go.mod\n\n" +
-			"// Package ci builds things.\n//\n//go:resources ../lib/greet\npackage ci\n\ntype Ci struct{}\n",
-		"main_test.go": "package ci\n",
-	})
-	require.NoError(t, err)
-	require.Len(t, includes.Include, 2)
-	require.Equal(t, "main.go:7:1", includes.Include[1].Position)
-}
-
-func TestReadIncludesAnchor(t *testing.T) {
-	for name, test := range map[string]struct {
-		workspacePath string
-		directive     string
-		anchor        string
-		modulePath    string
-		include       []string
-		exclude       []string
-		moduleExclude []string
-		resources     []string
-	}{
-		"one level": {
-			workspacePath: "ci",
-			directive:     "../lib/go.mod ../lib/greet !../lib/greet/testdata !data",
-			anchor:        "..",
-			modulePath:    "ci",
-			include:       []string{"lib/go.mod", "lib/greet"},
-			exclude:       []string{"lib/greet/testdata"},
-			moduleExclude: []string{"data"},
-			resources:     []string{"../lib/go.mod", "../lib/greet", "!../lib/greet/testdata", "!data"},
-		},
-		"two levels": {
-			workspacePath: "apps/ci",
-			directive:     "../lib/go.mod ../../go.mod ../../shared/*.go ../../shared/../tools !../../shared/gen",
-			anchor:        "../..",
-			modulePath:    "apps/ci",
-			include:       []string{"apps/lib/go.mod", "go.mod", "shared/*.go", "tools"},
-			exclude:       []string{"shared/gen"},
-			resources:     []string{"../lib/go.mod", "../../go.mod", "../../shared/*.go", "../../tools", "!../../shared/gen"},
-		},
-		"exclude above the anchor": {
-			workspacePath: "apps/ci",
-			directive:     "../lib !../../other !../ci/data !./data",
-			anchor:        "..",
-			modulePath:    "ci",
-			include:       []string{"lib"},
-			moduleExclude: []string{"data"},
-			resources:     []string{"../lib", "!data"},
-		},
-		"the anchor itself": {
-			workspacePath: "apps/ci",
-			directive:     ".. ../lib",
-			anchor:        "..",
-			modulePath:    "ci",
-			include:       []string{"**", "lib"},
-			resources:     []string{"..", "../lib"},
-		},
-		"duplicates": {
-			workspacePath: "ci",
-			directive:     "../lib ../lib/ ./../lib !../x !../x/ !data !./data",
-			anchor:        "..",
-			modulePath:    "ci",
-			include:       []string{"lib"},
-			exclude:       []string{"x"},
-			moduleExclude: []string{"data"},
-			resources:     []string{"../lib", "!../x", "!data"},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			includes, err := readTestIncludes(t, test.workspacePath, map[string]string{
-				"main.go": "//go:resources " + test.directive + "\npackage ci\n\ntype Ci struct{}\n",
-			})
-			require.NoError(t, err)
-			var include []string
-			for _, pattern := range includes.Include {
-				include = append(include, pattern.Pattern)
-			}
-			require.Equal(t, test.anchor, includes.Anchor)
-			require.Equal(t, test.modulePath, includes.ModulePath)
-			require.Equal(t, test.include, include)
-			require.Equal(t, test.exclude, includes.Exclude)
-			require.Equal(t, test.moduleExclude, includes.ModuleExclude)
-			require.Equal(t, test.resources, includes.Resources)
-		})
-	}
-}
-
-// Generation runs on the module directory under its anchor and has no
-// workspace path; the anchor comes from the file system.
-func TestReadIncludesWithoutWorkspacePath(t *testing.T) {
-	buildRoot := t.TempDir()
-	root := filepath.Join(buildRoot, "apps", "ci")
-	writeModuleFiles(t, root, map[string]string{
-		"main.go": "//go:resources ../../shared !../ci/data\npackage ci\n\ntype Ci struct{}\n",
-	})
-	includes, err := ReadIncludes(root, "ci", "")
-	require.NoError(t, err)
-	require.Equal(t, "../..", includes.Anchor)
-	require.Equal(t, "apps/ci", includes.ModulePath)
-	require.Equal(t, "shared", includes.Include[0].Pattern)
-	require.Equal(t, []string{"data"}, includes.ModuleExclude)
-}
-
-func TestReadIncludesWithoutDirective(t *testing.T) {
-	includes, err := readTestIncludes(t, "ci", map[string]string{
-		"main.go":   "package ci\n\ntype Ci struct{}\n",
-		"broken.go": "package ci\n\nfunc broken( {\n",
-	})
-	require.NoError(t, err)
-	require.Empty(t, includes.Include)
-	require.Equal(t, ".", includes.Anchor)
-	require.False(t, strings.Contains(includes.ModulePath, "/"))
-}
-
-func TestReadIncludesSkipsOtherModules(t *testing.T) {
-	includes, err := readTestIncludes(t, "ci", map[string]string{
-		"main.go":                       "//go:resources ../lib\npackage ci\n\ntype Ci struct{}\n",
-		"vendor/example.com/dep/dep.go": "//go:resources ../dep\npackage dep\n",
-		"tools/go.mod":                  "module example.com/tools\n",
-		"tools/main.go":                 "//go:resources ../../shared\npackage main\n\ntype Ci struct{}\n",
-	})
-	require.NoError(t, err)
-	require.Len(t, includes.Include, 1)
-	require.Equal(t, "lib", includes.Include[0].Pattern)
 }
 
 func coverageTree(t *testing.T, files map[string]string) string {
@@ -314,7 +38,7 @@ func coverageTree(t *testing.T, files map[string]string) string {
 	return filepath.Join(buildRoot, "ci")
 }
 
-func TestCheckIncludeCoverage(t *testing.T) {
+func TestReadIncludes(t *testing.T) {
 	lib := map[string]string{
 		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n",
 		"lib/greet/greet.go": "package greet\n\nfunc Hello() {}\n",
@@ -329,104 +53,311 @@ func TestCheckIncludeCoverage(t *testing.T) {
 		}
 		return files
 	}
+	covered := []string{"../lib/go.mod", "../lib/greet/*.go"}
 	for name, test := range map[string]struct {
-		files map[string]string
-		want  string
+		files     map[string]string
+		links     map[string]string
+		resources []string
+		want      string
 	}{
-		"covered": {files: lib},
+		"imported package": {
+			files: with(map[string]string{
+				"lib/greet/greet_test.go": "package greet\n\nimport _ \"example.com/lib/unused\"\n",
+				"lib/other/other.go":      "package other\n",
+			}),
+			resources: covered,
+		},
 		"replace go.mod missing": {
 			files: map[string]string{"lib/greet/greet.go": lib["lib/greet/greet.go"]},
-			want:  "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod; add it to //go:resources in main.go",
+			want:  "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod, which is missing",
 		},
 		"package missing": {
 			files: map[string]string{"lib/go.mod": lib["lib/go.mod"]},
-			want:  "main.go:3:8: package example.com/lib/greet is in ../lib (go.mod:7); add ../lib/greet to //go:resources in main.go",
+			want:  "main.go:3:8: package example.com/lib/greet is in ../lib (go.mod:7), but ../lib/greet has no Go files",
 		},
 		"package without Go files": {
 			files: map[string]string{"lib/go.mod": lib["lib/go.mod"], "lib/greet/greeting.txt": "hello\n"},
-			want:  "main.go:3:8: package example.com/lib/greet is in ../lib (go.mod:7); add ../lib/greet to //go:resources in main.go",
+			want:  "main.go:3:8: package example.com/lib/greet is in ../lib (go.mod:7), but ../lib/greet has no Go files",
 		},
 		"build-tagged import": {
 			files: with(map[string]string{
-				"ci/other.go": "//go:build never\n\npackage ci\n\nimport _ \"example.com/lib/tagged\"\n",
+				"ci/other.go":     "//go:build never\n\npackage ci\n\nimport _ \"example.com/lib/tagged\"\n",
+				"lib/tagged/t.go": "package tagged\n",
 			}),
-			want: "other.go:5:8: package example.com/lib/tagged is in ../lib (go.mod:7); add ../lib/tagged to //go:resources in main.go",
+			resources: append(covered, "../lib/tagged/*.go"),
 		},
 		"test import": {
 			files: with(map[string]string{
-				"ci/main_test.go": "package ci\n\nimport _ \"example.com/lib/testutil\"\n",
+				"ci/main_test.go":    "package ci\n\nimport _ \"example.com/lib/testutil\"\n",
+				"lib/testutil/tu.go": "package testutil\n",
 			}),
-			want: "main_test.go:3:8: package example.com/lib/testutil is in ../lib (go.mod:7); add ../lib/testutil to //go:resources in main.go",
+			resources: append(covered, "../lib/testutil/*.go"),
 		},
 		"transitive import": {
 			files: with(map[string]string{
 				"lib/greet/greet.go": "package greet\n\nimport _ \"example.com/lib/words\"\n\nfunc Hello() {}\n",
+				"lib/words/words.go": "package words\n",
 			}),
-			want: "../lib/greet/greet.go:3:8: package example.com/lib/words is in ../lib (go.mod:7); add ../lib/words to //go:resources in main.go",
+			resources: append(covered, "../lib/words/*.go"),
 		},
 		"transitive replace": {
 			files: with(map[string]string{
 				"ci/go.mod":          "module example.com/ci\n\ngo 1.26.1\n\nrequire (\n\texample.com/lib v0.0.0\n\texample.com/tools v0.0.0\n)\n\nreplace example.com/lib => ../lib\n\nreplace example.com/tools => ../tools\n",
 				"lib/greet/greet.go": "package greet\n\nimport _ \"example.com/tools/fmt\"\n\nfunc Hello() {}\n",
 				"tools/go.mod":       "module example.com/tools\n\ngo 1.26.1\n",
+				"tools/fmt/fmt.go":   "package fmt\n",
 			}),
-			want: "../lib/greet/greet.go:3:8: package example.com/tools/fmt is in ../tools (go.mod:12); add ../tools/fmt to //go:resources in main.go",
+			resources: append(covered, "../tools/fmt/*.go", "../tools/go.mod"),
 		},
 		"required by a replace target": {
 			files: with(map[string]string{
 				"ci/go.mod":  "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/tools v1.0.0 => ../tools\n",
 				"lib/go.mod": "module example.com/lib\n\ngo 1.26.1\n\nrequire example.com/tools v1.0.0\n",
 			}),
-			want: "go.mod:9: replace example.com/tools v1.0.0 => ../tools reads ../tools/go.mod; add it to //go:resources in main.go",
+			resources: covered,
+		},
+		"required but not imported": {
+			files: with(map[string]string{
+				"ci/go.mod":    "module example.com/ci\n\ngo 1.26.1\n\nrequire (\n\texample.com/lib v0.0.0\n\texample.com/tools v0.0.0 // indirect\n)\n\nreplace example.com/lib => ../lib\n\nreplace example.com/tools => ../tools\n",
+				"tools/go.mod": "module example.com/tools\n\ngo 1.26.1\n",
+			}),
+			resources: append(covered, "../tools/go.mod"),
 		},
 		"replace not required": {
 			files: with(map[string]string{
 				"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/unused => ../unused\n",
 			}),
+			resources: covered,
+		},
+		"replace leaves the workspace": {
+			files: with(map[string]string{
+				"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../../lib\n",
+			}),
+			want: "go.mod:7: replace example.com/lib => ../../lib leaves the workspace root",
 		},
 		"replace inside the module": {
 			files: map[string]string{
-				"ci/go.mod":            "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ./third_party/lib\n",
-				"ci/third_party/lib/x": "",
+				"ci/go.mod":                     "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ./third_party/lib\n",
+				"ci/third_party/lib/go.mod":     "module example.com/lib\n",
+				"ci/third_party/lib/greet/g.go": lib["lib/greet/greet.go"],
 			},
 		},
-		"no main object": {
+		"outside import from inside the module": {
 			files: map[string]string{
-				"ci/main.go": "package ci\n\nimport \"example.com/lib/greet\"\n\nvar _ = greet.Hello\n",
+				"ci/go.mod":                     "module example.com/ci\n\ngo 1.26.1\n\nrequire (\n\texample.com/lib v0.0.0\n\texample.com/tools v0.0.0\n)\n\nreplace example.com/lib => ./third_party/lib\n\nreplace example.com/tools => ../tools\n",
+				"ci/third_party/lib/go.mod":     "module example.com/lib\n",
+				"ci/third_party/lib/greet/g.go": "package greet\n\nimport _ \"example.com/tools/fmt\"\n\nfunc Hello() {}\n",
+				"tools/go.mod":                  "module example.com/tools\n\ngo 1.26.1\n",
+				"tools/fmt/fmt.go":              "package fmt\n",
 			},
-			want: "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod; add it to //go:resources in the file that declares type Ci",
+			resources: []string{"../tools/fmt/*.go", "../tools/go.mod"},
+		},
+		"own packages under a replaced path": {
+			files: with(map[string]string{
+				"ci/go.mod":        "module example.com/lib/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n",
+				"ci/sub/sub.go":    "package sub\n\nimport _ \"example.com/lib/ci/internal\"\n",
+				"ci/internal/i.go": "package internal\n",
+			}),
+			resources: covered,
+		},
+		"skipped directories": {
+			files: with(map[string]string{
+				"ci/testdata/x/x.go": "package x\n\nimport _ \"example.com/lib/missing\"\n",
+				"ci/vendor/v/v.go":   "package v\n\nimport _ \"example.com/lib/missing\"\n",
+				"ci/tool/go.mod":     "module example.com/tool\n",
+				"ci/tool/tool.go":    "package tool\n\nimport _ \"example.com/lib/missing\"\n",
+			}),
+			resources: covered,
+		},
+		"embeds": {
+			files: with(map[string]string{
+				"lib/greet/greet.go": "package greet\n\nimport \"embed\"\n\n//go:embed greeting.txt \"with space.txt\"\nvar greeting string\n\n//go:embed all:templates\nvar templates embed.FS\n\nfunc Hello() {}\n",
+			}),
+			resources: append(covered, "../lib/greet/greeting.txt", "../lib/greet/templates", "../lib/greet/with space.txt"),
+		},
+		"invalid embed": {
+			files: with(map[string]string{
+				"lib/greet/greet.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed \"unterminated\nvar s string\n",
+			}),
+			want: "../lib/greet/greet.go:5:1: invalid quoted string in //go:embed: \"unterminated",
+		},
+		"embed outside the package": {
+			files: with(map[string]string{
+				"lib/greet/greet.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed ../../../x.txt\nvar s string\n",
+			}),
+			want: "../lib/greet/greet.go:5:1: invalid pattern in //go:embed: ../../../x.txt",
+		},
+		"assembly": {
+			files: with(map[string]string{
+				"lib/greet/greet_amd64.s": "TEXT ·hello(SB),0,$0\n",
+				"lib/greet/greet_arm64.s": "TEXT ·hello(SB),0,$0\n",
+				"lib/greet/textflag.h":    "#define NOSPLIT 4\n",
+			}),
+			resources: append(covered, "../lib/greet/*.h", "../lib/greet/*.s"),
+		},
+		"replace target linked outside the workspace": {
+			links: map[string]string{"lib": "$OUTSIDE/lib"},
+			want:  "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod through a symlink; symlinks outside the module directory are refused",
+		},
+		"replace target linked inside the workspace": {
+			files: map[string]string{"real/go.mod": lib["lib/go.mod"], "real/greet/greet.go": lib["lib/greet/greet.go"]},
+			links: map[string]string{"lib": "real"},
+			want:  "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod through a symlink; symlinks outside the module directory are refused",
+		},
+		"package linked outside the workspace": {
+			files: map[string]string{"lib/go.mod": lib["lib/go.mod"]},
+			links: map[string]string{"lib/greet": "$OUTSIDE/lib/greet"},
+			want:  "main.go:3:8: package example.com/lib/greet reads ../lib/greet through a symlink; symlinks outside the module directory are refused",
+		},
+		"Go file linked outside the workspace": {
+			files: map[string]string{"lib/go.mod": lib["lib/go.mod"], "lib/greet/hello.go": "package greet\n"},
+			links: map[string]string{"lib/greet/link.go": "$OUTSIDE/lib/greet/greet.go"},
+			want:  "../lib/greet/link.go is a symlink; symlinks outside the module directory are refused",
+		},
+		"embedded file linked outside the workspace": {
+			files: with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar s string\n"}),
+			links: map[string]string{"lib/greet/data.txt": "$OUTSIDE/lib/go.mod"},
+			want:  "../lib/greet/data.go:5:1: ../lib/greet/data.txt is a symlink; symlinks outside the module directory are refused",
+		},
+		"embedded file linked inside the workspace": {
+			files: with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar s string\n"}),
+			links: map[string]string{"lib/greet/data.txt": "../go.mod"},
+			want:  "../lib/greet/data.go:5:1: ../lib/greet/data.txt is a symlink; symlinks outside the module directory are refused",
+		},
+		"embedded directory containing a symlink": {
+			files: with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed static\nvar s string\n", "lib/greet/static/a.txt": "a\n"}),
+			links: map[string]string{"lib/greet/static/b.txt": "$OUTSIDE/lib/go.mod"},
+			want:  "../lib/greet/data.go:5:1: ../lib/greet/static/b.txt is a symlink; symlinks outside the module directory are refused",
+		},
+		"symlinked embedded directory": {
+			files: with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed static\nvar s string\n"}),
+			links: map[string]string{"lib/greet/static": "$OUTSIDE/lib/greet"},
+			want:  "../lib/greet/data.go:5:1: ../lib/greet/static is a symlink; symlinks outside the module directory are refused",
+		},
+		"embedded file under a symlinked directory": {
+			files: with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed sub/greet.go\nvar s string\n"}),
+			links: map[string]string{"lib/greet/sub": "$OUTSIDE/lib/greet"},
+			want:  "../lib/greet/data.go:5:1: ../lib/greet/sub is a symlink; symlinks outside the module directory are refused",
+		},
+		"hidden symlink in an all: embedded directory": {
+			files: with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed all:static\nvar s string\n", "lib/greet/static/a.txt": "a\n"}),
+			links: map[string]string{"lib/greet/static/.hidden": "$OUTSIDE/lib/go.mod"},
+			want:  "../lib/greet/data.go:5:1: ../lib/greet/static/.hidden is a symlink; symlinks outside the module directory are refused",
+		},
+		"hidden symlink that go:embed skips": {
+			files:     with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed static\nvar s string\n", "lib/greet/static/a.txt": "a\n"}),
+			links:     map[string]string{"lib/greet/static/.hidden": "$OUTSIDE/lib/go.mod"},
+			resources: append(covered, "../lib/greet/static"),
+		},
+		"embedded directory that is a nested module": {
+			files: with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed static\nvar s string\n", "lib/greet/static/go.mod": "module example.com/static\n", "lib/greet/static/a.txt": "a\n"}),
+			want:  "../lib/greet/data.go:5:1: cannot embed directory ../lib/greet/static: in different module",
+		},
+		"nested module that go:embed skips": {
+			files:     with(map[string]string{"lib/greet/data.go": "package greet\n\nimport _ \"embed\"\n\n//go:embed static\nvar s string\n", "lib/greet/static/a.txt": "a\n", "lib/greet/static/sub/go.mod": "module example.com/sub\n"}),
+			links:     map[string]string{"lib/greet/static/sub/b.txt": "$OUTSIDE/lib/go.mod"},
+			resources: append(covered, "../lib/greet/static"),
+		},
+		"no replace": {
+			files: map[string]string{
+				"ci/go.mod":  "module example.com/ci\n\ngo 1.26.1\n",
+				"ci/main.go": "package ci\n\ntype Ci struct{}\n",
+			},
+		},
+		"no go.mod": {
+			files: map[string]string{"ci/go.mod": ""},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := coverageTree(t, test.files)
-			mainFile, err := findMainFile(root, "Ci")
-			require.NoError(t, err)
-			err = checkIncludeCoverage(root, mainFile, "Ci")
-			if test.want == "" {
-				require.NoError(t, err)
-			} else {
+			outside := t.TempDir()
+			writeModuleFiles(t, outside, lib)
+			for name, target := range test.links {
+				require.NoError(t, os.Symlink(strings.ReplaceAll(target, "$OUTSIDE", outside), filepath.Join(filepath.Dir(root), name)))
+			}
+			includes, err := ReadIncludes(root, "ci")
+			if test.want != "" {
 				require.EqualError(t, err, test.want)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.resources, includes.Resources)
+			if len(test.resources) == 0 {
+				require.Equal(t, ".", includes.Anchor)
+				require.Equal(t, ".", includes.ModulePath)
+				require.Nil(t, includes.entrypoint())
+				return
+			}
+			require.Equal(t, "..", includes.Anchor)
+			require.Equal(t, "ci", includes.ModulePath)
+			for i, include := range includes.Include {
+				require.Equal(t, test.resources[i], include.Path)
+				require.Equal(t, path.Join("ci", include.Path), include.Pattern)
 			}
 		})
 	}
 }
 
+// Generation runs on the module directory under its anchor and has no
+// workspace path; the anchor comes from the file system.
+func TestReadIncludesAnchor(t *testing.T) {
+	buildRoot := t.TempDir()
+	writeModuleFiles(t, buildRoot, map[string]string{
+		"apps/ci/go.mod":      "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/shared v0.0.0\n\nreplace example.com/shared => ../../shared\n",
+		"apps/ci/main.go":     "package ci\n\nimport _ \"example.com/shared/util\"\n",
+		"shared/go.mod":       "module example.com/shared\n",
+		"shared/util/util.go": "package util\n",
+	})
+	root := filepath.Join(buildRoot, "apps", "ci")
+	for _, workspacePath := range []string{"apps/ci", ""} {
+		includes, err := ReadIncludes(root, workspacePath)
+		require.NoError(t, err)
+		require.Equal(t, "../..", includes.Anchor)
+		require.Equal(t, "apps/ci", includes.ModulePath)
+		require.Equal(t, []string{"../../shared/go.mod", "../../shared/util/*.go"}, includes.Resources)
+		require.Equal(t, "shared/go.mod", includes.Include[0].Pattern)
+	}
+}
+
+// A symlink above the module directory leaves the paths it reads unchanged.
+func TestReadIncludesThroughLinkedWorkspace(t *testing.T) {
+	root := coverageTree(t, map[string]string{
+		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n",
+		"lib/greet/greet.go": "package greet\n\nfunc Hello() {}\n",
+	})
+	link := filepath.Join(t.TempDir(), "workspace")
+	require.NoError(t, os.Symlink(filepath.Dir(root), link))
+	includes, err := ReadIncludes(filepath.Join(link, "ci"), "ci")
+	require.NoError(t, err)
+	require.Equal(t, []string{"../lib/go.mod", "../lib/greet/*.go"}, includes.Resources)
+}
+
+func TestLocalReplaceTargets(t *testing.T) {
+	root := coverageTree(t, map[string]string{
+		"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\n" +
+			"replace example.com/lib => ../lib\n\nreplace example.com/unused => ../unused\n\nreplace example.com/vendored => ./third_party/vendored\n",
+	})
+	targets, err := LocalReplaceTargets(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{"../lib", "../unused"}, targets)
+
+	targets, err = LocalReplaceTargets(t.TempDir())
+	require.NoError(t, err)
+	require.Empty(t, targets)
+}
+
 func TestWriteCollectionBuildOverlaysTheIncludedModuleSource(t *testing.T) {
 	root := t.TempDir()
-	entrypoint := []byte("  let assembled(workspace: Workspace!): Directory! {\n" +
-		"    if (here.file(mark).contents != currentModule.source.file(mark).contents) {\n" +
-		"    }\n" +
+	entrypoint := []byte("  let assembled: Directory! {\n" +
 		"    let source = currentModule.source\n" +
-		"    workspace\n" +
-		"      .directory(\"..\", include: [\"lib\"], exclude: [\"app\"], gitignore: true)\n" +
-		"      .withDirectory(\"app\", source)\n" +
+		"    currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)\n" +
 		"  }\n\n" +
-		"  let dispatch(workspace: Workspace!): File! {\n" +
-		"    let source = assembled(workspace)\n")
+		"  let dispatch: File! {\n" +
+		"    let source = assembled\n")
 	got, err := writeCollectionBuild(root, entrypoint, map[string][]byte{"main.go": []byte("package app\n")})
 	require.NoError(t, err)
 	require.Contains(t, string(got), "    let source = currentModule.source\n"+
 		"      .withFile(\"main.go\", currentModule.source.file(\"internal/dagger/entrypoint/runtime/main.go.src\"))\n"+
-		"    workspace\n")
-	require.Contains(t, string(got), "    let source = assembled(workspace)\n")
+		"    currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)\n")
+	require.Contains(t, string(got), "    let source = assembled\n")
 }

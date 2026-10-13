@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"module-codegen/gogenerator"
 )
@@ -23,6 +24,9 @@ func main() {
 func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "includes" {
 		return runIncludes(os.Args[2:])
+	}
+	if len(os.Args) > 1 && os.Args[1] == "replaces" {
+		return runReplaces(os.Args[2:])
 	}
 	var cfg gogenerator.GenerateConfig
 	flag.StringVar(&cfg.ModuleRoot, "module-root", "", "path to the Go module implementation")
@@ -54,47 +58,37 @@ type includeEntry struct {
 	Pattern  string `json:"pattern"`
 }
 
-// runIncludes writes the module's //go:resources list to a directory, one
-// file per part, so the caller can read the listed paths from its workspace
-// before generation. List files hold one JSON value per line.
+// runIncludes writes what the module's build reads outside its module
+// directory to a directory, one file per part, so the caller can read those
+// paths from its workspace before generation. The include file holds one JSON
+// value per line.
 func runIncludes(args []string) error {
 	flags := flag.NewFlagSet("includes", flag.ContinueOnError)
 	root := flags.String("module-root", "", "path to the Go module implementation")
-	name := flags.String("module-name", "", "Dagger module name")
 	workspacePath := flags.String("workspace-path", "", "module directory relative to the workspace root")
 	output := flags.String("output", "", "directory that receives the include list")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *root == "" || *name == "" || *workspacePath == "" || *output == "" {
-		return fmt.Errorf("includes needs --module-root, --module-name, --workspace-path and --output")
+	if *root == "" || *workspacePath == "" || *output == "" {
+		return fmt.Errorf("includes needs --module-root, --workspace-path and --output")
 	}
-	includes, err := gogenerator.ReadIncludes(*root, *name, *workspacePath)
+	includes, err := gogenerator.ReadIncludes(*root, *workspacePath)
 	if err != nil {
 		return err
 	}
-	entries := make([]any, len(includes.Include))
-	for i, include := range includes.Include {
-		entries[i] = includeEntry(include)
+	var lines bytes.Buffer
+	for _, include := range includes.Include {
+		line, err := json.Marshal(includeEntry(include))
+		if err != nil {
+			return err
+		}
+		lines.Write(append(line, '\n'))
 	}
 	files := map[string][]byte{
-		"anchor": []byte(path.Join(*workspacePath, includes.Anchor)),
-		"module": []byte(includes.ModulePath),
-	}
-	for name, values := range map[string][]any{
-		"include":        entries,
-		"exclude":        anySlice(includes.Exclude),
-		"module-exclude": anySlice(includes.ModuleExclude),
-	} {
-		var lines bytes.Buffer
-		for _, value := range values {
-			line, err := json.Marshal(value)
-			if err != nil {
-				return err
-			}
-			lines.Write(append(line, '\n'))
-		}
-		files[name] = lines.Bytes()
+		"anchor":  []byte(path.Join(*workspacePath, includes.Anchor)),
+		"module":  []byte(includes.ModulePath),
+		"include": lines.Bytes(),
 	}
 	if err := os.MkdirAll(*output, 0o755); err != nil {
 		return err
@@ -107,10 +101,27 @@ func runIncludes(args []string) error {
 	return nil
 }
 
-func anySlice(values []string) []any {
-	out := make([]any, len(values))
-	for i, value := range values {
-		out[i] = value
+// runReplaces prints the local replace targets of go.mod outside the module
+// directory and inside the workspace, relative to the workspace root, one per
+// line, so the caller can read their sources before it scans the module.
+func runReplaces(args []string) error {
+	flags := flag.NewFlagSet("replaces", flag.ContinueOnError)
+	root := flags.String("module-root", "", "path to the Go module implementation")
+	workspacePath := flags.String("workspace-path", "", "module directory relative to the workspace root")
+	if err := flags.Parse(args); err != nil {
+		return err
 	}
-	return out
+	if *root == "" || *workspacePath == "" {
+		return fmt.Errorf("replaces needs --module-root and --workspace-path")
+	}
+	targets, err := gogenerator.LocalReplaceTargets(*root)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if p := path.Join(*workspacePath, target); p != ".." && !strings.HasPrefix(p, "../") {
+			fmt.Println(p)
+		}
+	}
+	return nil
 }

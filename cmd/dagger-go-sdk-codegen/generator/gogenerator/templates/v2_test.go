@@ -12,6 +12,8 @@ import (
 
 	. "github.com/dave/jennifer/jen" //nolint:staticcheck
 	"github.com/stretchr/testify/require"
+
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 func TestDeveloperArgEncoding(t *testing.T) {
@@ -212,11 +214,7 @@ func TestEntrypointSourceGolden(t *testing.T) {
 
 func includeFixture() *v2Module {
 	mod := entrypointFixture()
-	mod.include = &EntrypointInclude{
-		Anchor:     "..",
-		ModulePath: "hello-world",
-		Resources:  []string{"../lib/go.mod", "../lib/greet", "!../lib/greet/testdata", "!data"},
-	}
+	mod.include = &EntrypointInclude{Resources: []string{"../lib/go.mod", "../lib/greet/*.go", "../lib/greet/greeting.txt"}}
 	return mod
 }
 
@@ -224,20 +222,19 @@ func TestEntrypointIncludeGolden(t *testing.T) {
 	source, err := includeFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
 	require.NoError(t, err)
 	got := string(source)
-	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint_include.golden", got), got)
+	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint_engine_resources.golden", got), got)
 }
 
-func TestEntrypointIncludeBuildsFromResources(t *testing.T) {
-	source, err := includeFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
-	require.NoError(t, err)
-	text := string(source)
-	require.Contains(t, text, "  pub resources: [String!]! {\n    [\"../lib/go.mod\", \"../lib/greet\", \"!../lib/greet/testdata\", \"!data\"]\n  }\n")
-	for _, literal := range []string{`"../lib/go.mod"`, `"../lib/greet"`, `"!../lib/greet/testdata"`, `"!data"`} {
-		require.Equal(t, 1, strings.Count(text, literal), literal)
+func TestLoadsResources(t *testing.T) {
+	schema := func(fields ...string) *introspection.Schema {
+		currentModule := &introspection.Type{Name: "CurrentModule"}
+		for _, name := range fields {
+			currentModule.Fields = append(currentModule.Fields, &introspection.Field{Name: name})
+		}
+		return &introspection.Schema{Types: introspection.Types{{Name: "Query"}, currentModule}}
 	}
-	for _, literal := range []string{`"lib/go.mod"`, `"lib/greet"`, `"lib/greet/testdata"`, `"data"`} {
-		require.NotContains(t, text, literal)
-	}
-	require.Equal(t, 1, strings.Count(text, ".directory(\"..\", include: anchored(included), exclude: anchored(outside) + [\"hello-world\"], gitignore: true)"))
-	require.Equal(t, 2, strings.Count(text, "assembled(workspace)"))
+	require.True(t, loadsResources(schema("source", "contextDirectory", "sourceSubpath")))
+	require.False(t, loadsResources(schema("source", "contextDirectory")))
+	require.False(t, loadsResources(schema("source", "sourceSubpath")))
+	require.False(t, loadsResources(&introspection.Schema{Types: introspection.Types{{Name: "Query"}}}))
 }

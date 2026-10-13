@@ -2,11 +2,10 @@ package gogenerator
 
 import (
 	"fmt"
-	"go/ast"
 	"go/parser"
-	"go/scanner"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,32 +13,26 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/iancoleman/strcase"
 	"golang.org/x/mod/modfile"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 )
 
-const includeDirective = "//go:resources"
+const embedDirective = "//go:embed"
 
-// Includes is the //go:resources list of a module. An empty Include means
-// the module has no directive.
+const symlinkRefusal = "symlinks outside the module directory are refused"
+
+// Includes is what a module's build reads outside its module directory. An
+// empty Include means the build reads nothing outside it.
 type Includes struct {
-	// MainFile declares the module's main object, relative to the module
-	// directory. It is empty when no file declares it.
-	MainFile string
 	// Anchor is the directory that holds the module directory and every
 	// included path, relative to the module directory, such as "..".
 	Anchor string
 	// ModulePath is the module directory relative to the anchor.
 	ModulePath string
 	Include    []IncludePattern
-	// Exclude holds patterns relative to the anchor.
-	Exclude []string
-	// ModuleExclude holds patterns relative to the module directory.
-	ModuleExclude []string
 	// Resources holds the same list as clean patterns relative to the module
-	// directory: the includes, then the excludes with a leading "!".
+	// directory.
 	Resources []string
 }
 
@@ -49,50 +42,28 @@ func (includes *Includes) entrypoint() *templates.EntrypointInclude {
 	if len(includes.Include) == 0 {
 		return nil
 	}
-	return &templates.EntrypointInclude{
-		Anchor:     includes.Anchor,
-		ModulePath: includes.ModulePath,
-		Resources:  includes.Resources,
-	}
+	return &templates.EntrypointInclude{Resources: includes.Resources}
 }
 
 type IncludePattern struct {
-	// Position is the directive's file:line:column, relative to the module
-	// directory.
+	// Position is the go.mod line, import or //go:embed line that needs the
+	// path, relative to the module directory.
 	Position string
-	// Path is the argument as written, relative to the module directory.
+	// Path is relative to the module directory.
 	Path string
 	// Pattern is relative to the anchor.
 	Pattern string
 }
 
-type includeArg struct {
-	position string
-	text     string
-}
-
-// ReadIncludes reads the //go:resources directives of the module at root.
-// workspacePath is the module directory relative to the workspace root.
-// Without it, paths are bounded by the file system root instead.
-func ReadIncludes(root, moduleName, workspacePath string) (*Includes, error) {
+// ReadIncludes lists what the build of the module at root reads outside its
+// module directory, in path order. workspacePath is the module directory
+// relative to the workspace root. Without it, paths are bounded by the file
+// system root instead.
+func ReadIncludes(root, workspacePath string) (*Includes, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
-	typeName := strcase.ToCamel(moduleName)
-	mainFile, err := findMainFile(root, typeName)
-	if err != nil {
-		return nil, err
-	}
-	header, err := scanIncludeDirectives(root, mainFile, typeName)
-	if err != nil {
-		return nil, err
-	}
-	includes := &Includes{MainFile: mainFile, Anchor: ".", ModulePath: "."}
-	if len(header) == 0 {
-		return includes, nil
-	}
-
 	location := filepath.ToSlash(root)
 	depth := len(strings.Split(location, "/")) - 1
 	if workspacePath != "" {
@@ -102,85 +73,29 @@ func ReadIncludes(root, moduleName, workspacePath string) (*Includes, error) {
 			depth = len(strings.Split(strings.TrimPrefix(location, "/"), "/"))
 		}
 	}
-
-	type outward struct {
-		arg     includeArg
-		cleaned string
-		up      int
+	outside, err := outsideFiles(root, depth)
+	if err != nil {
+		return nil, err
 	}
-	var includeArgs, excludeArgs []outward
-	for _, arg := range header {
-		negated := strings.HasPrefix(arg.text, "!")
-		p := strings.TrimPrefix(arg.text, "!")
-		if p == "" {
-			return nil, fmt.Errorf("%s: %s path %q is empty", arg.position, includeDirective, arg.text)
-		}
-		if strings.HasPrefix(p, "/") {
-			return nil, fmt.Errorf("%s: %s path %q is absolute; write it relative to the module directory", arg.position, includeDirective, arg.text)
-		}
-		cleaned := path.Clean(p)
-		up := leadingParents(cleaned)
-		if up > depth {
-			return nil, fmt.Errorf("%s: %s path %q leaves the workspace root", arg.position, includeDirective, arg.text)
-		}
-		resolved := path.Join(location, cleaned)
-		if resolved == location || strings.HasPrefix(resolved, strings.TrimSuffix(location, "/")+"/") {
-			if !negated {
-				return nil, fmt.Errorf("%s: %s path %q is inside the module directory; only %q is allowed there", arg.position, includeDirective, arg.text, "!"+p)
-			}
-			inside := strings.TrimPrefix(strings.TrimPrefix(resolved, strings.TrimSuffix(location, "/")), "/")
-			if inside == "" {
-				return nil, fmt.Errorf("%s: %s path %q excludes the whole module directory", arg.position, includeDirective, arg.text)
-			}
-			includes.ModuleExclude = appendUnique(includes.ModuleExclude, inside)
-			continue
-		}
-		if negated {
-			excludeArgs = append(excludeArgs, outward{arg, cleaned, up})
-		} else {
-			includeArgs = append(includeArgs, outward{arg, cleaned, up})
-		}
-	}
-	if len(includeArgs) == 0 {
-		return nil, fmt.Errorf("%s: %s names no path outside the module directory", header[0].position, includeDirective)
+	includes := &Includes{Anchor: ".", ModulePath: "."}
+	if len(outside) == 0 {
+		return includes, nil
 	}
 
 	anchorUp := 0
-	for _, arg := range includeArgs {
-		anchorUp = max(anchorUp, arg.up)
+	for p := range outside {
+		anchorUp = max(anchorUp, leadingParents(p))
 	}
 	parts := strings.Split(strings.Trim(location, "/"), "/")
 	includes.ModulePath = strings.Join(parts[len(parts)-anchorUp:], "/")
 	includes.Anchor = strings.TrimSuffix(strings.Repeat("../", anchorUp), "/")
-	anchored := func(cleaned string) string {
-		pattern := path.Join(includes.ModulePath, cleaned)
-		if pattern == "." {
-			return "**"
-		}
-		return pattern
-	}
-	for _, arg := range includeArgs {
-		pattern := anchored(arg.cleaned)
-		if slices.ContainsFunc(includes.Include, func(existing IncludePattern) bool { return existing.Pattern == pattern }) {
-			continue
-		}
+	for _, p := range slices.Sorted(maps.Keys(outside)) {
 		includes.Include = append(includes.Include, IncludePattern{
-			Position: arg.arg.position,
-			Path:     arg.arg.text,
-			Pattern:  pattern,
+			Position: outside[p],
+			Path:     p,
+			Pattern:  path.Join(includes.ModulePath, p),
 		})
-		includes.Resources = append(includes.Resources, arg.cleaned)
-	}
-	for _, arg := range excludeArgs {
-		// An exclude above the anchor cannot match anything the module reads.
-		if arg.up > anchorUp || slices.Contains(includes.Exclude, anchored(arg.cleaned)) {
-			continue
-		}
-		includes.Exclude = append(includes.Exclude, anchored(arg.cleaned))
-		includes.Resources = append(includes.Resources, "!"+arg.cleaned)
-	}
-	for _, exclude := range includes.ModuleExclude {
-		includes.Resources = append(includes.Resources, "!"+exclude)
+		includes.Resources = append(includes.Resources, p)
 	}
 	return includes, nil
 }
@@ -194,150 +109,9 @@ func leadingParents(cleaned string) int {
 	return up
 }
 
-func appendUnique(values []string, value string) []string {
-	if slices.Contains(values, value) {
-		return values
-	}
-	return append(values, value)
-}
-
-// findMainFile returns the non-test Go file of the module directory that
-// declares the main object, or an empty name when none does.
-func findMainFile(root, typeName string) (string, error) {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return "", err
-	}
-	fset := token.NewFileSet()
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "dagger.gen.go" {
-			continue
-		}
-		// The build reports syntax errors with full context; a partial file
-		// still tells whether it declares the main object.
-		file, _ := parser.ParseFile(fset, filepath.Join(root, name), nil, parser.SkipObjectResolution)
-		if file == nil {
-			continue
-		}
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				if strcase.ToCamel(spec.(*ast.TypeSpec).Name.Name) == typeName {
-					return name, nil
-				}
-			}
-		}
-	}
-	return "", nil
-}
-
-// scanIncludeDirectives returns the arguments of the directives in the
-// header of mainFile, in file order, and refuses a directive anywhere else.
-func scanIncludeDirectives(root, mainFile, typeName string) ([]includeArg, error) {
-	var header []includeArg
-	err := filepath.WalkDir(root, func(file string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, file)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if entry.IsDir() {
-			if rel == "." {
-				return nil
-			}
-			// vendor and a directory with its own go.mod hold other modules'
-			// packages, so their directives are not this module's.
-			if entry.Name() == "vendor" {
-				return fs.SkipDir
-			}
-			if _, err := os.Stat(filepath.Join(file, "go.mod")); err == nil {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(rel, ".go") {
-			return nil
-		}
-		src, err := os.ReadFile(file)
-		if err != nil {
-			return err
-		}
-		directives, packagePos := scanFileDirectives(rel, src)
-		for _, directive := range directives {
-			if rel != mainFile || directive.offset > packagePos {
-				where := "the file that declares type " + typeName
-				if mainFile != "" {
-					where = mainFile + ", " + where
-				}
-				return fmt.Errorf("%s: %s belongs in the header of %s", directive.position, includeDirective, where)
-			}
-			args, err := splitIncludeArgs(directive.text)
-			if err != nil {
-				return fmt.Errorf("%s: %w", directive.position, err)
-			}
-			if len(args) == 0 {
-				return fmt.Errorf("%s: %s needs at least one path", directive.position, includeDirective)
-			}
-			for _, arg := range args {
-				header = append(header, includeArg{position: directive.position, text: arg})
-			}
-		}
-		return nil
-	})
-	return header, err
-}
-
-type directiveComment struct {
-	position string
-	offset   int
-	text     string
-}
-
-// scanFileDirectives returns the //go:resources line comments of a Go file
-// and the offset of its package clause. It tokenizes instead of parsing, so a
-// file that does not compile is still checked.
-func scanFileDirectives(rel string, src []byte) ([]directiveComment, int) {
-	fset := token.NewFileSet()
-	file := fset.AddFile(rel, -1, len(src))
-	var s scanner.Scanner
-	s.Init(file, src, nil, scanner.ScanComments)
-	packagePos := len(src)
-	var directives []directiveComment
-	for {
-		pos, tok, lit := s.Scan()
-		if tok == token.EOF {
-			break
-		}
-		if tok == token.PACKAGE && packagePos == len(src) {
-			packagePos = file.Offset(pos)
-		}
-		if tok != token.COMMENT || !strings.HasPrefix(lit, includeDirective) {
-			continue
-		}
-		rest := strings.TrimPrefix(lit, includeDirective)
-		if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
-			continue
-		}
-		position := fset.Position(pos)
-		directives = append(directives, directiveComment{
-			position: fmt.Sprintf("%s:%d:%d", rel, position.Line, position.Column),
-			offset:   file.Offset(pos),
-			text:     rest,
-		})
-	}
-	return directives, packagePos
-}
-
-// splitIncludeArgs splits directive arguments at white space. An argument
-// can be a Go interpreted or raw string, as in //go:embed.
-func splitIncludeArgs(text string) ([]string, error) {
+// splitEmbedArgs splits directive arguments at white space. An argument can
+// be a Go interpreted or raw string.
+func splitEmbedArgs(text string) ([]string, error) {
 	var args []string
 	for {
 		text = strings.TrimLeft(text, " \t")
@@ -354,18 +128,18 @@ func splitIncludeArgs(text string) ([]string, error) {
 				end++
 			}
 			if end >= len(text) {
-				return nil, fmt.Errorf("invalid quoted string in %s: %s", includeDirective, text)
+				return nil, fmt.Errorf("invalid quoted string in %s: %s", embedDirective, text)
 			}
 			arg, err := strconv.Unquote(text[:end+1])
 			if err != nil {
-				return nil, fmt.Errorf("invalid quoted string in %s: %s", includeDirective, text[:end+1])
+				return nil, fmt.Errorf("invalid quoted string in %s: %s", embedDirective, text[:end+1])
 			}
 			args = append(args, arg)
 			text = text[end+1:]
 		case '`':
 			end := strings.IndexByte(text[1:], '`')
 			if end < 0 {
-				return nil, fmt.Errorf("invalid quoted string in %s: %s", includeDirective, text)
+				return nil, fmt.Errorf("invalid quoted string in %s: %s", embedDirective, text)
 			}
 			args = append(args, text[1:end+1])
 			text = text[end+2:]
@@ -388,23 +162,22 @@ type localReplace struct {
 	inside bool
 }
 
-// checkIncludeCoverage refuses a module whose build reads a local replace
-// target outside the module directory without the files of that target the
-// build needs: its go.mod, and the directory of every package imported from
-// it. Imports count under every build tag and test files of the module count,
-// as go mod tidy loads them.
-func checkIncludeCoverage(root, mainFile, typeName string) error {
+// localReplaces reads go.mod and its replace directives that name a local
+// directory. It returns a nil file for a module without go.mod.
+func localReplaces(root string) (*modfile.File, []localReplace, error) {
 	goModPath := filepath.Join(root, "go.mod")
 	data, err := os.ReadFile(goModPath)
+	if os.IsNotExist(err) {
+		return nil, nil, nil
+	}
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	mod, err := modfile.Parse(goModPath, data, nil)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	var replaces []localReplace
-	outside := false
 	for _, replace := range mod.Replace {
 		if replace.New.Version != "" || !modfile.IsDirectoryPath(replace.New.Path) {
 			continue
@@ -414,65 +187,86 @@ func checkIncludeCoverage(root, mainFile, typeName string) error {
 			dir = filepath.Join(root, filepath.FromSlash(dir))
 		}
 		rel, err := filepath.Rel(root, dir)
-		inside := err == nil && filepath.IsLocal(rel)
-		outside = outside || !inside
 		replaces = append(replaces, localReplace{
 			module: replace.Old.Path,
 			text:   strings.TrimSpace(replace.Old.Path + " " + replace.Old.Version),
 			dir:    dir,
 			line:   replace.Syntax.Start.Line,
-			inside: inside,
+			inside: err == nil && filepath.IsLocal(rel),
 		})
 	}
-	if !outside {
-		return nil
+	return mod, replaces, nil
+}
+
+// LocalReplaceTargets returns the local replace targets of go.mod outside the
+// module directory, relative to it.
+func LocalReplaceTargets(root string) ([]string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
 	}
-	home := "the file that declares type " + typeName
-	if mainFile != "" {
-		home = mainFile
+	_, replaces, err := localReplaces(root)
+	if err != nil {
+		return nil, err
+	}
+	var targets []string
+	for _, replace := range replaces {
+		if !replace.inside {
+			targets = append(targets, replaceText(root, replace.dir))
+		}
+	}
+	return targets, nil
+}
+
+// outsideFiles maps what the build reads outside the module directory to the
+// go.mod line, import or //go:embed line that needs it: the go.mod of each
+// local replace target go.mod requires, the Go files of every package
+// imported from one, and the files those packages embed, with their assembly,
+// header and syso files. Imports count under every build tag and test files
+// of the module count, as go mod tidy loads them.
+func outsideFiles(root string, depth int) (map[string]string, error) {
+	mod, replaces, err := localReplaces(root)
+	if err != nil || !slices.ContainsFunc(replaces, func(replace localReplace) bool { return !replace.inside }) {
+		return nil, err
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
 	}
 
-	// A required module's go.mod is read even when no package is imported
-	// from it, and a replace target's own requirements are required too.
+	// With graph pruning, the build reads the go.mod of each module go.mod
+	// requires, and not of the modules those require.
 	required := map[string]bool{}
 	for _, req := range mod.Require {
 		required[req.Mod.Path] = true
 	}
-	for changed := true; changed; {
-		changed = false
-		for _, replace := range replaces {
-			if !required[replace.module] {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(replace.dir, "go.mod"))
-			if err != nil {
-				continue
-			}
-			target, err := modfile.ParseLax("go.mod", data, nil)
-			if err != nil {
-				continue
-			}
-			for _, req := range target.Require {
-				if !required[req.Mod.Path] {
-					required[req.Mod.Path] = true
-					changed = true
-				}
-			}
+
+	found := map[string]string{}
+	add := func(position, file string) {
+		if _, ok := found[file]; !ok {
+			found[file] = position
 		}
 	}
-
 	checkGoMod := func(replace localReplace) error {
-		if _, err := os.Stat(filepath.Join(replace.dir, "go.mod")); err == nil {
-			return nil
+		dir := replaceText(root, replace.dir)
+		if leadingParents(dir) > depth {
+			return fmt.Errorf("go.mod:%d: replace %s => %s leaves the workspace root", replace.line, replace.text, dir)
 		}
-		target := path.Join(filepath.ToSlash(replaceText(root, replace.dir)), "go.mod")
-		return fmt.Errorf("go.mod:%d: replace %s => %s reads %s; add it to %s in %s",
-			replace.line, replace.text, replaceText(root, replace.dir), target, includeDirective, home)
+		if _, err := os.Stat(filepath.Join(replace.dir, "go.mod")); err != nil {
+			return fmt.Errorf("go.mod:%d: replace %s => %s reads %s, which is missing",
+				replace.line, replace.text, dir, path.Join(dir, "go.mod"))
+		}
+		if throughSymlink(root, realRoot, filepath.Join(replace.dir, "go.mod")) {
+			return fmt.Errorf("go.mod:%d: replace %s => %s reads %s through a symlink; %s",
+				replace.line, replace.text, dir, path.Join(dir, "go.mod"), symlinkRefusal)
+		}
+		add(fmt.Sprintf("go.mod:%d", replace.line), path.Join(dir, "go.mod"))
+		return nil
 	}
 	for _, replace := range replaces {
 		if !replace.inside && required[replace.module] {
 			if err := checkGoMod(replace); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -496,7 +290,7 @@ func checkIncludeCoverage(root, mainFile, typeName string) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	visited := map[string]bool{}
 	for len(queue) > 0 {
@@ -506,11 +300,20 @@ func checkIncludeCoverage(root, mainFile, typeName string) error {
 			continue
 		}
 		visited[next.dir] = true
-		imports, err := packageImports(root, next.dir, next.tests)
+		var addFiles func(position, file string)
+		if rel, err := filepath.Rel(root, next.dir); err != nil || !filepath.IsLocal(rel) {
+			addFiles = add
+		}
+		imports, err := packageImports(root, next.dir, next.tests, addFiles)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, imported := range imports {
+			// The module's own packages are walked above, even under a
+			// replaced module path.
+			if mod.Module != nil && (imported.path == mod.Module.Mod.Path || strings.HasPrefix(imported.path, mod.Module.Mod.Path+"/")) {
+				continue
+			}
 			var match *localReplace
 			for i, replace := range replaces {
 				if (imported.path == replace.module || strings.HasPrefix(imported.path, replace.module+"/")) &&
@@ -523,22 +326,91 @@ func checkIncludeCoverage(root, mainFile, typeName string) error {
 			}
 			if !match.inside {
 				if err := checkGoMod(*match); err != nil {
-					return err
+					return nil, err
 				}
 			}
 			dir := filepath.Join(match.dir, filepath.FromSlash(strings.TrimPrefix(imported.path, match.module)))
-			if !match.inside && !hasGoFiles(dir) {
-				return fmt.Errorf("%s: package %s is in %s (go.mod:%d); add %s to %s in %s",
-					imported.position, imported.path, replaceText(root, match.dir), match.line,
-					replaceText(root, dir), includeDirective, home)
+			if !match.inside {
+				if !hasGoFiles(dir) {
+					return nil, fmt.Errorf("%s: package %s is in %s (go.mod:%d), but %s has no Go files",
+						imported.position, imported.path, replaceText(root, match.dir), match.line, replaceText(root, dir))
+				}
+				if throughSymlink(root, realRoot, dir) {
+					return nil, fmt.Errorf("%s: package %s reads %s through a symlink; %s",
+						imported.position, imported.path, replaceText(root, dir), symlinkRefusal)
+				}
+				add(imported.position, path.Join(replaceText(root, dir), "*.go"))
 			}
 			queue = append(queue, pkg{dir: dir})
+		}
+	}
+	return found, nil
+}
+
+// throughSymlink reports whether p resolves through a symlink. The list names
+// paths as written, so a path through a symlink would leave out the files the
+// build reads, which can be outside the workspace root.
+func throughSymlink(root, realRoot, p string) bool {
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return false
+	}
+	want, err := filepath.Rel(root, p)
+	if err != nil {
+		return true
+	}
+	got, err := filepath.Rel(realRoot, real)
+	return err != nil || got != want
+}
+
+// checkEmbed expands a //go:embed pattern of the package at dir as go:embed
+// does, and refuses a path through a symlink among the files it reads, and a
+// match in another module, which go:embed refuses.
+func checkEmbed(root, dir, pattern string, all bool) error {
+	matches, _ := filepath.Glob(filepath.Join(dir, filepath.FromSlash(pattern)))
+	for _, match := range matches {
+		what := "file"
+		if info, err := os.Lstat(match); err == nil && info.IsDir() {
+			what = "directory"
+		}
+		for p := match; len(p) > len(dir); p = filepath.Dir(p) {
+			if info, err := os.Lstat(p); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("%s is a symlink; %s", replaceText(root, p), symlinkRefusal)
+			}
+			if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil {
+				return fmt.Errorf("cannot embed %s %s: in different module", what, replaceText(root, match))
+			}
+		}
+		linked := ""
+		filepath.WalkDir(match, func(p string, entry fs.DirEntry, err error) error {
+			if err != nil || p == match {
+				return nil
+			}
+			// go:embed skips these names, and nested modules.
+			name := entry.Name()
+			if slices.Contains([]string{".bzr", ".git", ".hg", ".svn"}, name) || (!all && (name[0] == '.' || name[0] == '_')) {
+				if entry.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if entry.Type()&fs.ModeSymlink != 0 {
+				linked = p
+				return fs.SkipAll
+			}
+			if _, err := os.Stat(filepath.Join(p, "go.mod")); entry.IsDir() && err == nil {
+				return fs.SkipDir
+			}
+			return nil
+		})
+		if linked != "" {
+			return fmt.Errorf("%s is a symlink; %s", replaceText(root, linked), symlinkRefusal)
 		}
 	}
 	return nil
 }
 
-// replaceText is a directory as a go.mod or //go:resources line names it.
+// replaceText is a directory as a go.mod line names it.
 func replaceText(root, dir string) string {
 	rel, err := filepath.Rel(root, dir)
 	if err != nil {
@@ -580,37 +452,78 @@ type packageImport struct {
 }
 
 // packageImports lists the imports of every Go file of a package directory,
-// whatever its build constraints, in file order.
-func packageImports(root, dir string, tests bool) ([]packageImport, error) {
+// whatever its build constraints, in file order. With addFiles, it also adds
+// the other files the package's build reads: the patterns of its //go:embed
+// lines, and its assembly, header and syso files.
+func packageImports(root, dir string, tests bool, addFiles func(position, file string)) ([]packageImport, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	fset := token.NewFileSet()
+	mode := parser.ImportsOnly
+	if addFiles != nil {
+		mode = parser.ParseComments
+	}
+	position := func(pos token.Pos) string {
+		at := fset.Position(pos)
+		rel, err := filepath.Rel(root, at.Filename)
+		if err != nil {
+			rel = at.Filename
+		}
+		return fmt.Sprintf("%s:%d:%d", filepath.ToSlash(rel), at.Line, at.Column)
+	}
 	var imports []packageImport
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || (!tests && strings.HasSuffix(name, "_test.go")) {
+		if entry.IsDir() {
 			continue
 		}
-		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ImportsOnly)
+		if addFiles != nil && entry.Type()&fs.ModeSymlink != 0 && !strings.HasSuffix(name, "_test.go") &&
+			slices.Contains([]string{".go", ".s", ".h", ".syso"}, filepath.Ext(name)) {
+			return nil, fmt.Errorf("%s is a symlink; %s", path.Join(replaceText(root, dir), name), symlinkRefusal)
+		}
+		if ext := filepath.Ext(name); addFiles != nil && (ext == ".s" || ext == ".h" || ext == ".syso") {
+			addFiles(path.Join(replaceText(root, dir), name), path.Join(replaceText(root, dir), "*"+ext))
+		}
+		if !strings.HasSuffix(name, ".go") || (!tests && strings.HasSuffix(name, "_test.go")) {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, mode)
 		if err != nil {
 			return nil, err
+		}
+		for _, group := range file.Comments {
+			for _, comment := range group.List {
+				args, ok := strings.CutPrefix(comment.Text, embedDirective)
+				if !ok || args == "" || (args[0] != ' ' && args[0] != '\t') {
+					continue
+				}
+				patterns, err := splitEmbedArgs(args)
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", position(comment.Pos()), err)
+				}
+				for _, pattern := range patterns {
+					// Go refuses these patterns, which would also lead the list
+					// out of the package directory.
+					all := strings.HasPrefix(pattern, "all:")
+					pattern = strings.TrimPrefix(pattern, "all:")
+					if pattern == "." || !fs.ValidPath(pattern) {
+						return nil, fmt.Errorf("%s: invalid pattern in %s: %s", position(comment.Pos()), embedDirective, pattern)
+					}
+					if err := checkEmbed(root, dir, pattern, all); err != nil {
+						return nil, fmt.Errorf("%s: %w", position(comment.Pos()), err)
+					}
+					addFiles(position(comment.Pos()), path.Join(replaceText(root, dir), pattern))
+				}
+			}
 		}
 		for _, spec := range file.Imports {
 			value, err := strconv.Unquote(spec.Path.Value)
 			if err != nil {
 				continue
 			}
-			position := fset.Position(spec.Pos())
-			rel, err := filepath.Rel(root, position.Filename)
-			if err != nil {
-				rel = position.Filename
-			}
-			imports = append(imports, packageImport{
-				path:     value,
-				position: fmt.Sprintf("%s:%d:%d", filepath.ToSlash(rel), position.Line, position.Column),
-			})
+			imports = append(imports, packageImport{path: value, position: position(spec.Pos())})
 		}
 	}
 	return imports, nil

@@ -1,6 +1,7 @@
 package gogenerator
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,27 +204,22 @@ func TestGenerateModuleWithIncludes(t *testing.T) {
 	root := filepath.Join(buildRoot, "app")
 	writeModuleFiles(t, buildRoot, map[string]string{
 		"app/go.mod": "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n",
-		"app/main.go": "//go:resources ../lib/go.mod ../lib/greet !../lib/greet/testdata\n\n" +
-			"package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\n" +
+		"app/main.go": "package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\n" +
 			"func (*App) Greeting() string { return greet.Greeting() }\n",
 		"lib/go.mod":                  "module example.com/lib\n\ngo 1.26.1\n",
 		"lib/greet/greet.go":          "package greet\n\nimport _ \"embed\"\n\n//go:embed greeting.txt\nvar greeting string\n\nfunc Greeting() string { return greeting }\n",
 		"lib/greet/greeting.txt":      "hello from lib",
 		"lib/greet/testdata/data.txt": "not built\n",
 	})
-	schema, err := filepath.Abs("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
-	require.NoError(t, err)
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: resourcesSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
 	require.NoError(t, Generate(t.Context(), cfg))
 
 	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
 	require.NoError(t, err)
 	require.Contains(t, string(entrypoint), `pub resources: [String!]! {
-    ["../lib/go.mod", "../lib/greet", "!../lib/greet/testdata"]
+    ["../lib/go.mod", "../lib/greet/*.go", "../lib/greet/greeting.txt"]
   }`)
-	require.Contains(t, string(entrypoint), `.directory("..", include: anchored(included), exclude: anchored(outside) + ["app"], gitignore: true)`)
-	require.Contains(t, string(entrypoint), `.withDirectory("app", source, exclude: `)
-	require.Contains(t, string(entrypoint), `.withWorkdir("/workspace/app")`)
+	require.Contains(t, string(entrypoint), "currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)")
 	lib, err := os.ReadFile(filepath.Join(buildRoot, "lib", "greet", "greet.go"))
 	require.NoError(t, err)
 	require.NotContains(t, string(lib), "Code generated")
@@ -253,8 +249,7 @@ func TestGenerateCollectionModuleWithIncludes(t *testing.T) {
 	root := filepath.Join(buildRoot, "app")
 	writeModuleFiles(t, buildRoot, map[string]string{
 		"app/go.mod": "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n",
-		"app/main.go": "//go:resources ../lib/go.mod ../lib/greet\n\n" +
-			"package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\n" +
+		"app/main.go": "package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\n" +
 			"func (*App) Items() *Items { return &Items{Keys: []string{greet.Greeting()}} }\n\n" +
 			"// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n" +
 			"// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
@@ -262,15 +257,13 @@ func TestGenerateCollectionModuleWithIncludes(t *testing.T) {
 		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n",
 		"lib/greet/greet.go": "package greet\n\nfunc Greeting() string { return \"hello from lib\" }\n",
 	})
-	schema, err := filepath.Abs("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
-	require.NoError(t, err)
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: resourcesSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
 	require.NoError(t, Generate(t.Context(), cfg))
 
 	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
 	require.NoError(t, err)
 	require.Contains(t, string(entrypoint), `.withFile("main.go", currentModule.source.file("internal/dagger/entrypoint/runtime/main.go.src"))`)
-	require.Contains(t, string(entrypoint), `.withDirectory("app", source, exclude: `)
+	require.Contains(t, string(entrypoint), "currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)")
 
 	// Build the directory the entrypoint assembles: the included files beside
 	// the module, with the runtime sources in place of the author's.
@@ -293,7 +286,46 @@ func TestGenerateCollectionModuleWithIncludes(t *testing.T) {
 	require.Contains(t, string(out), "hello from lib")
 }
 
-func TestGenerateRefusesUncoveredReplace(t *testing.T) {
+func TestGenerateRefusesResourcesWithoutEngineSupport(t *testing.T) {
+	buildRoot := t.TempDir()
+	root := filepath.Join(buildRoot, "app")
+	writeModuleFiles(t, buildRoot, map[string]string{
+		"app/go.mod":         "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n",
+		"app/main.go":        "package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\nvar _ = greet.Hello\n",
+		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n",
+		"lib/greet/greet.go": "package greet\n\nfunc Hello() {}\n",
+	})
+	schema, err := filepath.Abs("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
+	require.NoError(t, err)
+	err = Generate(t.Context(), GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"})
+	require.ErrorContains(t, err, "the module builds with files outside its directory, from the local replace directives of go.mod, which needs dagger v1.0.0-beta.17 or later")
+}
+
+// resourcesSchema is the core schema with the CurrentModule fields of an
+// engine that loads the files of resources into the module context.
+func resourcesSchema(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(data, &schema))
+	for _, typ := range schema["__schema"].(map[string]any)["types"].([]any) {
+		typ := typ.(map[string]any)
+		if typ["name"] == "CurrentModule" {
+			typ["fields"] = append(typ["fields"].([]any),
+				map[string]any{"name": "contextDirectory", "args": []any{}, "type": map[string]any{"kind": "NON_NULL", "ofType": map[string]any{"kind": "OBJECT", "name": "Directory"}}},
+				map[string]any{"name": "sourceSubpath", "args": []any{}, "type": map[string]any{"kind": "NON_NULL", "ofType": map[string]any{"kind": "SCALAR", "name": "String"}}},
+			)
+		}
+	}
+	data, err = json.Marshal(schema)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "schema.json")
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+	return path
+}
+
+func TestGenerateRefusesMissingReplaceTarget(t *testing.T) {
 	buildRoot := t.TempDir()
 	root := filepath.Join(buildRoot, "app")
 	writeModuleFiles(t, buildRoot, map[string]string{
@@ -301,7 +333,7 @@ func TestGenerateRefusesUncoveredReplace(t *testing.T) {
 		"app/main.go": "package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\nvar _ = greet.Greeting\n",
 	})
 	err := Generate(t.Context(), GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: "unused"})
-	require.EqualError(t, err, "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod; add it to //go:resources in main.go")
+	require.EqualError(t, err, "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod, which is missing")
 	entries, err := os.ReadDir(root)
 	require.NoError(t, err)
 	require.Len(t, entries, 2, "a refused module changed")

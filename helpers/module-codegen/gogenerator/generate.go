@@ -84,11 +84,8 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
-	includes, err := ReadIncludes(root, cfg.ModuleName, "")
+	includes, err := ReadIncludes(root, "")
 	if err != nil {
-		return err
-	}
-	if err := checkIncludeCoverage(root, includes.MainFile, strcase.ToCamel(cfg.ModuleName)); err != nil {
 		return err
 	}
 	moduleSubpath, err := filepath.Rel(filepath.Dir(goModPath), root)

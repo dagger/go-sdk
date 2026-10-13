@@ -2,41 +2,22 @@
 
 type Entrypoint implements ModuleEntrypoint {
   pub resources: [String!]! {
-    ["../lib/go.mod", "../lib/greet", "!../lib/greet/testdata", "!data"]
+    ["../lib/go.mod", "../lib/greet/*.go", "../lib/greet/greeting.txt"]
   }
 
-  let anchored(patterns: [String!]!): [String!]! {
-    patterns.map { pattern =>
-      let parts = pattern.split("/")
-      let up = parts.takeWhile { part => part == ".." }.length
-      let rebased = ("hello-world".split("/").dropLast(up) + parts.dropFirst(up)).join("/")
-      if (rebased == "") { "**" } else { rebased }
-    }
-  }
-
-  let assembled(workspace: Workspace!): Directory! {
-    let mark = "internal/dagger/entrypoint/main.dang"
-    let here = workspace.directory(".", include: [mark])
-    if (here.exists(mark) == false or here.file(mark).contents != currentModule.source.file(mark).contents) {
-      raise "module hello-world reads files outside its directory (//go:resources), so it must run from its own checkout; the workspace at " + workspace.cwd + " is not it"
-    }
+  let assembled: Directory! {
     let source = currentModule.source
-    let included = resources.filter { pattern => pattern.hasPrefix("!") == false }
-    let excluded = resources.filter { pattern => pattern.hasPrefix("!") }.map { pattern => pattern.trimPrefix("!") }
-    let outside = excluded.filter { pattern => pattern == ".." or pattern.hasPrefix("../") }
-    workspace
-      .directory("..", include: anchored(included), exclude: anchored(outside) + ["hello-world"], gitignore: true)
-      .withDirectory("hello-world", source, exclude: excluded.filter { pattern => outside.contains(pattern) == false })
+    currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)
   }
 
-  let dispatch(workspace: Workspace!): File! {
-    let source = assembled(workspace)
+  let dispatch: File! {
+    let source = assembled
     container
       .from("golang:1.26.1-alpine")
       .withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-build"))
       .withMountedDirectory("/workspace", source)
-      .withWorkdir("/workspace/hello-world")
+      .withWorkdir("/workspace/" + currentModule.sourceSubpath)
       .withEnvVariable("CGO_ENABLED", "0")
       .withEnvVariable("GOWORK", "off")
       .withExec(["go", "build", "-o", "/tmp/dispatch", "./cmd/hello-world-dispatch"])
@@ -92,9 +73,9 @@ type Entrypoint implements ModuleEntrypoint {
     }})
     let result = container
       .from("alpine:3.22")
-      .withFile("/usr/local/bin/dispatch", dispatch(workspace), permissions: 755)
-      .withMountedDirectory("/workspace", assembled(workspace))
-      .withWorkdir("/workspace/hello-world")
+      .withFile("/usr/local/bin/dispatch", dispatch, permissions: 755)
+      .withMountedDirectory("/workspace", assembled)
+      .withWorkdir("/workspace/" + currentModule.sourceSubpath)
       .withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")
       .withExec(
         ["/usr/local/bin/dispatch", "engine-call", "/dagger/result.json"],
