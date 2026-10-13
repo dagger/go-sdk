@@ -16,7 +16,9 @@ import (
 
 // collectionBuildSources rewrites a temporary build copy. Author files remain
 // untouched, while copied collection values retain the engine's private base.
-func collectionBuildSources(ctx context.Context, root string) (map[string][]byte, error) {
+// The copy holds buildRoot, so the package loads with the files beside root
+// that its build reads.
+func collectionBuildSources(ctx context.Context, buildRoot, root string) (map[string][]byte, error) {
 	paths, err := filepath.Glob(filepath.Join(root, "*.go"))
 	if err != nil {
 		return nil, err
@@ -34,17 +36,22 @@ func collectionBuildSources(ctx context.Context, root string) (map[string][]byte
 	if !needed {
 		return nil, nil
 	}
-	dir, err := os.MkdirTemp("", "go-collection-build-")
+	modulePath, err := filepath.Rel(buildRoot, root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve module path in build root: %w", err)
+	}
+	staged, err := os.MkdirTemp("", "go-collection-build-")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
-	if err = os.CopyFS(dir, os.DirFS(root)); err != nil {
+	defer os.RemoveAll(staged)
+	if err = os.CopyFS(staged, os.DirFS(buildRoot)); err != nil {
 		return nil, fmt.Errorf("copy collection build source: %w", err)
 	}
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
+	dir := filepath.Join(staged, modulePath)
 	if err = clientgen.PrepareCollectionRuntime(dir); err != nil {
 		return nil, err
 	}
