@@ -1,12 +1,10 @@
 """
-Run modules whose build reads files outside the module directory, listed
-with //go:resources in the header of main.go.
+Run modules whose build reads files outside the module directory, through
+the local replace directives of go.mod.
 """
 type ResourcesChecks {
   let root: String! = ".dagger/modules/e2e/fixtures/include"
   let appPath: String! = root + "/app"
-  let directive: String! = "//go:resources ../lib/go.mod ../lib/greet !../lib/greet/testdata"
-  let identity: String! = "module include-app reads files outside its directory (//go:resources), so it must run from its own checkout"
 
   let generated(ws: Workspace!): Workspace! {
     goSdk(dangEntrypoint: true).generateScope(
@@ -18,22 +16,20 @@ type ResourcesChecks {
   }
 
   """
-  The generated entrypoint lists the resources once, reads them beside the
-  module, builds with GOWORK=off, and regenerates without changes.
-  Generation writes no file outside the module.
+  The generated entrypoint lists the files the build reads outside the
+  module, builds from the module context with GOWORK=off, and regenerates
+  without changes. Generation writes no file outside the module.
   """
   generateCheck(ws: Workspace!): Void @check {
     let input = ws.withWorkdir(appPath)
     let ready = generated(ws)
     let entrypoint = ready.file("internal/dagger/entrypoint/main.dang").contents
     [
-      "pub resources: [String!]! {\n    [\"../lib/go.mod\", \"../lib/greet\", \"!../lib/greet/testdata\"]\n  }",
-      ".directory(\"..\", include: anchored(included), exclude: anchored(outside) + [\"app\"], gitignore: true)",
-      ".withDirectory(\"app\", source, exclude: ",
-      ".withWorkdir(\"/workspace/app\")",
+      "pub resources: [String!]! {\n    [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/greeting.txt\"]\n  }",
+      "currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)",
+      ".withWorkdir(\"/workspace/\" + currentModule.sourceSubpath)",
       ".withEnvVariable(\"GOWORK\", \"off\")",
-      ".withFile(\"/usr/local/bin/dispatch\", dispatch(workspace), permissions: 755)",
-      ".withMountedDirectory(\"/workspace\", assembled(workspace))",
+      ".withMountedDirectory(\"/workspace\", assembled)",
     ].each { literal =>
       assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
     }
@@ -58,7 +54,7 @@ type ResourcesChecks {
 
   """
   A module with a collection prepares its runtime sources beside the
-  included paths, and places them in the module directory it assembles.
+  included paths, and places them in the module context it builds from.
   """
   collectionCheck(ws: Workspace!): Void @check {
     let input = ws.withNewFile("/" + appPath + "/items.go",
@@ -70,16 +66,16 @@ type ResourcesChecks {
     let entrypoint = generated(input).file("internal/dagger/entrypoint/main.dang").contents
     [
       ".withFile(\"items.go\", currentModule.source.file(\"internal/dagger/entrypoint/runtime/items.go.src\"))",
-      ".withDirectory(\"app\", source, exclude: ",
+      "currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)",
     ].each { literal =>
       assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
     }
     null
   }
 
-  let withDirective(ws: Workspace!, replacement: String!): Workspace! {
-    let main = "/" + appPath + "/main.go"
-    ws.withNewFile(main, ws.file(main).contents.replace(directive, replacement))
+  let withReplace(ws: Workspace!, target: String!): Workspace! {
+    let goMod = "/" + appPath + "/go.mod"
+    ws.withNewFile(goMod, ws.file(goMod).contents.replace("=> ../lib", "=> " + target))
   }
 
   let expectRefusal(input: Workspace!, want: String!): Void {
@@ -93,33 +89,20 @@ type ResourcesChecks {
     null
   }
 
-  """Every refusal of //go:resources names the place to fix."""
+  """Every refusal of a file outside the module names the line to fix."""
   refusalsCheck(ws: Workspace!): Void @check {
-    let header = "//go:resources ../lib/go.mod ../lib/greet"
-    expectRefusal(withDirective(ws, "//go:resources \"unterminated"),
-      "main.go:1:1: invalid quoted string in //go:resources: \"unterminated")
-    expectRefusal(withDirective(ws, "//go:resources"),
-      "main.go:1:1: //go:resources needs at least one path")
-    expectRefusal(ws.withNewFile("/" + appPath + "/extra.go", "package include_app\n\n//go:resources ../lib\nfunc extra() {}\n"),
-      "extra.go:3:1: //go:resources belongs in the header of main.go, the file that declares type IncludeApp")
-    expectRefusal(withDirective(ws, "//go:resources /lib"),
-      "main.go:1:1: //go:resources path \"/lib\" is absolute; write it relative to the module directory")
-    expectRefusal(withDirective(ws, header + " ../../../../../../../x"),
-      "main.go:1:1: //go:resources path \"../../../../../../../x\" leaves the workspace root")
-    expectRefusal(withDirective(ws, header + " data"),
-      "main.go:1:1: //go:resources path \"data\" is inside the module directory; only \"!data\" is allowed there")
-    expectRefusal(withDirective(ws, header + " ../lbi"),
-      "main.go:1:1: //go:resources path \"../lbi\" matches nothing in the workspace")
+    expectRefusal(withReplace(ws, "../../../../../../../x"),
+      "go.mod:7: replace example.com/lib => ../../../../../../../x leaves the workspace root")
+    expectRefusal(withReplace(ws, "../lbi"),
+      "go.mod:7: replace example.com/lib => ../lbi reads ../lbi/go.mod, which is missing")
+    expectRefusal(ws.withNewFile("/" + appPath + "/extra.go", "package include_app\n\nimport _ \"example.com/lib/missing\"\n"),
+      "extra.go:3:8: package example.com/lib/missing is in ../lib (go.mod:7), but ../lib/missing has no Go files")
     # The engine applies .gitignore files from the host only, so the ignored
-    # fixture directory is committed rather than written as a workspace edit.
-    expectRefusal(withDirective(ws, header + " ../ignored"),
-      "main.go:1:1: //go:resources path \"../ignored\" matches only files ignored by .gitignore")
-    expectRefusal(withDirective(ws, "//go:resources ../lib/greet"),
-      "go.mod:7: replace example.com/lib => ../lib reads ../lib/go.mod; add it to //go:resources in main.go")
-    expectRefusal(withDirective(ws, "//go:resources ../lib/go.mod"),
-      "package example.com/lib/greet is in ../lib (go.mod:7); add ../lib/greet to //go:resources in main.go")
+    # fixture module is committed rather than written as a workspace edit.
+    expectRefusal(withReplace(ws, "../ignored"),
+      "go.mod:7: \"../ignored/go.mod\" matches only files ignored by .gitignore")
     expectRefusal(ws.withNewFile("/" + appPath + "/dagger-module.toml", "name = \"include-app\"\ninclude = [\"../shared\", \"./data\"]\n\n[runtime]\n  source = \"go\"\n"),
-      "dagger-module.toml has settings a Dang entrypoint cannot carry (include); remove them or set dangEntrypoint = false. A Dang entrypoint reads include from main.go: add //go:resources ../shared and remove include")
+      "dagger-module.toml has settings a Dang entrypoint cannot carry (include); remove them or set dangEntrypoint = false. A Dang entrypoint finds the files outside its module directory from the local replace directives of go.mod; remove include")
     null
   }
 
@@ -129,11 +112,11 @@ type ResourcesChecks {
   }
 
   """
-  A git source cannot reach the files outside its module directory, so a
-  call fails with the identity message. cli is this engine's dagger CLI: it
-  runs nested in this session, where the git service is reachable.
+  A git source reads its resources from its own commit. cli is this engine's
+  dagger CLI: it runs nested in this session, where the git service is
+  reachable.
   """
-  gitSourceRefusal(ws: Workspace!, cli: File!): Void {
+  gitSourceCall(ws: Workspace!, cli: File!): Void {
     let server = container.from("alpine:3.22").withoutEntrypoint
       .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
       .withDirectory("/srv/repo", fixture(ws))
@@ -152,8 +135,8 @@ type ResourcesChecks {
       .withServiceBinding(server.hostname, server)
       .withExec(["dagger", "-m", "git://" + server.hostname + "/repo.git#main:app", "call", "greeting"],
         experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
-    assert("a git module with includes ran outside its checkout:\n" + called.stdout + called.stderr) {
-      called.exitCode != 0 and called.stderr.contains(identity)
+    assert("a git module with resources failed:\n" + called.stdout + called.stderr) {
+      called.exitCode == 0 and called.stdout.trimSpace == "one"
     }
     null
   }

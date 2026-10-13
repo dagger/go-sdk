@@ -1,10 +1,10 @@
-//go:resources ../lib/go.mod ../lib/greet !../lib/greet/testdata
-
 // Package include_app builds with a package of a sibling Go module.
 package include_app
 
 import (
 	"os"
+	"strconv"
+	"time"
 
 	"example.com/lib/greet"
 )
@@ -20,8 +20,14 @@ func (*IncludeApp) Runtime() (string, error) {
 	return string(data), err
 }
 
-// Excluded reports whether the excluded testdata directory reached the module.
+// Excluded reports whether lib/greet/testdata, which the build does not read,
+// reached the module.
 func (*IncludeApp) Excluded() bool {
 	_, err := os.Stat("../lib/greet/testdata")
 	return err == nil
+}
+
+// Nonce returns the greeting and the time the function ran.
+func (*IncludeApp) Nonce() string {
+	return greet.Greeting() + " " + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
