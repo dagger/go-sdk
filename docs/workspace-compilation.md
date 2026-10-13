@@ -9,10 +9,12 @@ There are two caches to consider:
 
 1. **Function results.** Dagger checks this cache before the SDK runs. Every
    exported constructor and function of a module with external compiler inputs
-   must take a required `ws *dagger.Workspace`, and callers must forward it.
+   must take a required `ws *dagger.Workspace`. Another module passes its
+   workspace when calling them, for example `goClient.New(ws).Build(ws)`.
+   The CLI supplies the workspace automatically for direct CLI calls.
    The workspace is part of the call's input, so a fresh local workspace session
    makes the SDK check current files again. The SDK enforces these arguments
-   during generation.
+   during generation: missing or optional arguments produce an error.
 2. **Go compilation.** The SDK follows imports, local `replace` targets, and
    `go:embed`, then imports the selected external files. The build caches by
    file content. A changed compiler input triggers a new build. Unchanged

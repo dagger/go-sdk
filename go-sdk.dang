@@ -58,12 +58,14 @@ type GoSdk {
 
   When Go compilation needs files outside the module directory, every
   exported constructor and function must take a required ws *dagger.Workspace.
-  Callers must forward it. The SDK checks this when generating the module.
+  Generation reports an error if this argument is missing. When another
+  module calls the function, it passes its workspace too. The CLI supplies
+  the workspace automatically for direct CLI calls.
 
   There are two caches: the function result and the compiled Go code.
   The workspace is a function input before Dagger checks the result cache,
-  so a fresh local workspace session lets the SDK read current files. The SDK follows Go
-  imports, local replace targets, and go:embed to select external compiler
+  so a fresh local workspace session lets the SDK read current files. The SDK
+  follows Go imports, local replace targets, and go:embed to select external compiler
   inputs. Compilation still caches by those files' contents: changed inputs
   trigger a new build; unchanged inputs can reuse the previous build.
 
