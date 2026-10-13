@@ -33,7 +33,7 @@ func TestGenerateFreshEmbeddedModuleWithoutLocalSDK(t *testing.T) {
 }
 
 func TestGenerateFreshUnifiedModuleWithoutLocalSDK(t *testing.T) {
-	const runtimeVersion = "v1.0.0-beta.16.0.20261008202843-134540fec551"
+	const runtimeVersion = "v1.0.0-beta.17"
 	root := t.TempDir()
 	// These private/body-only references are absent from the public module
 	// schema, but the default starter still needs their shared core aliases.

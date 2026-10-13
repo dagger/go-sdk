@@ -214,7 +214,7 @@ type GoSdk {
   """Unified generation uses a published runtime independently of engine/schema versions."""
   let runtimeVersion(unified: Boolean!): String! {
     if (clientVersion != "") { clientVersion } else if (unified) {
-      "v1.0.0-beta.16.0.20261008202843-134540fec551"
+      "v1.0.0-beta.17"
     } else { "" }
   }
 
