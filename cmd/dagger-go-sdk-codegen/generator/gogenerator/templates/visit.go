@@ -56,6 +56,7 @@ func (funcs goTemplateFuncs) visitTypes(
 	}
 
 	ps := &parseState{
+		workspaceBuild:    funcs.cfg.ModuleConfig.WorkspaceBuild,
 		pkg:               funcs.modulePkg,
 		fset:              funcs.moduleFset,
 		schema:            funcs.fullSchema,
