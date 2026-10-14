@@ -552,6 +552,8 @@ func (funcs goTemplateFuncs) ModuleIntrospectionJSON(moduleName string) ([]byte,
 		}
 		if mainObject.constructor != nil {
 			field.Args = introspectFuncArgs(mainObject.constructor)
+		} else if funcs.cfg.ModuleConfig.WorkspaceBuild {
+			field.Args = introspectFuncArgs(&funcTypeSpec{argSpecs: []paramSpec{{name: "ws", typeSpec: &parsedObjectTypeReference{name: "Workspace"}}}})
 		}
 		queryType.Fields = append(queryType.Fields, field)
 	}

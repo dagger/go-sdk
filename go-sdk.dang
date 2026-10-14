@@ -56,15 +56,24 @@ type GoSdk {
   the runner of existing modules. Explicit true migrates a supported existing
   module; false keeps the Go runtime.
 
-  Files outside the module directory reach the build only through
-  `//go:resources` lines in the header of the file that declares the main
-  object, with paths relative to the module directory, such as
-  `//go:resources ../lib/go.mod ../lib/greet !../lib/greet/testdata`.
-  Generation checks that they cover the local replace targets the build
-  reads. The module runs only from its own checkout inside the caller's
-  workspace, not from a git source. On engines without engine support for
-  resources, a result cached from an earlier session can be returned after
-  an included file changed.
+  Workspace compilation requires Dagger beta.17 or later. When Go compilation
+  needs files outside the module directory, every
+  exported constructor and function must take a required ws *dagger.Workspace.
+  Generation reports an error if this argument is missing. When another
+  module calls the function, it passes its workspace too. The CLI supplies
+  the workspace automatically for direct CLI calls.
+
+  There are two caches: the function result and the compiled Go code.
+  The workspace is a function input before Dagger checks the result cache,
+  so a fresh local workspace session lets the SDK read current files. The SDK
+  follows Go imports, local replace targets, and go:embed to select external compiler
+  inputs. Compilation still caches by those files' contents: changed inputs
+  trigger a new build; unchanged inputs can reuse the previous build.
+
+  Passing ws only to the constructor is not enough. Each affected function
+  also needs it, even if its Go body never reads ws: the SDK uses it to compile
+  that function's module. Local replace targets must stay inside the workspace.
+  See docs/workspace-compilation.md for an example.
   """
   dangEntrypoint: Boolean
 
@@ -206,7 +215,7 @@ type GoSdk {
   """Unified generation uses a published runtime independently of engine/schema versions."""
   let runtimeVersion(unified: Boolean!): String! {
     if (clientVersion != "") { clientVersion } else if (unified) {
-      "v1.0.0-beta.16.0.20261008202843-134540fec551"
+      "v1.0.0-beta.17"
     } else { "" }
   }
 
@@ -368,34 +377,9 @@ type GoSdk {
     }
     let objections = manifestObjections(manifest, runtimeKey)
     if (objections.length > 0) {
-      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false" + includeHint(manifest)
+      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false"
     }
     null
-  }
-
-  """
-  How a manifest's include list carries over: a Dang entrypoint reads the
-  files outside its module directory from //go:resources in main.go.
-  """
-  let includeHint(manifest: Dagger.JSONValue!): String! {
-    let fields = manifest.fields
-    if (fields.contains("include") == false) {
-      return ""
-    }
-    let excluded = if (fields.contains("exclude")) {
-      manifest.field(["exclude"]).asArray.{{asString}}.map { value => "!" + value.asString }
-    } else { [] :: [String!]! }
-    let args = (manifest.field(["include"]).asArray.{{asString}}.map { value => value.asString } + excluded).map { value =>
-      let negation = if (value.hasPrefix("!")) { "!" } else { "" }
-      let p = value.trimPrefix("!").trimPrefix("./")
-      let arg = negation + p
-      if (p.hasPrefix("../") == false) { "" } else if (arg.contains(" ")) { JSON.encode(arg) } else { arg }
-    }.filter { arg => arg != "" }
-    if (args.isEmpty) {
-      ". A Dang entrypoint builds its whole module directory; list files outside it with //go:resources in main.go"
-    } else {
-      ". A Dang entrypoint reads include from main.go: add //go:resources " + args.join(" ") + " and remove include"
-    }
   }
 
   """
@@ -482,19 +466,22 @@ type GoSdk {
     let goImage = "golang:" + goVersion + "-alpine"
     let builder = moduleCodegenBuilder(goImage)
     let moduleSource = workspaceRoot.directory(".", exclude: ["**/.git"])
-    let includes = moduleIncludes(builder, moduleSource, moduleRoot, name, scopePath)
-    let included = lines(includes.file("include")).length > 0
-    # A module with includes is generated where its build sees it: under its
-    # anchor, beside the paths it includes.
-    let buildRoot = if (included) { "/src/" + includes.file("module").contents } else { "/src" }
-    let tree = if (included) { includedTree(ws, moduleSource, includes) } else { moduleSource }
+    let discovery = moduleInputs(builder, ws, moduleSource, goRoot)
+    let selected = discovery.field(["files"]).asArray.{{asString}}.map { file => file.asString }
+    let included = discovery.field(["external"]).asBoolean
+    let buildRoot = if (included) { "/src/" + goRoot } else { "/src" }
+    let tree = if (included) {
+      ws.directory("/", include: selected, exclude: [goRoot, "**/.git"])
+        .withDirectory(goRoot, moduleSource)
+    } else { moduleSource }
     let inputs = builder
       .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJSON)
-    let goInputs = if (included) { inputs.withEnvVariable("GOWORK", "off") } else { inputs }
+    let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
       "module-codegen",
       "--module-root", buildRoot + "/" + moduleRoot,
+      "--build-root", "/src",
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
@@ -537,71 +524,22 @@ type GoSdk {
   }
 
   """
-  The //go:resources list of the module's main file: the files anchor and
-  module, and the lists include, exclude and module-exclude, with one JSON
-  value per line. Paths are relative to the anchor, the directory that holds
-  the module and every included path. The include list is empty for a
-  module without the directive.
+  Discover compiler inputs from Go/module metadata and a file-name inventory.
+  Asset contents enter only the filtered build snapshot, after discovery.
   """
-  let moduleIncludes(builder: Container!, moduleSource: Directory!, moduleRoot: String!, name: String!, scopePath: String!): Directory! {
-    runTool(builder.withDirectory("/src", moduleSource), [
-      "module-codegen", "includes",
-      "--module-root", "/src/" + moduleRoot,
-      "--module-name", name,
-      "--workspace-path", scopePath,
-      "--output", "/includes",
-    ]).directory("/includes")
-  }
-
-  let lines(file: File!): [String!]! {
-    file.contents.split("\n").filter { line => line != "" }
-  }
-
-  let decoded(line: String!): Dagger.JSONValue! {
-    Dagger.json.withContents(line :: Dagger.JSON!)
-  }
-
-  """
-  The files of a directory. A directory whose files a filter removed is
-  still listed, so it does not count.
-  """
-  let files(dir: Directory!): [String!]! {
-    dir.glob(pattern: "**").filter { p => p.hasSuffix("/") == false }
-  }
-
-  """Where an include entry is written, for an error about it."""
-  let includeLabel(line: String!): String! {
-    let entry = decoded(line)
-    stringField(entry, "position") + ": //go:resources path " + JSON.encode(stringField(entry, "path"))
-  }
-
-  """
-  The module directory and the workspace paths its include list names, laid
-  out under their anchor as the generated entrypoint assembles them at call
-  time. Refuses a path that matches nothing or only ignored files.
-  """
-  let includedTree(ws: Workspace!, moduleSource: Directory!, includes: Directory!): Directory! {
-    let anchor = rootedPath(includes.file("anchor").contents)
-    let modulePath = includes.file("module").contents
-    let entries = lines(includes.file("include"))
-    let unmatched = entries.filter { line =>
-      files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"])).isEmpty
-    }
-    if (unmatched.length > 0) {
-      raise includeLabel(unmatched[0] ?? "") + " matches nothing in the workspace"
-    }
-    let ignored = entries.filter { line =>
-      files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"], gitignore: true)).isEmpty
-    }
-    if (ignored.length > 0) {
-      raise includeLabel(ignored[0] ?? "") + " matches only files ignored by .gitignore"
-    }
-    let patterns = entries.map { line => stringField(decoded(line), "pattern") }
-    let excludes = lines(includes.file("exclude")).map { line => decoded(line).asString }
-    let moduleExcludes = lines(includes.file("module-exclude")).map { line => decoded(line).asString }
-    directory
-      .withDirectory(".", ws.directory(anchor, include: patterns, exclude: excludes + [modulePath, "**/.git"], gitignore: true))
-      .withDirectory(modulePath, moduleSource, exclude: moduleExcludes)
+  let moduleInputs(builder: Container!, ws: Workspace!, moduleSource: Directory!, modulePath: String!): Dagger.JSONValue! {
+    let metadata = ws.directory("/", include: ["**/*.go", "**/go.mod", "**/go.sum"], exclude: ["**/.git", "**/vendor"])
+      .withDirectory(modulePath, moduleSource)
+    let inventory = ws.glob(pattern: "**").filter { file => file != modulePath and file.hasPrefix(modulePath + "/") == false } +
+      moduleSource.glob(pattern: "**").map { file => if (modulePath == ".") { file } else { modulePath + "/" + file } }
+    let found = runTool(builder
+      .withDirectory("/discovery", metadata)
+      .withNewFile("/inventory.json", JSON.encode(inventory)), [
+      "go-inputs", "--workspace-root", "/discovery",
+      "--module-root", "/discovery/" + modulePath,
+      "--inventory", "/inventory.json",
+    ])
+    Dagger.json.withContents(found.stdout :: Dagger.JSON!)
   }
 
   """
@@ -653,6 +591,8 @@ type GoSdk {
       .withDirectory("/cmd", currentModule.source.directory("cmd"))
       .withWorkdir("/helpers/entrypoint-contract")
       .withExec(["go", "build", "-o", "/usr/local/bin/entrypoint-contract", "."])
+      .withWorkdir("/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/go-inputs")
+      .withExec(["go", "build", "-o", "/usr/local/bin/go-inputs", "."])
       .withWorkdir("/helpers/module-codegen")
       .withExec(["go", "build", "-o", "/usr/local/bin/module-codegen", "."])
   }
