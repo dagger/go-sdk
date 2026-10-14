@@ -90,8 +90,10 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return err
 	}
 	// go mod tidy can remove a requirement, so sources come from a scan after
-	// it. This scan refuses a module before anything is written.
-	if _, err := discovery.ReadIncludes(root, ""); err != nil {
+	// it. This scan refuses a module before anything is written, and its
+	// warnings explain a failure of a later step.
+	untidied, err := discovery.ReadIncludes(root, "")
+	if err != nil {
 		return err
 	}
 	moduleSubpath, err := filepath.Rel(filepath.Dir(goModPath), root)
@@ -153,7 +155,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {
-		return err
+		return withWarnings(err, untidied.Warnings)
 	}
 
 	pkg, fset, err := loadPackage(ctx, root, false)
@@ -181,7 +183,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {
-		return err
+		return withWarnings(err, untidied.Warnings)
 	}
 	includes, err := discovery.ReadIncludes(root, "")
 	if err != nil {
@@ -242,7 +244,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {
-		return err
+		return withWarnings(err, untidied.Warnings)
 	}
 	if err := normalizeGoMod(goModPath); err != nil {
 		return fmt.Errorf("normalize generated go.mod: %w", err)
@@ -255,7 +257,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		target = "."
 	}
 	if err := compileGeneratedModule(ctx, buildRoot, root, target, runtimeFiles); err != nil {
-		return err
+		return withWarnings(err, untidied.Warnings)
 	}
 	if cfg.RemovedPath != "" {
 		var list bytes.Buffer
@@ -534,6 +536,16 @@ func goModTidy(ctx context.Context, root string) error {
 		return fmt.Errorf("go mod tidy: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// withWarnings appends the warnings of the scan before go mod tidy to err. A
+// required replace target from which the module imports nothing is the likely
+// cause when a dependency outside the workspace imports its packages.
+func withWarnings(err error, warnings []string) error {
+	if len(warnings) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w\nwarning: %s", err, strings.Join(warnings, "\nwarning: "))
 }
 
 // compileGeneratedModule checks the complete dispatcher, including author

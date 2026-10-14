@@ -1,6 +1,7 @@
 package gogenerator
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,20 @@ func TestCompileGeneratedModuleStagesBuildRoot(t *testing.T) {
 	}
 	if err := compileGeneratedModule(t.Context(), buildRoot, root, ".", runtimeFiles); err != nil {
 		t.Fatalf("compileGeneratedModule() error = %v", err)
+	}
+}
+
+func TestWithWarnings(t *testing.T) {
+	err := errors.New("go mod tidy: exit status 1")
+	if got := withWarnings(err, nil); got != err {
+		t.Errorf("withWarnings() without warnings = %v, want %v", got, err)
+	}
+	got := withWarnings(err, []string{"go.mod:7: first", "go.mod:9: second"})
+	if want := "go mod tidy: exit status 1\nwarning: go.mod:7: first\nwarning: go.mod:9: second"; got.Error() != want {
+		t.Errorf("withWarnings() = %q, want %q", got, want)
+	}
+	if !errors.Is(got, err) {
+		t.Errorf("withWarnings() does not wrap %v", err)
 	}
 }
 

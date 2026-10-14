@@ -374,3 +374,45 @@ func TestLocalReplaceTargets(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{far}, targets)
 }
+
+// A required local replace target from which the module imports no package
+// reaches the build through its go.mod only, which usually means the scan
+// misses a file.
+func TestReadIncludesWarnsAboutRequiredReplaceWithoutImport(t *testing.T) {
+	for name, test := range map[string]struct {
+		goMod  string
+		main   string
+		warned bool
+	}{
+		"required, not imported": {
+			goMod:  "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n",
+			main:   "package app\n",
+			warned: true,
+		},
+		"required and imported": {
+			goMod: "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n",
+			main:  "package app\n\nimport _ \"example.com/lib/greet\"\n",
+		},
+		"neither required nor imported": {
+			goMod: "module example.com/app\n\ngo 1.26.1\n\nreplace example.com/lib => ../lib\n",
+			main:  "package app\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeModuleFiles(t, root, map[string]string{
+				"app/go.mod":         test.goMod,
+				"app/main.go":        test.main,
+				"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n",
+				"lib/greet/greet.go": "package greet\n",
+			})
+			includes, err := ReadIncludes(filepath.Join(root, "app"), "app")
+			require.NoError(t, err)
+			if !test.warned {
+				require.Empty(t, includes.Warnings)
+				return
+			}
+			require.Equal(t, []string{"go.mod:7: replace example.com/lib => ../lib: the module imports no package of it, so only ../lib/go.mod reaches the build"}, includes.Warnings)
+		})
+	}
+}

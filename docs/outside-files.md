@@ -23,6 +23,14 @@ Generation writes the patterns of these files into `sources`.
 For a module whose build reads nothing outside its directory, `sources`
 returns the module directory only.
 
+The `go mod tidy` of generation removes a requirement that nothing imports,
+so `sources` does not return the replace target of that requirement.
+When a dependency outside the workspace still needs packages of that replace
+target, generation fails.
+The generation error ends with one line per such replace target, for example
+`warning: go.mod:7: replace example.com/lib => ../lib: the module imports no package of it, so only ../lib/go.mod reaches the build`.
+A replace target that is neither required nor imported is unused.
+Generation ignores an unused replace target.
 
 For example, `app/go.mod` replaces `example.com/lib` with `../lib`, and
 `app/main.go` imports `example.com/lib/greet`, which embeds `greeting.txt`:
