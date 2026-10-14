@@ -344,6 +344,14 @@ func TestLocalReplaceTargets(t *testing.T) {
 	targets, err = LocalReplaceTargets(t.TempDir())
 	require.NoError(t, err)
 	require.Empty(t, targets)
+
+	far := strings.Repeat("../", 40) + "far"
+	root = coverageTree(t, map[string]string{
+		"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/far v0.0.0\n\nreplace example.com/far => " + far + "\n",
+	})
+	targets, err = LocalReplaceTargets(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{far}, targets)
 }
 
 func TestWriteCollectionBuildOverlaysTheIncludedModuleSource(t *testing.T) {

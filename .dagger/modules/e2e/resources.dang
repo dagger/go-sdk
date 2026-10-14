@@ -107,6 +107,27 @@ type ResourcesChecks {
   }
 
   """
+  A module three levels below the workspace root that replaces a module
+  with the root itself lists the root's go.mod and the package it imports.
+  """
+  rootReplaceCheck: Void @check {
+    let inputs = directory
+      .withNewFile("go.mod", "module example.com/root\n\ngo 1.26.1\n")
+      .withNewFile("greet/greet.go", "package greet\n\nfunc Greeting() string { return \"root\" }\n")
+      .withNewFile("a/b/deep/dagger-module.toml", "name = \"deep\"\n")
+      .withNewFile("a/b/deep/go.mod", "module example.com/deep\n\ngo 1.26.1\n\nrequire example.com/root v0.0.0\n\nreplace example.com/root => ../../..\n")
+      .withNewFile("a/b/deep/main.go", "package deep\n\nimport \"example.com/root/greet\"\n\ntype Deep struct{}\n\nfunc (*Deep) Greeting() string { return greet.Greeting() }\n")
+      .asWorkspace
+    let entrypoint = goSdk(dangEntrypoint: true).generateScope(
+      ws: inputs.withWorkdir("a/b/deep"), isModule: true, name: "deep", clients: [],
+    ).file("internal/dagger/entrypoint/main.dang").contents
+    assert("the entrypoint does not list the root's files:\n" + entrypoint) {
+      entrypoint.contains("[\"../../../go.mod\", \"../../../greet/*.go\"]")
+    }
+    null
+  }
+
+  """
   The generated fixture repository: the app and the files it includes, a
   caller that reaches the app through a generated client, and a control
   module without files outside its directory.
