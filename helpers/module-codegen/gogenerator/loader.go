@@ -24,6 +24,7 @@ func loadPackage(ctx context.Context, dir string, allowEmpty bool) (*packages.Pa
 		Tests:   false,
 		Fset:    fset,
 		Mode: packages.NeedName |
+			packages.NeedImports |
 			packages.NeedTypes |
 			packages.NeedSyntax |
 			packages.NeedModule,

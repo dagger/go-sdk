@@ -4,9 +4,7 @@ Checks the Go SDK against the Dagger development engine.
 type EngineE2e {
   """
   Commit of release v1.0.0-beta.17, shared by engine-dev and the target
-  engine. It is the first release that loads entrypoint resources
-  (dagger/dagger#14639), which modules that build with files outside their
-  directory need. Keep it aligned with the dependency in dagger-module.toml.
+  engine. Keep it aligned with the dependency in dagger-module.toml.
   """
   let engineCommit: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
 
@@ -24,6 +22,13 @@ type EngineE2e {
   SDK prerequisites are integrated.
   """
   let entrypointFloorCommit: String! = "2d95ef98b6824c5aaca4a43eb172c9a057c18619"
+
+  """
+  Workspace compilation requires beta.17's currentModule.sourceSubpath so a
+  dependency call can locate the called module in the caller's workspace.
+  Keep the beta.16 checks for entrypoints without external compiler inputs.
+  """
+  let workspaceFloorCommit: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
 
   let daggerSource(commit: String!): Workspace! {
     git("https://github.com/dagger/dagger").ref(commit).asWorkspace
@@ -200,36 +205,24 @@ type EngineE2e {
   }
 
   """
-  On the pinned engine, which loads the resources of a module that builds
-  with files outside its directory, the module builds from its context,
-  reuses results across sessions until an included file changes, and runs
-  from anywhere.
+  A module automatically discovers its compilation inputs and reads
+  current external files in each fresh workspace session.
   """
-  resourcesCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
-    resourcesCalls(sdkClient(
+  workspaceInputsCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
+    workspaceInputsCalls(sdkClient(
       ws,
       engineDev(ws: selectedEngineSource(engineSource)).installClient(client: clientBase),
       engineCommit,
     ))
   }
 
-  """
-  On the entrypoint floor engine, which does not load resources, generation
-  refuses a module that builds with files outside its directory.
-  """
-  resourcesFloorCheck(ws: Workspace!): Void @check {
-    let client = sdkClient(
+  """Run workspace compilation calls on its minimum supported engine, beta.17."""
+  workspaceInputsFloorCheck(ws: Workspace!): Void @check {
+    workspaceInputsCalls(sdkClient(
       ws,
-      entrypointFloorEngineDev(ws: daggerSource(entrypointFloorCommit)).installClient(client: clientBase),
-      entrypointFloorCommit,
-    )
-    let refused = runDagger(client, client.workdir, [
-      "-m", ".dagger/modules/e2e", "call", "resources", "fixture", "--ws", ".", "export", "--path", "/repo",
-    ])
-    assert("generation did not refuse files outside the module on the floor engine:\n" + refused.stdout + refused.stderr) {
-      refused.exitCode != 0 and refused.stderr.contains("which needs dagger v1.0.0-beta.17 or later")
-    }
-    null
+      workspaceFloorEngineDev(ws: daggerSource(workspaceFloorCommit)).installClient(client: clientBase),
+      workspaceFloorCommit,
+    ))
   }
 
   """Run one dagger command in the client, from dir."""
@@ -248,32 +241,25 @@ type EngineE2e {
   }
 
   """
-  Call the generated include fixture: the module builds from its context, a
-  file embedded at build time, a file read at call time, a file the build
-  does not read, the module API, a result reused by a second session and
-  computed again after an included file changes, and calls from another
-  repository, a subdirectory, by path and from a git source.
+  Call the generated include fixture: a file embedded at build time, a file
+  read at call time, selected files, the module API, calls from a subdirectory
+  and by path, and invalidation when only an external embed changes.
   """
-  let resourcesCalls(client: Container!): Void {
+  let workspaceInputsCalls(client: Container!): Void {
     let sdkDir = client.workdir
     let exported = runDagger(client, sdkDir, [
-      "-m", ".dagger/modules/e2e", "call", "resources", "fixture", "--ws", ".", "export", "--path", "/repo",
+      "-m", ".dagger/modules/e2e", "call", "workspace-inputs", "fixture", "--ws", ".", "export", "--path", "/repo",
     ])
     succeeded(exported)
     let ready = exported
-      .withNewFile("/repo/dagger.toml", "[modules.include-app]\nsource = \"app\"\n")
+      .withNewFile("/repo/dagger.toml", "[modules.include-app]\nsource = \"app\"\n[modules.include-caller]\nsource = \"caller\"\n")
       .withExec(["git", "-C", "/repo", "init", "-q"])
-    let entrypoint = ready.file("/repo/app/internal/dagger/entrypoint/main.dang").contents
-    assert("the entrypoint does not build from the module context:\n" + entrypoint) {
-      entrypoint.contains("currentModule.contextDirectory")
-    }
-
-    let outside = runDagger(ready.withExec(["git", "init", "-q", "/other"]), "/other", ["-m", "/repo/app", "call", "greeting"])
-    assert("the module failed from another repository: " + succeeded(outside)) { succeeded(outside) == "one" }
 
     let greeting = ["call", "include-app", "greeting"]
-    let nonce = ["call", "include-app", "nonce"]
-    let built = runDagger(outside, "/repo", greeting)
+    let nestedGreeting = ["call", "include-caller", "greeting"]
+    let nested = runDagger(ready, "/repo", nestedGreeting)
+    assert("the module failed through a sibling client") { succeeded(nested) == "one" }
+    let built = runDagger(nested, "/repo", greeting)
     assert("the build did not embed the included file: " + succeeded(built)) {
       succeeded(built) == "one"
     }
@@ -282,42 +268,41 @@ type EngineE2e {
       succeeded(runtime) == "one"
     }
     let excluded = runDagger(runtime, "/repo", ["call", "include-app", "excluded"])
-    assert("lib/greet/testdata, which the build does not read, reached the module") { succeeded(excluded) == "false" }
+    assert("the excluded directory reached the module") { succeeded(excluded) == "false" }
 
     let functions = runDagger(excluded, "/repo", ["-m", "app", "functions"])
     let api = succeeded(functions)
-    assert("the module API is not greeting, runtime, excluded and nonce:\n" + api) {
+    assert("the module API is not greeting, runtime and excluded:\n" + api) {
       api.contains("greeting") and api.contains("runtime") and api.contains("excluded") and api.contains("nonce") and api.contains("resources") == false
     }
 
-    let firstNonce = runDagger(functions, "/repo", nonce)
-    let secondNonce = runDagger(firstNonce, "/repo", nonce)
-    assert("a second session did not reuse the result: " + succeeded(firstNonce) + " then " + succeeded(secondNonce)) {
-      succeeded(secondNonce) == succeeded(firstNonce)
+    let firstNonce = runDagger(functions, "/repo", ["call", "include-app", "nonce"])
+    let secondNonce = runDagger(firstNonce, "/repo", ["call", "include-app", "nonce"])
+    assert("a fresh workspace reused the previous function result") {
+      succeeded(firstNonce).hasPrefix("one ") and
+      succeeded(secondNonce).hasPrefix("one ") and
+      succeeded(firstNonce) != succeeded(secondNonce)
     }
-    let changed = runDagger(secondNonce.withNewFile("/repo/lib/greet/greeting.txt", "two"), "/repo", greeting)
-    assert("a new session returned a stale result after an included file changed: " + succeeded(changed)) {
-      succeeded(changed) == "two"
-    }
-    let freshNonce = runDagger(changed, "/repo", nonce)
-    assert("the result was not computed again after an included file changed: " + succeeded(freshNonce)) {
-      succeeded(freshNonce).hasPrefix("two ") and succeeded(freshNonce) != succeeded(firstNonce)
-    }
-
-    let fromSubdirectory = runDagger(freshNonce, "/repo/lib", greeting)
+    let fromSubdirectory = runDagger(secondNonce, "/repo/lib", greeting)
     let byPath = runDagger(fromSubdirectory, "/repo/lib", ["-m", "../app", "call", "greeting"])
     assert("the module failed from a subdirectory of its workspace") {
-      succeeded(fromSubdirectory) == "two" and succeeded(byPath) == "two"
+      succeeded(fromSubdirectory) == "one" and succeeded(byPath) == "one"
     }
 
-    succeeded(runDagger(byPath, sdkDir, [
-      "-m", ".dagger/modules/e2e", "call", "resources", "git-source-call", "--ws", ".", "--cli", "/.dagger-cli",
-    ]))
+    # Two new CLI sessions, after only the external embed changed. The main
+    # module and its generated entrypoint stay byte-for-byte identical.
+    let changed = byPath.withNewFile("/repo/lib/greet/greeting.txt", "two")
+    let fresh = runDagger(changed, "/repo", greeting)
+    assert("external embed returned a stale function result") { succeeded(fresh) == "two" }
+    let nestedFresh = runDagger(fresh, "/repo", nestedGreeting)
+    assert("the sibling client returned an old embedded file") { succeeded(nestedFresh) == "two" }
+    let unchanged = runDagger(nestedFresh.withNewFile("/repo/lib/unrelated.txt", "unrelated"), "/repo", greeting)
+    assert("unrelated file affected the result") { succeeded(unchanged) == "two" }
     null
   }
 
   """
-  Build the pinned release engine and use this checkout as its Go SDK.
+  Build the pinned main engine and use this checkout as its Go SDK.
   """
   devSdkCheck(ws: Workspace!, checks: [String!]! = []): Void @check {
     let client = sdkClient(
