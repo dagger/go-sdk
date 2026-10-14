@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/go-inputs/discovery"
 	"os"
+
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/go-inputs/discovery"
 )
 
 func main() {

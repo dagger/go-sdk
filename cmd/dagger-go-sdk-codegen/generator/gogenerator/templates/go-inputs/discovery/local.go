@@ -371,8 +371,11 @@ func checkEmbed(root, dir, pattern string, all bool) error {
 			}
 		}
 		linked := ""
-		filepath.WalkDir(match, func(p string, entry fs.DirEntry, err error) error {
-			if err != nil || p == match {
+		err := filepath.WalkDir(match, func(p string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if p == match {
 				return nil
 			}
 			// go:embed skips these names, and nested modules.
@@ -392,6 +395,9 @@ func checkEmbed(root, dir, pattern string, all bool) error {
 			}
 			return nil
 		})
+		if err != nil {
+			return err
+		}
 		if linked != "" {
 			return fmt.Errorf("%s is a symlink; %s", replaceText(root, linked), symlinkRefusal)
 		}
