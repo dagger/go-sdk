@@ -57,6 +57,22 @@ type SourcesChecks {
   }
 
   """
+  A module directory without a manifest keeps its Go source: generation
+  adds the manifest, and sources returns the files the build reads outside
+  the module.
+  """
+  existingSourceCheck(ws: Workspace!): Void @check {
+    let ready = generated(ws.withoutFile("/" + appPath + "/dagger-module.toml"))
+    assert("generation replaced main.go") {
+      ready.file("main.go").contents == ws.file("/" + appPath + "/main.go").contents
+    }
+    assert("the entrypoint does not declare sources") {
+      ready.file("internal/dagger/entrypoint/main.dang").contents.contains("pub sources(workspace: Workspace!): Directory!")
+    }
+    null
+  }
+
+  """
   A module with a collection prepares its runtime sources beside the
   included paths, and places them in the module context it builds from.
   """
