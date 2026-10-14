@@ -71,6 +71,52 @@ func TestMetadataSnapshotUsesInventory(t *testing.T) {
 	}
 }
 
+func TestMetadataPatternsSelectEmbedsAndNativeFilesWithoutInventory(t *testing.T) {
+	root := workspace(t, map[string]string{
+		"app/go.mod":             "module example/app\n\ngo 1.26\nrequire example/lib v0.0.0\nreplace example/lib => ../lib\n",
+		"app/main.go":            "package app\nimport _ \"example/lib/greet\"\n",
+		"lib/go.mod":             "module example/lib\n\ngo 1.26\n",
+		"lib/greet/greet.go":     "package greet\nimport (_ \"embed\"; _ \"example/lib/shared\")\n//go:embed all:text\nvar text string\n",
+		"lib/shared/shared.go":   "package shared\n",
+		"unrelated/unrelated.go": "package unrelated\n",
+	})
+	inputs, err := DiscoverPatterns(root, filepath.Join(root, "app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"app", "lib/go.mod", "lib/greet/*.go", "lib/greet/*.h", "lib/greet/*.s", "lib/greet/*.syso", "lib/greet/text", "lib/shared/*.go", "lib/shared/*.h", "lib/shared/*.s", "lib/shared/*.syso"}
+	if !inputs.External || !reflect.DeepEqual(inputs.Files, want) {
+		t.Fatalf("patterns = %#v", inputs)
+	}
+	// Asset names and contents need not be present in the metadata snapshot.
+	// Changing them does not require changing the selection patterns.
+	if err := os.MkdirAll(filepath.Join(root, "lib/greet/text"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "lib/greet/text/new.txt"), []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	next, err := DiscoverPatterns(root, filepath.Join(root, "app"))
+	if err != nil || !reflect.DeepEqual(inputs, next) {
+		t.Fatalf("patterns changed with asset contents: %#v, %v", next, err)
+	}
+	// Import and directive changes still produce a fresh selection.
+	if err := os.WriteFile(filepath.Join(root, "lib/greet/greet.go"), []byte("package greet\nimport _ \"embed\"\n//go:embed other.txt\nvar text string\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	next, err = DiscoverPatterns(root, filepath.Join(root, "app"))
+	if err != nil || !slices.Contains(next.Files, "lib/greet/other.txt") || slices.Contains(next.Files, "lib/shared/*.go") || slices.Contains(next.Files, "lib/greet/text") {
+		t.Fatalf("patterns after changed imports/embed: %#v, %v", next, err)
+	}
+}
+
+func TestMetadataPatternsRefuseReplacementOutsideWorkspace(t *testing.T) {
+	root := workspace(t, map[string]string{"app/go.mod": "module example/app\n\ngo 1.26\nreplace example/lib => ../../outside\n"})
+	if _, err := DiscoverPatterns(root, filepath.Join(root, "app")); err == nil || !strings.Contains(err.Error(), "leaves the workspace") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestImportsUnderAllTagsAndTests(t *testing.T) {
 	root := workspace(t, map[string]string{
 		"app/go.mod":               "module example/app\n\ngo 1.26\nrequire example/lib v0.0.0\nreplace example/lib => ../lib\n",

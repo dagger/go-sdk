@@ -54,10 +54,11 @@ If `greet` embeds `greeting.txt`, changing that file changes the compiled value
 on the next fresh workspace call, without regenerating the module. Editing an
 unrelated file that the compiler does not need can reuse the existing build.
 
-Passing a workspace is lazy. Discovery reads Go source, module metadata and
-file names; the SDK then imports the selected external contents. Module
-authors still choose the files their own pipelines read. The Go SDK handles
-compiler input selection.
+Passing a workspace is lazy. Discovery reads Go source and module metadata,
+then passes the discovered import and embed patterns to `ws.Directory(...)`.
+That selects external contents without returning every checkout filename
+through the API. Module authors still choose the files their own pipelines
+read. The Go SDK handles compiler input selection.
 
 This uses existing workspace behavior and needs no engine change or entrypoint
 resource tracking. Self-contained modules do not need this extra workspace

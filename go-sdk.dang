@@ -471,7 +471,7 @@ type GoSdk {
     let included = discovery.field(["external"]).asBoolean
     let buildRoot = if (included) { "/src/" + goRoot } else { "/src" }
     let tree = if (included) {
-      ws.directory("/", include: selected, exclude: [goRoot, "**/.git"])
+      ws.directory("/", include: selected, exclude: [goRoot, "**/.git", "**/*_test.go"])
         .withDirectory(goRoot, moduleSource)
     } else { moduleSource }
     let inputs = builder
@@ -524,20 +524,17 @@ type GoSdk {
   }
 
   """
-  Discover compiler inputs from Go/module metadata and a file-name inventory.
-  Asset contents enter only the filtered build snapshot, after discovery.
+  Discover compiler input patterns from Go/module metadata. Directory filters
+  select the matching files without making each workspace filename an API result.
   """
   let moduleInputs(builder: Container!, ws: Workspace!, moduleSource: Directory!, modulePath: String!): Dagger.JSONValue! {
     let metadata = ws.directory("/", include: ["**/*.go", "**/go.mod", "**/go.sum"], exclude: ["**/.git", "**/vendor"])
       .withDirectory(modulePath, moduleSource)
-    let inventory = ws.glob(pattern: "**").filter { file => file != modulePath and file.hasPrefix(modulePath + "/") == false } +
-      moduleSource.glob(pattern: "**").map { file => if (modulePath == ".") { file } else { modulePath + "/" + file } }
     let found = runTool(builder
-      .withDirectory("/discovery", metadata)
-      .withNewFile("/inventory.json", JSON.encode(inventory)), [
+      .withDirectory("/discovery", metadata), [
       "go-inputs", "--workspace-root", "/discovery",
       "--module-root", "/discovery/" + modulePath,
-      "--inventory", "/inventory.json",
+      "--patterns",
     ])
     Dagger.json.withContents(found.stdout :: Dagger.JSON!)
   }

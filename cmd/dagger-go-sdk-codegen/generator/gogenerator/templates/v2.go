@@ -473,8 +473,8 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 }
 
 // writeAssembled rediscovers inputs on every workspace-dependent call. The
-// metadata snapshot and file inventory do not import embedded asset contents;
-// only the selected files enter the compilation directory.
+// metadata snapshot does not import embedded asset contents. Discovery returns
+// patterns for Workspace.directory, avoiding per-file GraphQL cache entries.
 func writeAssembled(b *bytes.Buffer, moduleName string, include *WorkspaceBuild) {
 	b.WriteString(`  let inputTool: File! {
     container
@@ -497,14 +497,10 @@ func writeAssembled(b *bytes.Buffer, moduleName string, include *WorkspaceBuild)
       .from("golang:1.26-alpine")
       .withFile("/usr/local/bin/go-inputs", inputTool, permissions: 755)
       .withMountedDirectory("/workspace", metadata)
-      .withNewFile("/inventory.json", JSON.encode(
-        workspace.glob(pattern: "**").filter { file => file != scope and file.hasPrefix(scope + "/") == false } +
-        source.glob(pattern: "**").map { file => if (scope == "" or scope == ".") { file } else { scope + "/" + file } }
-      ))
-      .withExec(["go-inputs", "--workspace-root", "/workspace", "--module-root", "/workspace/" + scope, "--inventory", "/inventory.json"])
+      .withExec(["go-inputs", "--workspace-root", "/workspace", "--module-root", "/workspace/" + scope, "--patterns"])
     let inputs = Dagger.json.withContents(probe.stdout :: Dagger.JSON!)
     let selected = inputs.field(["files"]).asArray.{{asString}}.map { file => file.asString }
-    workspace.directory("/", include: selected, exclude: [scope, "**/.git"])
+    workspace.directory("/", include: selected, exclude: [scope, "**/.git", "**/*_test.go"])
       .withDirectory(scope, source)
   }
 

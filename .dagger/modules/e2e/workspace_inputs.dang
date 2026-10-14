@@ -13,7 +13,8 @@ type WorkspaceInputsChecks {
     let ready = generated(ws)
     let entrypoint = ready.file("internal/dagger/entrypoint/main.dang").contents
     assert("entrypoint still declares resources") { !entrypoint.contains("pub resources") }
-    ["workspace.glob", "include: selected", "--inventory", "dispatch(callWorkspace)"].each { text =>
+    assert("entrypoint enumerates every workspace filename") { !entrypoint.contains(".glob(") }
+    ["include: selected", "--patterns", "dispatch(callWorkspace)"].each { text =>
       assert("entrypoint lacks " + text) { entrypoint.contains(text) }
     }
     assert("author source changed") {
