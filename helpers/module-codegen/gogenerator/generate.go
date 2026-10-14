@@ -19,7 +19,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/go-inputs/discovery"
 	"github.com/iancoleman/strcase"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
@@ -28,6 +27,8 @@ import (
 	clientgen "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
+
+	"module-codegen/discovery"
 )
 
 type GenerateConfig struct {
@@ -236,19 +237,6 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	artifacts.EntrypointSource, err = writeCollectionBuild(root, artifacts.EntrypointSource, runtimeFiles)
 	if err != nil {
 		return err
-	}
-	for name, contents := range artifacts.SupportFiles {
-		path := filepath.Join(entrypointDir, name)
-		existing, err := os.ReadFile(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err == nil && !bytes.Equal(existing, contents) {
-			return fmt.Errorf("%s exists and differs from the SDK compilation helper; move or rename it and generate again", name)
-		}
-		if err := writeFile(path, contents); err != nil {
-			return err
-		}
 	}
 	if err := writeFile(filepath.Join(entrypointDir, "main.dang"), artifacts.EntrypointSource); err != nil {
 		return err

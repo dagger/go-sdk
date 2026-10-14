@@ -144,7 +144,7 @@ func applyGeneratedTree(ctx context.Context, root, stage string, old generator.O
 		if err != nil {
 			return err
 		}
-		if !generatedMarker.Match(data) && !strings.HasPrefix(path, "internal/dagger/entrypoint/go-inputs/") {
+		if !generatedMarker.Match(data) {
 			return nil
 		}
 		if hash, tracked := old.Files[path]; tracked {

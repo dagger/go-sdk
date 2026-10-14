@@ -28,7 +28,6 @@ type V2Artifacts struct {
 	ModuleSource     []byte
 	DispatchSource   []byte
 	EntrypointSource []byte
-	SupportFiles     map[string][]byte
 }
 
 // EntrypointSources is what a module's build reads outside its module
@@ -475,21 +474,7 @@ func renderDangObject(spec *parsedObjectType) (string, error) {
 		base += "\n  .withCollection"
 	}
 	for _, method := range spec.methods {
-		rendered := method
-		if spec.workspaceBuild && spec.isCollection && (method.isCollectionGet || strcase.ToLowerCamel(method.name) == "get") {
-			clone := *method
-			clone.argSpecs = nil
-			for _, arg := range method.argSpecs {
-				if arg.name != "ws" {
-					clone.argSpecs = append(clone.argSpecs, arg)
-				}
-			}
-			if clone.cachePolicy != "never" {
-				clone.cachePolicy = "session"
-			}
-			rendered = &clone
-		}
-		fn, err := renderDangFunction(rendered)
+		fn, err := renderDangFunction(method)
 		if err != nil {
 			return "", err
 		}
@@ -805,7 +790,6 @@ type callRequest struct {
 	ReceiverValue json.RawMessage `+"`json:\"receiverValue\"`"+`
 	FnName string `+"`json:\"fnName\"`"+`
 	FnArgs json.RawMessage `+"`json:\"fnArgs\"`"+`
-	WorkspaceID string `+"`json:\"workspaceID\"`"+`
 }
 
 type argumentSpec struct { Required bool; Default string; Encoding string }
@@ -862,7 +846,6 @@ func dispatch(ctx context.Context, req callRequest) (any, error) {
 	if err != nil { return nil, err }
 	values := map[string]json.RawMessage{}
 	if err := json.Unmarshal(fnArgs, &values); err != nil { return nil, fmt.Errorf("fnArgs is not a JSON object: %%w", err) }
-	if req.WorkspaceID != "" { values["ws"], err = json.Marshal(req.WorkspaceID); if err != nil { return nil, err } }
 	args := make(map[string][]byte, len(values))
 	for name, value := range values { args[name] = value }
 	return module.DaggerDispatch(ctx, receiver, req.ReceiverType, req.FnName, args)

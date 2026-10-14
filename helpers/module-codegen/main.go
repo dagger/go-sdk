@@ -11,8 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/go-inputs/discovery"
-
+	"module-codegen/discovery"
 	"module-codegen/gogenerator"
 )
 

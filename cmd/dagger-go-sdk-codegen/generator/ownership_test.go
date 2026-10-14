@@ -73,22 +73,6 @@ func TestOwnershipRejectsEscapingPaths(t *testing.T) {
 	})
 }
 
-func TestOwnershipCompilationHelperUpgrade(t *testing.T) {
-	root := t.TempDir()
-	const path = "internal/dagger/entrypoint/go-inputs/discovery/inputs.go"
-	old := fstest.MapFS{path: &fstest.MapFile{Data: []byte("package discovery\n// previous SDK\n")}}
-	_, err := WriteOwnedOverlay(t.Context(), old, root)
-	require.NoError(t, err)
-	next := fstest.MapFS{path: &fstest.MapFile{Data: []byte("package discovery\n// updated SDK\n")}}
-	_, err = WriteOwnedOverlay(t.Context(), next, root)
-	require.NoError(t, err)
-	data, err := os.ReadFile(filepath.Join(root, path))
-	require.NoError(t, err)
-	require.Equal(t, string(next[path].Data), string(data))
-	require.NoError(t, PruneOwnedClient(t.Context(), root))
-	require.NoFileExists(t, filepath.Join(root, path))
-}
-
 func TestOwnershipCompilationHelperPreservesAuthorEdits(t *testing.T) {
 	for _, tracked := range []bool{false, true} {
 		t.Run(fmt.Sprint(tracked), func(t *testing.T) {
