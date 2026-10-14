@@ -466,14 +466,12 @@ type GoSdk {
     let goImage = "golang:" + goVersion + "-alpine"
     let builder = moduleCodegenBuilder(goImage)
     let moduleSource = workspaceRoot.directory(".", exclude: ["**/.git"])
-    let discovery = moduleInputs(builder, ws, moduleSource, goRoot)
-    let selected = discovery.field(["files"]).asArray.{{asString}}.map { file => file.asString }
-    let included = discovery.field(["external"]).asBoolean
-    let buildRoot = if (included) { "/src/" + goRoot } else { "/src" }
-    let tree = if (included) {
-      ws.directory("/", include: selected, exclude: [goRoot, "**/.git"])
-        .withDirectory(goRoot, moduleSource)
-    } else { moduleSource }
+    let includes = moduleIncludes(ws, builder, moduleSource, goRoot, moduleRoot, scopePath)
+    let included = lines(includes.file("include")).length > 0
+    # A module with includes is generated where its build sees it: under its
+    # anchor, beside the paths it includes.
+    let buildRoot = if (included) { "/src/" + includes.file("module").contents } else { "/src" }
+    let tree = if (included) { includedTree(ws, moduleSource, includes) } else { moduleSource }
     let inputs = builder
       .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJSON)
@@ -524,22 +522,83 @@ type GoSdk {
   }
 
   """
-  Discover compiler inputs from Go/module metadata and a file-name inventory.
-  Asset contents enter only the filtered build snapshot, after discovery.
+  What the module's build reads outside its module directory, found from the
+  local replace directives of go.mod: the files anchor and module, and the
+  include list, with one JSON value per line. Paths are relative to the
+  anchor, the directory that holds the module and every included path. The
+  include list is empty for a module whose build reads nothing outside.
   """
-  let moduleInputs(builder: Container!, ws: Workspace!, moduleSource: Directory!, modulePath: String!): Dagger.JSONValue! {
-    let metadata = ws.directory("/", include: ["**/*.go", "**/go.mod", "**/go.sum"], exclude: ["**/.git", "**/vendor"])
+  let moduleIncludes(ws: Workspace!, builder: Container!, moduleSource: Directory!, goRoot: String!, moduleRoot: String!, scopePath: String!): Directory! {
+    let targets = runTool(builder.withDirectory("/src", moduleSource), [
+      "module-codegen", "replaces",
+      "--module-root", "/src/" + moduleRoot,
+      "--workspace-path", scopePath,
+    ]).stdout.split("\n").filter { p => p != "" }
+    # The scan follows the module's imports into the replace targets, so it
+    # reads their Go sources from the workspace. It refuses a target without
+    # go.mod with the replace line, which reading the target here would not.
+    let present = targets.filter { target =>
+      ws.directory("/", include: [target + "/go.mod"]).exists(target + "/go.mod")
+    }
+    let tree = present.reduce(directory.withDirectory(goRoot, moduleSource)) { current, target =>
+      current.withDirectory(target, ws.directory(rootedPath(target),
+        include: ["**/go.mod", "**/*.go", "**/*.s", "**/*.h", "**/*.syso"], exclude: ["**/.git"]))
+    }
+    runTool(builder.withDirectory("/src", tree), [
+      "module-codegen", "includes",
+      "--module-root", "/src/" + scopePath,
+      "--workspace-path", scopePath,
+      "--output", "/includes",
+    ]).directory("/includes")
+  }
+
+  let lines(file: File!): [String!]! {
+    file.contents.split("\n").filter { line => line != "" }
+  }
+
+  let decoded(line: String!): Dagger.JSONValue! {
+    Dagger.json.withContents(line :: Dagger.JSON!)
+  }
+
+  """
+  The files of a directory. A directory whose files a filter removed is
+  still listed, so it does not count.
+  """
+  let files(dir: Directory!): [String!]! {
+    dir.glob(pattern: "**").filter { p => p.hasSuffix("/") == false }
+  }
+
+  """Where an include entry is written, for an error about it."""
+  let includeLabel(line: String!): String! {
+    let entry = decoded(line)
+    stringField(entry, "position") + ": " + JSON.encode(stringField(entry, "path"))
+  }
+
+  """
+  The module directory and the workspace paths its include list names, laid
+  out under their anchor as the engine loads them with the module. Refuses a
+  path that matches nothing or only ignored files.
+  """
+  let includedTree(ws: Workspace!, moduleSource: Directory!, includes: Directory!): Directory! {
+    let anchor = rootedPath(includes.file("anchor").contents)
+    let modulePath = includes.file("module").contents
+    let entries = lines(includes.file("include"))
+    let unmatched = entries.filter { line =>
+      files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"])).isEmpty
+    }
+    if (unmatched.length > 0) {
+      raise includeLabel(unmatched[0] ?? "") + " matches nothing in the workspace"
+    }
+    let ignored = entries.filter { line =>
+      files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"], gitignore: true)).isEmpty
+    }
+    if (ignored.length > 0) {
+      raise includeLabel(ignored[0] ?? "") + " matches only files ignored by .gitignore"
+    }
+    let patterns = entries.map { line => stringField(decoded(line), "pattern") }
+    directory
+      .withDirectory(".", ws.directory(anchor, include: patterns, exclude: [modulePath, "**/.git"], gitignore: true))
       .withDirectory(modulePath, moduleSource)
-    let inventory = ws.glob(pattern: "**").filter { file => file != modulePath and file.hasPrefix(modulePath + "/") == false } +
-      moduleSource.glob(pattern: "**").map { file => if (modulePath == ".") { file } else { modulePath + "/" + file } }
-    let found = runTool(builder
-      .withDirectory("/discovery", metadata)
-      .withNewFile("/inventory.json", JSON.encode(inventory)), [
-      "go-inputs", "--workspace-root", "/discovery",
-      "--module-root", "/discovery/" + modulePath,
-      "--inventory", "/inventory.json",
-    ])
-    Dagger.json.withContents(found.stdout :: Dagger.JSON!)
   }
 
   """
@@ -591,8 +650,6 @@ type GoSdk {
       .withDirectory("/cmd", currentModule.source.directory("cmd"))
       .withWorkdir("/helpers/entrypoint-contract")
       .withExec(["go", "build", "-o", "/usr/local/bin/entrypoint-contract", "."])
-      .withWorkdir("/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/go-inputs")
-      .withExec(["go", "build", "-o", "/usr/local/bin/go-inputs", "."])
       .withWorkdir("/helpers/module-codegen")
       .withExec(["go", "build", "-o", "/usr/local/bin/module-codegen", "."])
   }

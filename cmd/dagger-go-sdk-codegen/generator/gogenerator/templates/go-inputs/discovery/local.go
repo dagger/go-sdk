@@ -146,6 +146,7 @@ func splitEmbedArgs(text string) ([]string, error) {
 type localReplace struct {
 	module string
 	text   string
+	path   string
 	dir    string
 	line   int
 	inside bool
@@ -179,6 +180,7 @@ func localReplaces(root string) (*modfile.File, []localReplace, error) {
 		replaces = append(replaces, localReplace{
 			module: replace.Old.Path,
 			text:   strings.TrimSpace(replace.Old.Path + " " + replace.Old.Version),
+			path:   replace.New.Path,
 			dir:    dir,
 			line:   replace.Syntax.Start.Line,
 			inside: err == nil && filepath.IsLocal(rel),
@@ -201,7 +203,14 @@ func LocalReplaceTargets(root string) ([]string, error) {
 	var targets []string
 	for _, replace := range replaces {
 		if !replace.inside {
-			targets = append(targets, replaceText(root, replace.dir))
+			// The caller lists targets from a copy of the module near the file
+			// system root, where resolving would drop the ".." that climb above
+			// it; go.mod keeps them.
+			target := replaceText(root, replace.dir)
+			if !filepath.IsAbs(replace.path) {
+				target = path.Clean(filepath.ToSlash(replace.path))
+			}
+			targets = append(targets, target)
 		}
 	}
 	return targets, nil

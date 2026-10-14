@@ -24,11 +24,52 @@ type WorkspaceInputsChecks {
     null
   }
 
+  let withReplace(ws: Workspace!, target: String!): Workspace! {
+    let goMod = "/" + appPath + "/go.mod"
+    ws.withNewFile(goMod, ws.file(goMod).contents.replace("=> ../lib", "=> " + target))
+  }
+
+  let expectRefusal(input: Workspace!, want: String!): Void {
+    let got = generated(input).file("dagger.gen.go").contents rescue { err: Error => err.message }
+    assert("generation did not refuse with " + want + ": " + got) { got.contains(want) }
+    null
+  }
+
   refusalsCheck(ws: Workspace!): Void @check {
     let main = "/" + appPath + "/main.go"
-    let missing = ws.withNewFile(main, ws.file(main).contents.replace("Greeting(ws *dagger.Workspace)", "Greeting()"))
-    let message = generated(missing).file("dagger.gen.go").contents rescue { err: Error => err.message }
-    assert("missing workspace was accepted: " + message) { message.contains("required ws *dagger.Workspace") }
+    expectRefusal(ws.withNewFile(main, ws.file(main).contents.replace("Greeting(ws *dagger.Workspace)", "Greeting()")),
+      "required ws *dagger.Workspace")
+    expectRefusal(withReplace(ws, "../../../../../../../x"),
+      "go.mod:7: replace example.com/lib => ../../../../../../../x leaves the workspace root")
+    expectRefusal(withReplace(ws, "../lbi"),
+      "go.mod:7: replace example.com/lib => ../lbi reads ../lbi/go.mod, which is missing")
+    expectRefusal(ws.withNewFile("/" + appPath + "/extra.go", "package include_app\n\nimport _ \"example.com/lib/missing\"\n"),
+      "extra.go:3:8: package example.com/lib/missing is in ../lib (go.mod:7), but ../lib/missing has no Go files")
+    # The engine applies .gitignore files from the host only, so the ignored
+    # fixture module is committed rather than written as a workspace edit.
+    expectRefusal(withReplace(ws, "../ignored"),
+      "go.mod:7: \"../ignored/go.mod\" matches only files ignored by .gitignore")
+    null
+  }
+
+  """
+  A module three levels below the workspace root generates against a
+  replace target that is the root itself.
+  """
+  rootReplaceCheck: Void @check {
+    let inputs = directory
+      .withNewFile("go.mod", "module example.com/root\n\ngo 1.26.1\n")
+      .withNewFile("greet/greet.go", "package greet\n\nfunc Greeting() string { return \"root\" }\n")
+      .withNewFile("a/b/deep/dagger-module.toml", "name = \"deep\"\n")
+      .withNewFile("a/b/deep/go.mod", "module example.com/deep\n\ngo 1.26.1\n\nrequire example.com/root v0.0.0\n\nreplace example.com/root => ../../..\n")
+      .withNewFile("a/b/deep/main.go", "package deep\n\nimport (\n\t\"example.com/deep/internal/dagger\"\n\t\"example.com/root/greet\"\n)\n\ntype Deep struct{}\n\nfunc (*Deep) Greeting(ws *dagger.Workspace) string { return greet.Greeting() }\n")
+      .asWorkspace
+    let entrypoint = goSdk(dangEntrypoint: true).generateScope(
+      ws: inputs.withWorkdir("a/b/deep"), isModule: true, name: "deep", clients: [],
+    ).file("internal/dagger/entrypoint/main.dang").contents
+    assert("the entrypoint does not build from the workspace:\n" + entrypoint) {
+      entrypoint.contains("dispatch(callWorkspace)")
+    }
     null
   }
 
