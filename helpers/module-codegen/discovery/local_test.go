@@ -116,6 +116,46 @@ func TestReadIncludes(t *testing.T) {
 			}),
 			resources: covered,
 		},
+		"version replace imported by a replace target": {
+			files: with(map[string]string{
+				"ci/go.mod":          "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/b v1.0.0 => ../b\n",
+				"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n\nrequire example.com/b v1.0.0\n",
+				"lib/greet/greet.go": "package greet\n\nimport _ \"example.com/b/pkg\"\n\nfunc Hello() {}\n",
+				"b/go.mod":           "module example.com/b\n\ngo 1.26.1\n",
+				"b/pkg/pkg.go":       "package pkg\n",
+			}),
+			resources: append([]string{"../b/go.mod", "../b/pkg/*.go"}, covered...),
+		},
+		"version replace of a version a replace target selects": {
+			files: with(map[string]string{
+				"ci/go.mod":          "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/b v1.0.0 => ../b1\n",
+				"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n\nrequire example.com/b v1.2.0\n",
+				"lib/greet/greet.go": "package greet\n\nimport _ \"example.com/b/pkg\"\n\nfunc Hello() {}\n",
+			}),
+			resources: covered,
+		},
+		"version replace without the imported package": {
+			files: with(map[string]string{
+				"ci/go.mod":          "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/b v1.0.0 => ../b\n",
+				"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n\nrequire example.com/b v1.2.0\n",
+				"lib/greet/greet.go": "package greet\n\nimport _ \"example.com/b/pkg\"\n\nfunc Hello() {}\n",
+				"b/go.mod":           "module example.com/b\n\ngo 1.26.1\n",
+				"b/other/other.go":   "package other\n",
+			}),
+			resources: covered,
+		},
+		"version replaces of two versions": {
+			files: with(map[string]string{
+				"ci/go.mod":          "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/b v1.0.0 => ../b1\n\nreplace example.com/b v1.2.0 => ../b2\n",
+				"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n\nrequire example.com/b v1.2.0\n",
+				"lib/greet/greet.go": "package greet\n\nimport _ \"example.com/b/pkg\"\n\nfunc Hello() {}\n",
+				"b1/go.mod":          "module example.com/b\n\ngo 1.26.1\n",
+				"b1/pkg/pkg.go":      "package pkg\n",
+				"b2/go.mod":          "module example.com/b\n\ngo 1.26.1\n",
+				"b2/pkg/pkg.go":      "package pkg\n",
+			}),
+			resources: append([]string{"../b1/go.mod", "../b1/pkg/*.go", "../b2/go.mod", "../b2/pkg/*.go"}, covered...),
+		},
 		"required but not imported": {
 			files: with(map[string]string{
 				"ci/go.mod":    "module example.com/ci\n\ngo 1.26.1\n\nrequire (\n\texample.com/lib v0.0.0\n\texample.com/tools v0.0.0 // indirect\n)\n\nreplace example.com/lib => ../lib\n\nreplace example.com/tools => ../tools\n",
@@ -128,6 +168,21 @@ func TestReadIncludes(t *testing.T) {
 				"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace example.com/unused => ../unused\n",
 			}),
 			resources: covered,
+		},
+		"replace of the required version": {
+			files: with(map[string]string{
+				"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v1.0.0\n\nreplace example.com/lib v1.0.0 => ../lib\n",
+			}),
+			resources: covered,
+		},
+		"replace of the required version shadows the unversioned one": {
+			files: with(map[string]string{
+				"ci/go.mod":    "module example.com/ci\n\ngo 1.26.1\n\nrequire (\n\texample.com/lib v0.0.0\n\texample.com/b v1.0.0\n)\n\nreplace example.com/lib => ../lib\n\nreplace example.com/b v1.0.0 => ../x\n\nreplace example.com/b => ../y\n",
+				"ci/b.go":      "package ci\n\nimport _ \"example.com/b/pkg\"\n",
+				"x/go.mod":     "module example.com/b\n\ngo 1.26.1\n",
+				"x/pkg/pkg.go": "package pkg\n",
+			}),
+			resources: append(covered, "../x/go.mod", "../x/pkg/*.go"),
 		},
 		"replace leaves the workspace": {
 			files: with(map[string]string{
@@ -285,7 +340,7 @@ func TestReadIncludes(t *testing.T) {
 			if len(test.resources) == 0 {
 				require.Equal(t, ".", includes.Anchor)
 				require.Equal(t, ".", includes.ModulePath)
-							return
+				return
 			}
 			require.Equal(t, "..", includes.Anchor)
 			require.Equal(t, "ci", includes.ModulePath)
@@ -353,6 +408,21 @@ func TestReadIncludesMarksPackageGlobs(t *testing.T) {
 	}, packages)
 }
 
+func TestReadIncludesSkipsReplaceOfAnotherVersion(t *testing.T) {
+	root := coverageTree(t, map[string]string{
+		"ci/go.mod":  "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v1.1.0\n\nreplace example.com/lib v1.0.0 => ../lib-v1\n",
+		"ci/main.go": "package ci\n\ntype Ci struct{}\n",
+	})
+	includes, err := ReadIncludes(root, "ci")
+	require.NoError(t, err)
+	require.Empty(t, includes.Include)
+	require.Empty(t, includes.Warnings)
+
+	targets, err := LocalReplaceTargets(root)
+	require.NoError(t, err)
+	require.Empty(t, targets)
+}
+
 func TestLocalReplaceTargets(t *testing.T) {
 	root := coverageTree(t, map[string]string{
 		"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\n" +
@@ -373,6 +443,13 @@ func TestLocalReplaceTargets(t *testing.T) {
 	targets, err = LocalReplaceTargets(root)
 	require.NoError(t, err)
 	require.Equal(t, []string{far}, targets)
+
+	root = coverageTree(t, map[string]string{
+		"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/b v1.0.0\n\nreplace example.com/b v1.0.0 => ../x\n\nreplace example.com/b => ../y\n",
+	})
+	targets, err = LocalReplaceTargets(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{"../x"}, targets)
 }
 
 // A required local replace target from which the module imports no package

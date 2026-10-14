@@ -111,6 +111,13 @@ the module directory: run dagger generate`.
   one fails with `open ../x: no such file or directory`.
 - A replace target must stay inside the workspace. Generation refuses a
   target above the workspace root.
+- A version-specific replace whose version only a dependency's `go.mod`
+  selects can add extra files to `sources` when the replace targets of
+  several versions exist.
+- A version-specific replace of a nested module path that `go.mod` does not
+  require, such as `example.com/a/sub v1.0.0`, hides the packages under that
+  path from a required replace of its parent `example.com/a`: `sources`
+  misses their files and the build fails.
 - Generation refuses a symlink that leads outside the module directory.
 - `sources` returns no file that `.gitignore` ignores. Generation refuses a
   pattern that matches only ignored files.

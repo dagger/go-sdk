@@ -154,10 +154,15 @@ type localReplace struct {
 	dir    string
 	line   int
 	inside bool
+	// candidate marks a replace of a version that go.mod does not require,
+	// which only a dependency's go.mod can select.
+	candidate bool
 }
 
 // localReplaces reads go.mod and its replace directives that name a local
-// directory. It returns a nil file for a module without go.mod.
+// directory, except those of a version other than the one go.mod requires, and
+// unversioned ones that a replace of the required version shadows. It returns a
+// nil file for a module without go.mod.
 func localReplaces(root string) (*modfile.File, []localReplace, error) {
 	goModPath := filepath.Join(root, "go.mod")
 	data, err := os.ReadFile(goModPath)
@@ -171,9 +176,28 @@ func localReplaces(root string) (*modfile.File, []localReplace, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	required := map[string]string{}
+	for _, req := range mod.Require {
+		required[req.Mod.Path] = req.Mod.Version
+	}
+	shadowed := map[string]bool{}
+	for _, replace := range mod.Replace {
+		if replace.Old.Version != "" && replace.Old.Version == required[replace.Old.Path] {
+			shadowed[replace.Old.Path] = true
+		}
+	}
 	var replaces []localReplace
 	for _, replace := range mod.Replace {
 		if replace.New.Version != "" || !modfile.IsDirectoryPath(replace.New.Path) {
+			continue
+		}
+		if replace.Old.Version == "" && shadowed[replace.Old.Path] {
+			continue
+		}
+		// A dependency's go.mod can require a module that go.mod does not,
+		// which activates a replace of that version.
+		version, ok := required[replace.Old.Path]
+		if ok && replace.Old.Version != "" && replace.Old.Version != version {
 			continue
 		}
 		dir := replace.New.Path
@@ -182,12 +206,13 @@ func localReplaces(root string) (*modfile.File, []localReplace, error) {
 		}
 		rel, err := filepath.Rel(root, dir)
 		replaces = append(replaces, localReplace{
-			module: replace.Old.Path,
-			text:   strings.TrimSpace(replace.Old.Path + " " + replace.Old.Version),
-			path:   replace.New.Path,
-			dir:    dir,
-			line:   replace.Syntax.Start.Line,
-			inside: err == nil && filepath.IsLocal(rel),
+			module:    replace.Old.Path,
+			text:      strings.TrimSpace(replace.Old.Path + " " + replace.Old.Version),
+			path:      replace.New.Path,
+			dir:       dir,
+			line:      replace.Syntax.Start.Line,
+			inside:    err == nil && filepath.IsLocal(rel),
+			candidate: !ok && replace.Old.Version != "",
 		})
 	}
 	return mod, replaces, nil
@@ -317,37 +342,43 @@ func outsideFiles(root string, depth int) (map[string]IncludePattern, []string, 
 			if mod.Module != nil && (imported.path == mod.Module.Mod.Path || strings.HasPrefix(imported.path, mod.Module.Mod.Path+"/")) {
 				continue
 			}
-			var match *localReplace
-			for i, replace := range replaces {
-				if (imported.path == replace.module || strings.HasPrefix(imported.path, replace.module+"/")) &&
-					(match == nil || len(replace.module) > len(match.module)) {
-					match = &replaces[i]
+			module := ""
+			for _, replace := range replaces {
+				if (imported.path == replace.module || strings.HasPrefix(imported.path, replace.module+"/")) && len(replace.module) > len(module) {
+					module = replace.module
 				}
 			}
-			if match == nil {
-				continue
-			}
-			if !match.inside {
-				if err := checkGoMod(*match); err != nil {
-					return nil, nil, err
+			// Without module graph selection, any candidate of the module can be
+			// the one Go uses, so every usable one counts.
+			for _, match := range replaces {
+				if match.module != module {
+					continue
 				}
-			}
-			dir := filepath.Join(match.dir, filepath.FromSlash(strings.TrimPrefix(imported.path, match.module)))
-			if !match.inside {
-				if !hasGoFiles(dir) {
-					return nil, nil, fmt.Errorf("%s: package %s is in %s (go.mod:%d), but %s has no Go files",
-						imported.position, imported.path, replaceText(root, match.dir), match.line, replaceText(root, dir))
+				dir := filepath.Join(match.dir, filepath.FromSlash(strings.TrimPrefix(imported.path, match.module)))
+				if match.candidate {
+					if _, err := os.Stat(filepath.Join(match.dir, "go.mod")); err != nil || !hasGoFiles(dir) {
+						continue
+					}
 				}
-				if throughSymlink(root, realRoot, dir) {
-					return nil, nil, fmt.Errorf("%s: package %s reads %s through a symlink; %s",
-						imported.position, imported.path, replaceText(root, dir), symlinkRefusal)
+				if !match.inside {
+					if err := checkGoMod(match); err != nil {
+						return nil, nil, err
+					}
+					if !hasGoFiles(dir) {
+						return nil, nil, fmt.Errorf("%s: package %s is in %s (go.mod:%d), but %s has no Go files",
+							imported.position, imported.path, replaceText(root, match.dir), match.line, replaceText(root, dir))
+					}
+					if throughSymlink(root, realRoot, dir) {
+						return nil, nil, fmt.Errorf("%s: package %s reads %s through a symlink; %s",
+							imported.position, imported.path, replaceText(root, dir), symlinkRefusal)
+					}
+					importedFrom[match.module] = true
+					glob := path.Join(replaceText(root, dir), "*.go")
+					add(imported.position, glob)
+					found[glob] = IncludePattern{Position: found[glob].Position, PackageSource: true}
 				}
-				importedFrom[match.module] = true
-				glob := path.Join(replaceText(root, dir), "*.go")
-				add(imported.position, glob)
-				found[glob] = IncludePattern{Position: found[glob].Position, PackageSource: true}
+				queue = append(queue, pkg{dir: dir})
 			}
-			queue = append(queue, pkg{dir: dir})
 		}
 	}
 	var warnings []string
