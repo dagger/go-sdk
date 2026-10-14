@@ -56,7 +56,8 @@ type GoSdk {
   the runner of existing modules. Explicit true migrates a supported existing
   module; false keeps the Go runtime.
 
-  When Go compilation needs files outside the module directory, every
+  Workspace compilation requires Dagger beta.17 or later. When Go compilation
+  needs files outside the module directory, every
   exported constructor and function must take a required ws *dagger.Workspace.
   Generation reports an error if this argument is missing. When another
   module calls the function, it passes its workspace too. The CLI supplies

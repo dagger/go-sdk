@@ -5,6 +5,11 @@ example through a local `replace` in `go.mod`. That code can also embed files
 with `go:embed`. The Go SDK discovers these inputs automatically; you do not
 need to list them in `//go:resources`.
 
+Workspace compilation requires Dagger beta.17 or later. The SDK uses
+`currentModule.sourceSubpath` to locate a called dependency in its caller's
+workspace; that field is unavailable in beta.16. Self-contained entrypoints
+still support beta.16, and legacy runtime modules still support beta.12.
+
 There are two caches to consider:
 
 1. **Function results.** Dagger checks this cache before the SDK runs. Every

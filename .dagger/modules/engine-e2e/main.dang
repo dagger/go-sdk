@@ -23,6 +23,13 @@ type EngineE2e {
   """
   let entrypointFloorCommit: String! = "2d95ef98b6824c5aaca4a43eb172c9a057c18619"
 
+  """
+  Workspace compilation requires beta.17's currentModule.sourceSubpath so a
+  dependency call can locate the called module in the caller's workspace.
+  Keep the beta.16 checks for entrypoints without external compiler inputs.
+  """
+  let workspaceFloorCommit: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
+
   let daggerSource(commit: String!): Workspace! {
     git("https://github.com/dagger/dagger").ref(commit).asWorkspace
   }
@@ -209,12 +216,12 @@ type EngineE2e {
     ))
   }
 
-  """Run workspace compilation calls on the entrypoint floor engine."""
+  """Run workspace compilation calls on its minimum supported engine, beta.17."""
   workspaceInputsFloorCheck(ws: Workspace!): Void @check {
     workspaceInputsCalls(sdkClient(
       ws,
-      entrypointFloorEngineDev(ws: daggerSource(entrypointFloorCommit)).installClient(client: clientBase),
-      entrypointFloorCommit,
+      workspaceFloorEngineDev(ws: daggerSource(workspaceFloorCommit)).installClient(client: clientBase),
+      workspaceFloorCommit,
     ))
   }
 
