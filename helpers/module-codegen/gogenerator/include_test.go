@@ -1,4 +1,4 @@
-package discovery
+package gogenerator
 
 import (
 	"os"
@@ -281,11 +281,12 @@ func TestReadIncludes(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, test.resources, includes.Paths)
+			require.Equal(t, test.resources, includes.Resources)
 			if len(test.resources) == 0 {
 				require.Equal(t, ".", includes.Anchor)
 				require.Equal(t, ".", includes.ModulePath)
-							return
+				require.Nil(t, includes.entrypoint())
+				return
 			}
 			require.Equal(t, "..", includes.Anchor)
 			require.Equal(t, "ci", includes.ModulePath)
@@ -313,7 +314,7 @@ func TestReadIncludesAnchor(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "../..", includes.Anchor)
 		require.Equal(t, "apps/ci", includes.ModulePath)
-		require.Equal(t, []string{"../../shared/go.mod", "../../shared/util/*.go"}, includes.Paths)
+		require.Equal(t, []string{"../../shared/go.mod", "../../shared/util/*.go"}, includes.Resources)
 		require.Equal(t, "shared/go.mod", includes.Include[0].Pattern)
 	}
 }
@@ -328,7 +329,7 @@ func TestReadIncludesThroughLinkedWorkspace(t *testing.T) {
 	require.NoError(t, os.Symlink(filepath.Dir(root), link))
 	includes, err := ReadIncludes(filepath.Join(link, "ci"), "ci")
 	require.NoError(t, err)
-	require.Equal(t, []string{"../lib/go.mod", "../lib/greet/*.go"}, includes.Paths)
+	require.Equal(t, []string{"../lib/go.mod", "../lib/greet/*.go"}, includes.Resources)
 }
 
 func TestLocalReplaceTargets(t *testing.T) {
@@ -343,4 +344,20 @@ func TestLocalReplaceTargets(t *testing.T) {
 	targets, err = LocalReplaceTargets(t.TempDir())
 	require.NoError(t, err)
 	require.Empty(t, targets)
+}
+
+func TestWriteCollectionBuildOverlaysTheIncludedModuleSource(t *testing.T) {
+	root := t.TempDir()
+	entrypoint := []byte("  let assembled: Directory! {\n" +
+		"    let source = currentModule.source\n" +
+		"    currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)\n" +
+		"  }\n\n" +
+		"  let dispatch: File! {\n" +
+		"    let source = assembled\n")
+	got, err := writeCollectionBuild(root, entrypoint, map[string][]byte{"main.go": []byte("package app\n")})
+	require.NoError(t, err)
+	require.Contains(t, string(got), "    let source = currentModule.source\n"+
+		"      .withFile(\"main.go\", currentModule.source.file(\"internal/dagger/entrypoint/runtime/main.go.src\"))\n"+
+		"    currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)\n")
+	require.Contains(t, string(got), "    let source = assembled\n")
 }

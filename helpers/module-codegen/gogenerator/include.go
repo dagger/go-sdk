@@ -1,4 +1,4 @@
-package discovery
+package gogenerator
 
 import (
 	"fmt"
@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"golang.org/x/mod/modfile"
+
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 )
 
 const embedDirective = "//go:embed"
@@ -29,9 +31,18 @@ type Includes struct {
 	// ModulePath is the module directory relative to the anchor.
 	ModulePath string
 	Include    []IncludePattern
-	// Paths holds the same list as clean patterns relative to the module
+	// Resources holds the same list as clean patterns relative to the module
 	// directory.
-	Paths []string
+	Resources []string
+}
+
+// entrypoint is the include list the generated entrypoint carries, or nil
+// for a module without one.
+func (includes *Includes) entrypoint() *templates.EntrypointInclude {
+	if len(includes.Include) == 0 {
+		return nil
+	}
+	return &templates.EntrypointInclude{Resources: includes.Resources}
 }
 
 type IncludePattern struct {
@@ -84,7 +95,7 @@ func ReadIncludes(root, workspacePath string) (*Includes, error) {
 			Path:     p,
 			Pattern:  path.Join(includes.ModulePath, p),
 		})
-		includes.Paths = append(includes.Paths, p)
+		includes.Resources = append(includes.Resources, p)
 	}
 	return includes, nil
 }

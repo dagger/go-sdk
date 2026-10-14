@@ -35,8 +35,6 @@ type Config struct {
 
 // Specific configuration for module generation.
 type ModuleGeneratorConfig struct {
-	// WorkspaceBuild requires current workspace compilation inputs.
-	WorkspaceBuild bool
 	// Name of the module to generate code for.
 	ModuleName string
 

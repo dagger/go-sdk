@@ -35,15 +35,6 @@ func introspectCollection(spec *parsedObjectType) (*introspection.Type, *introsp
 		return nil, nil, fmt.Errorf("collection %q requires a stored keys field and a get function", spec.name)
 	}
 	lookup := introspectMethod(get)
-	if spec.workspaceBuild {
-		var selected introspection.InputValues
-		for _, arg := range lookup.Args {
-			if arg.Name != "ws" {
-				selected = append(selected, arg)
-			}
-		}
-		lookup.Args = selected
-	}
 	if len(lookup.Args) != 1 {
 		return nil, nil, fmt.Errorf("collection %q get function requires one argument", spec.name)
 	}

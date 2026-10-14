@@ -16,7 +16,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/go-inputs/discovery"
 	"github.com/iancoleman/strcase"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
@@ -85,17 +84,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
-	buildRoot := cfg.BuildRoot
-	if buildRoot == "" {
-		buildRoot = root
-	}
-	inputs, err := discovery.Discover(buildRoot, root, nil)
+	includes, err := ReadIncludes(root, "")
 	if err != nil {
-		return fmt.Errorf("discover Go compilation inputs: %w", err)
-	}
-	var workspaceBuild *templates.WorkspaceBuild
-	if inputs.External {
-		workspaceBuild = &templates.WorkspaceBuild{ModulePath: inputs.ModulePath}
+		return err
 	}
 	moduleSubpath, err := filepath.Rel(filepath.Dir(goModPath), root)
 	if err != nil {
@@ -141,9 +132,8 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		GlobalClient:  cfg.GlobalClient,
 		ClientConfig:  &generator.ClientGeneratorConfig{},
 		ModuleConfig: &generator.ModuleGeneratorConfig{
-			ModuleName:     cfg.ModuleName,
-			WorkspaceBuild: inputs.External,
-			LibVersion:     cfg.DaggerVersion,
+			ModuleName: cfg.ModuleName,
+			LibVersion: cfg.DaggerVersion,
 		},
 	}
 	client := &clientgen.GoGenerator{Config: genCfg}
@@ -193,7 +183,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("reload module package: %w", err)
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, workspaceBuild,
+		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, includes.entrypoint(),
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
@@ -205,7 +195,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := writeFile(dispatchPath, artifacts.DispatchSource); err != nil {
 		return err
 	}
-	buildRoot = root
+	buildRoot := root
 	if cfg.BuildRoot != "" {
 		buildRoot, err = filepath.Abs(cfg.BuildRoot)
 		if err != nil {
@@ -219,19 +209,6 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	artifacts.EntrypointSource, err = writeCollectionBuild(root, artifacts.EntrypointSource, runtimeFiles)
 	if err != nil {
 		return err
-	}
-	for name, contents := range artifacts.SupportFiles {
-		path := filepath.Join(entrypointDir, name)
-		existing, err := os.ReadFile(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err == nil && !bytes.Equal(existing, contents) {
-			return fmt.Errorf("%s exists and differs from the SDK compilation helper; move or rename it and generate again", name)
-		}
-		if err := writeFile(path, contents); err != nil {
-			return err
-		}
 	}
 	if err := writeFile(filepath.Join(entrypointDir, "main.dang"), artifacts.EntrypointSource); err != nil {
 		return err
