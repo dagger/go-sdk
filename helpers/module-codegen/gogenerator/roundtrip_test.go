@@ -39,23 +39,25 @@ func TestGenerateFreshUnifiedModuleWithoutLocalSDK(t *testing.T) {
 	// schema, but the default starter still needs their shared core aliases.
 	source := `package hello
 import (
- "example.com/hello/internal/dagger"
+ moduleClient "example.com/hello/internal/dagger"
+ "dagger.io/dagger"
  helperClient "example.com/hello/helper"
  "dagger.io/dagger/core"
 )
 type Hello struct {
  // +private
- Source *dagger.Directory
+ Source *moduleClient.Directory
  // +private
  State *helperClient.State
 }
-var _ *core.Directory = (*dagger.Directory)(nil)
-func New(ws *dagger.Workspace) *Hello {
- return &Hello{Source:ws.Directory("/", dagger.WorkspaceDirectoryOpts{Exclude:[]string{"**/.git"}}), State:&helperClient.State{Value:"private"}}
+var _ *core.Directory = (*moduleClient.Directory)(nil)
+func New(ws *moduleClient.Workspace) *Hello {
+ return &Hello{Source:ws.Directory("/", moduleClient.WorkspaceDirectoryOpts{Exclude:[]string{"**/.git"}}), State:&helperClient.State{Value:"private"}}
 }
-func (h *Hello) Container() *dagger.Container { return dagger.Connect().Container().WithDirectory("/src", h.Source) }
+func (h *Hello) Container() *moduleClient.Container { return moduleClient.Connect().Container().WithDirectory("/src", h.Source) }
 func (h *Hello) Echo(value string) string { return helperClient.Echo(value) }
-func (h *Hello) Base() *dagger.Container { return core.NewContainer().WithDirectory("/src", h.Source) }
+func (h *Hello) Base() *moduleClient.Container { return core.NewContainer().WithDirectory("/src", h.Source) }
+func (*Hello) RuntimeError() string { return dagger.ErrClientClosed.Error() }
 `
 	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "helper"), 0755))

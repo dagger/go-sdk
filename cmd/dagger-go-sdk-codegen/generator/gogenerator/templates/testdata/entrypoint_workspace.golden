@@ -92,7 +92,7 @@ type Entrypoint implements ModuleEntrypoint {
     let workspaceID = if (args.fields.contains("ws")) { args.field(["ws"]).asString } else {
       Dagger.json.withContents(toString(receiverValue) :: Dagger.JSON!).field(["__daggerCompilationWorkspace"]).asString
     }
-    let callWorkspace = (Dagger.node(id: workspaceID :: Dagger.ID!).{{... on Dagger.Workspace!}}).withWorkdir(workspace.cwd.trimPrefix("/"))
+    let callWorkspace = (Dagger.node(id: workspaceID :: Dagger.ID!).{{... on Dagger.Workspace!}}).withWorkdir(currentModule.sourceSubpath.trimPrefix("/"))
     let request = JSON.encode({{receiverType: receiverType, receiverValue: receiverValue, fnName: fnName, fnArgs: fnArgs, workspaceID: workspaceID}})
     let result = container
       .from("alpine:3.22")

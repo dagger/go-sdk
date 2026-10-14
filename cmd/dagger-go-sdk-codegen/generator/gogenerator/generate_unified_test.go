@@ -151,6 +151,8 @@ func testUnifiedClientSharesCoreObjects(t *testing.T, schemaVersion string) {
 	expected := `"Container"`
 	schema.Query().Fields[0].Args = introspection.InputValues{{Name: "ctr", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "ID"}}, Directives: []*introspection.Directive{{Name: "expectedType", Args: []*introspection.DirectiveArg{{Name: "name", Value: &expected}}}}}}
 	schema.Types[1].Fields = append(schema.Types[1].Fields, &introspection.Field{Name: "echo", TypeRef: ref("Container"), Args: introspection.InputValues{{Name: "value", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "ID"}}, Directives: []*introspection.Directive{{Name: "expectedType", Args: []*introspection.DirectiveArg{{Name: "name", Value: &expected}}}}}}})
+	schema.Types[1].Fields = append(schema.Types[1].Fields, &introspection.Field{Name: "id", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "ID"}}})
+	generator.SetSchemaParents(schema)
 	gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: root, PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
 	state, err := gen.GenerateClient(t.Context(), schema, schemaVersion)
 	require.NoError(t, err)
@@ -170,7 +172,7 @@ func testUnifiedClientSharesCoreObjects(t *testing.T, schemaVersion string) {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.26\n\nrequire dagger.io/dagger v1.0.0-beta.15\nreplace dagger.io/dagger => "+sdkPath+"\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "client_test.go"), []byte(`package app_test
-import("testing";"dagger.io/dagger";"dagger.io/dagger/core";"example.com/app/client")
+import("testing";"encoding/json";"dagger.io/dagger";"dagger.io/dagger/core";"example.com/app/client")
 func TestObjectIdentity(t *testing.T){
  var got *core.Container = client.Connect().Hello(core.NewContainer()).Echo(core.NewContainer())
  _ = got
@@ -180,6 +182,11 @@ func TestObjectIdentity(t *testing.T){
  _ = explicit
  var withNil *core.Container = client.Connect(nil).Hello(core.NewContainer()).Echo(core.NewContainer())
  _ = withNil
+}
+func TestPrivateModuleObjectReference(t *testing.T){
+ var parent struct { Child *client.Hello }
+ if err := json.Unmarshal([]byte("{\"Child\":\"reference-from-constructor\"}"), &parent); err != nil { t.Fatal(err) }
+ if parent.Child == nil || parent.Child.XXX_GraphQLType() != "Hello" { t.Fatal("module reference was not restored") }
 }
 func TestConnectRejectsMultipleConnections(t *testing.T){
  defer func(){if recover()==nil{t.Fatal("Connect accepted multiple connections")}}()

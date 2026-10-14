@@ -93,17 +93,19 @@ func Discover(workspaceRoot, moduleRoot string, inventory []string) (*Inputs, er
 	if err != nil {
 		return nil, err
 	}
-	for _, replacement := range mod.Replace {
-		if replacement.New.Version == "" && strings.HasPrefix(replacement.New.Path, ".") {
-			target := filepath.Clean(filepath.Join(module, replacement.New.Path))
-			rel, err := filepath.Rel(root, target)
-			if err != nil || !filepath.IsLocal(rel) {
-				return nil, fmt.Errorf("replace %s => %s leaves the workspace root", replacement.Old.Path, replacement.New.Path)
+	if mod != nil {
+		for _, replacement := range mod.Replace {
+			if replacement.New.Version == "" && strings.HasPrefix(replacement.New.Path, ".") {
+				target := filepath.Clean(filepath.Join(module, replacement.New.Path))
+				rel, err := filepath.Rel(root, target)
+				if err != nil || !filepath.IsLocal(rel) {
+					return nil, fmt.Errorf("replace %s => %s leaves the workspace root", replacement.Old.Path, replacement.New.Path)
+				}
 			}
-		}
 
-		if replacement.New.Version == "" && filepath.IsAbs(replacement.New.Path) {
-			return nil, fmt.Errorf("replace %s: use a workspace-relative path, not an absolute local target", replacement.Old.Path)
+			if replacement.New.Version == "" && filepath.IsAbs(replacement.New.Path) {
+				return nil, fmt.Errorf("replace %s: use a workspace-relative path, not an absolute local target", replacement.Old.Path)
+			}
 		}
 	}
 	includes, err := ReadIncludes(module, modulePath)

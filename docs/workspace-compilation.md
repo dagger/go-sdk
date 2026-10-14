@@ -12,6 +12,8 @@ There are two caches to consider:
    must take a required `ws *dagger.Workspace`. Another module passes its
    workspace when calling them, for example `goClient.New(ws).Build(ws)`.
    The CLI supplies the workspace automatically for direct CLI calls.
+   The caller forwards its workspace; the SDK locates the called module in it
+   when compiling, so sibling module calls work too.
    The workspace is part of the call's input, so a fresh local workspace session
    makes the SDK check current files again. The SDK enforces these arguments
    during generation: missing or optional arguments produce an error.

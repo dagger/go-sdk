@@ -245,11 +245,14 @@ type EngineE2e {
     ])
     succeeded(exported)
     let ready = exported
-      .withNewFile("/repo/dagger.toml", "[modules.include-app]\nsource = \"app\"\n")
+      .withNewFile("/repo/dagger.toml", "[modules.include-app]\nsource = \"app\"\n[modules.include-caller]\nsource = \"caller\"\n")
       .withExec(["git", "-C", "/repo", "init", "-q"])
 
     let greeting = ["call", "include-app", "greeting"]
-    let built = runDagger(ready, "/repo", greeting)
+    let nestedGreeting = ["call", "include-caller", "greeting"]
+    let nested = runDagger(ready, "/repo", nestedGreeting)
+    assert("the module failed through a sibling client") { succeeded(nested) == "one" }
+    let built = runDagger(nested, "/repo", greeting)
     assert("the build did not embed the included file: " + succeeded(built)) {
       succeeded(built) == "one"
     }
@@ -284,7 +287,9 @@ type EngineE2e {
     let changed = byPath.withNewFile("/repo/lib/greet/greeting.txt", "two")
     let fresh = runDagger(changed, "/repo", greeting)
     assert("external embed returned a stale function result") { succeeded(fresh) == "two" }
-    let unchanged = runDagger(fresh.withNewFile("/repo/lib/unrelated.txt", "unrelated"), "/repo", greeting)
+    let nestedFresh = runDagger(fresh, "/repo", nestedGreeting)
+    assert("the sibling client returned an old embedded file") { succeeded(nestedFresh) == "two" }
+    let unchanged = runDagger(nestedFresh.withNewFile("/repo/lib/unrelated.txt", "unrelated"), "/repo", greeting)
     assert("unrelated file affected the result") { succeeded(unchanged) == "two" }
     null
   }

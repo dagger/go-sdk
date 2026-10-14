@@ -159,7 +159,11 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 	}
 	for path := range funcs.modulePkg.Imports {
 		if path != "dagger.io/dagger/core" && !existingImports[path] {
-			fmt.Fprintf(&typeImports, "%s %q\n", sourceImportName(funcs.modulePkg, path), path)
+			name := sourceImportName(funcs.modulePkg, path)
+			if path == "dagger.io/dagger" && name == "dagger" {
+				name = "daggerRuntime"
+			}
+			fmt.Fprintf(&typeImports, "%s %q\n", name, path)
 		}
 	}
 	moduleSource = bytes.Replace(moduleSource, []byte("import ("), []byte("import (\n"+typeImports.String()), 1)
@@ -432,7 +436,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
     let workspaceID = if (args.fields.contains("ws")) { args.field(["ws"]).asString } else {
       Dagger.json.withContents(toString(receiverValue) :: Dagger.JSON!).field(["__daggerCompilationWorkspace"]).asString
     }
-    let callWorkspace = (Dagger.node(id: workspaceID :: Dagger.ID!).{{... on Dagger.Workspace!}}).withWorkdir(workspace.cwd.trimPrefix("/"))
+    let callWorkspace = (Dagger.node(id: workspaceID :: Dagger.ID!).{{... on Dagger.Workspace!}}).withWorkdir(currentModule.sourceSubpath.trimPrefix("/"))
     let request = JSON.encode({{receiverType: receiverType, receiverValue: receiverValue, fnName: fnName, fnArgs: fnArgs, workspaceID: workspaceID}})
 `)
 	} else {

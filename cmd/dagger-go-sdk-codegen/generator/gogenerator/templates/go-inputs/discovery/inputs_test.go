@@ -103,3 +103,19 @@ func TestReplaceCannotLeaveWorkspace(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestInputsBeforeGoModIsCreated(t *testing.T) {
+	root := workspace(t, map[string]string{
+		"app/main.go":  "package app\nimport \"fmt\"\nfunc Hello() string { return fmt.Sprint(\"hello\") }\n",
+		"app/own.txt":  "module asset",
+		"other/README": "unrelated",
+	})
+	inputs, err := Discover(root, filepath.Join(root, "app"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"app/main.go", "app/own.txt"}
+	if inputs.External || !reflect.DeepEqual(want, inputs.Files) {
+		t.Fatalf("inputs = %#v", inputs)
+	}
+}

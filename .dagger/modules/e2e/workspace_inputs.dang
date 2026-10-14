@@ -13,7 +13,7 @@ type WorkspaceInputsChecks {
     let ready = generated(ws)
     let entrypoint = ready.file("internal/dagger/entrypoint/main.dang").contents
     assert("entrypoint still declares resources") { !entrypoint.contains("pub resources") }
-    ["workspace.glob", "include: selected", "--inventory", "dispatch(workspace)"].each { text =>
+    ["workspace.glob", "include: selected", "--inventory", "dispatch(callWorkspace)"].each { text =>
       assert("entrypoint lacks " + text) { entrypoint.contains(text) }
     }
     assert("author source changed") {
@@ -33,6 +33,13 @@ type WorkspaceInputsChecks {
   }
 
   fixture(ws: Workspace!): Directory! {
-    generated(ws).directory("/" + root)
+    let inputs = ws.directory("/" + root).asWorkspace
+    let app = goSdk(dangEntrypoint: true).generateScope(
+      ws: inputs.withWorkdir("app"), isModule: true, name: "include-app", clients: [],
+    )
+    goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: app.withWorkdir("caller"), isModule: true, name: "include-caller",
+      clients: [app.withWorkdir(".").moduleSource("/app")],
+    ).directory("/")
   }
 }

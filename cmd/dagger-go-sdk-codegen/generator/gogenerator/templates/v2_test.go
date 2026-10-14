@@ -233,6 +233,10 @@ func TestEntrypointRediscoversWorkspaceInputs(t *testing.T) {
 	require.Contains(t, text, "include: selected")
 	require.Contains(t, text, "Dagger.node")
 	require.Contains(t, text, "assembled(callWorkspace)")
+	// A module loaded through another generated client receives its caller's cwd.
+	// Compilation must use the callee's path within the passed workspace.
+	require.Contains(t, text, `withWorkdir(currentModule.sourceSubpath.trimPrefix("/"))`)
+	require.NotContains(t, text, `.withWorkdir(workspace.cwd.trimPrefix("/"))`)
 }
 
 func TestRequiredWorkspace(t *testing.T) {
