@@ -42,6 +42,8 @@ type IncludePattern struct {
 	Path string
 	// Pattern is relative to the anchor.
 	Pattern string
+	// PackageSource marks the source glob of an imported package, as opposed to an embed pattern.
+	PackageSource bool
 }
 
 // ReadIncludes lists what the build of the module at root reads outside its
@@ -79,11 +81,10 @@ func ReadIncludes(root, workspacePath string) (*Includes, error) {
 	includes.ModulePath = strings.Join(parts[len(parts)-anchorUp:], "/")
 	includes.Anchor = strings.TrimSuffix(strings.Repeat("../", anchorUp), "/")
 	for _, p := range slices.Sorted(maps.Keys(outside)) {
-		includes.Include = append(includes.Include, IncludePattern{
-			Position: outside[p],
-			Path:     p,
-			Pattern:  path.Join(includes.ModulePath, p),
-		})
+		include := outside[p]
+		include.Path = p
+		include.Pattern = path.Join(includes.ModulePath, p)
+		includes.Include = append(includes.Include, include)
 		includes.Paths = append(includes.Paths, p)
 	}
 	return includes, nil
@@ -216,13 +217,13 @@ func LocalReplaceTargets(root string) ([]string, error) {
 	return targets, nil
 }
 
-// outsideFiles maps what the build reads outside the module directory to the
-// go.mod line, import or //go:embed line that needs it: the go.mod of each
-// local replace target go.mod requires, the Go files of every package
-// imported from one, and the files those packages embed, with their assembly,
-// header and syso files. Imports count under every build tag and test files
-// of the module count, as go mod tidy loads them.
-func outsideFiles(root string, depth int) (map[string]string, error) {
+// outsideFiles maps what the build reads outside the module directory to its
+// include, with the go.mod line, import or //go:embed line that needs it as
+// the position: the go.mod of each local replace target go.mod requires, the
+// Go files of every package imported from one, and the files those packages
+// embed, with their assembly, header and syso files. Imports count under every
+// build tag and test files of the module count, as go mod tidy loads them.
+func outsideFiles(root string, depth int) (map[string]IncludePattern, error) {
 	mod, replaces, err := localReplaces(root)
 	if err != nil || !slices.ContainsFunc(replaces, func(replace localReplace) bool { return !replace.inside }) {
 		return nil, err
@@ -239,10 +240,10 @@ func outsideFiles(root string, depth int) (map[string]string, error) {
 		required[req.Mod.Path] = true
 	}
 
-	found := map[string]string{}
+	found := map[string]IncludePattern{}
 	add := func(position, file string) {
 		if _, ok := found[file]; !ok {
-			found[file] = position
+			found[file] = IncludePattern{Position: position}
 		}
 	}
 	checkGoMod := func(replace localReplace) error {
@@ -337,7 +338,9 @@ func outsideFiles(root string, depth int) (map[string]string, error) {
 					return nil, fmt.Errorf("%s: package %s reads %s through a symlink; %s",
 						imported.position, imported.path, replaceText(root, dir), symlinkRefusal)
 				}
-				add(imported.position, path.Join(replaceText(root, dir), "*.go"))
+				glob := path.Join(replaceText(root, dir), "*.go")
+				add(imported.position, glob)
+				found[glob] = IncludePattern{Position: found[glob].Position, PackageSource: true}
 			}
 			queue = append(queue, pkg{dir: dir})
 		}

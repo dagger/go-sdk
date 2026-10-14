@@ -331,6 +331,28 @@ func TestReadIncludesThroughLinkedWorkspace(t *testing.T) {
 	require.Equal(t, []string{"../lib/go.mod", "../lib/greet/*.go"}, includes.Paths)
 }
 
+func TestReadIncludesMarksPackageGlobs(t *testing.T) {
+	root := coverageTree(t, map[string]string{
+		"lib/go.mod": "module example.com/lib\n\ngo 1.26.1\n",
+		"lib/greet/greet.go": "package greet\n\nimport (\n\t\"embed\"\n\n\t_ \"example.com/lib/greet/sub\"\n)\n\n" +
+			"//go:embed assets/*.go sub/*.go\nvar files embed.FS\n\nfunc Hello() {}\n",
+		"lib/greet/assets/data.go": "package assets\n",
+		"lib/greet/sub/sub.go":     "package sub\n",
+	})
+	includes, err := ReadIncludes(root, "ci")
+	require.NoError(t, err)
+	packages := map[string]bool{}
+	for _, include := range includes.Include {
+		packages[include.Path] = include.PackageSource
+	}
+	require.Equal(t, map[string]bool{
+		"../lib/go.mod":            false,
+		"../lib/greet/*.go":        true,
+		"../lib/greet/assets/*.go": false,
+		"../lib/greet/sub/*.go":    true,
+	}, packages)
+}
+
 func TestLocalReplaceTargets(t *testing.T) {
 	root := coverageTree(t, map[string]string{
 		"ci/go.mod": "module example.com/ci\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\n" +

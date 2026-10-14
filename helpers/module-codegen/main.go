@@ -82,7 +82,7 @@ func runIncludes(args []string) error {
 	}
 	var lines bytes.Buffer
 	for _, include := range includes.Include {
-		line, err := json.Marshal(includeEntry(include))
+		line, err := json.Marshal(includeEntry{Position: include.Position, Path: include.Path, Pattern: include.Pattern})
 		if err != nil {
 			return err
 		}

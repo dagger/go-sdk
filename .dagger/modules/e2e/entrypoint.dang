@@ -194,7 +194,7 @@ type EntrypointChecks {
       entrypoint.contains("defaultValue: (\"\\\"Hello\\\"\" :: Dagger.JSON!)")
     }
     assert("the entrypoint does not build the dispatch command in the module") {
-      entrypoint.contains("\"./cmd/generate-app-dispatch\"")
+      entrypoint.contains("go build -o /tmp/dispatch ./cmd/generate-app-dispatch ")
     }
 
     let dispatcher = container
