@@ -462,7 +462,7 @@ type GoSdk {
     let workspaceRoot = ws.withWorkdir(goRoot)
     let goVersion = if (exists(workspaceRoot, "go.mod")) {
       requiredGoVersion(workspaceRoot.file("go.mod"))
-    } else { "1.26.1" }
+    } else { minimumGoVersion }
     let goImage = "golang:" + goVersion + "-alpine"
     let builder = moduleCodegenBuilder(goImage)
     let moduleSource = workspaceRoot.directory(".", exclude: ["**/.git"])
@@ -597,10 +597,16 @@ type GoSdk {
       .withExec(["go", "build", "-o", "/usr/local/bin/module-codegen", "."])
   }
 
+  """
+  The generators' minimum Go version, which fresh modules declare. The
+  helpers build on its image, so init and generate pull one Go image.
+  """
+  let minimumGoVersion: String! = "1.26.1"
+
   """Build the engine-free standalone client generator."""
   let codegenBuilder: Container! {
     container
-      .from("golang:1.26-alpine")
+      .from("golang:" + minimumGoVersion + "-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
@@ -612,7 +618,7 @@ type GoSdk {
   """Use the newer of the consumer Go directives and the generator's minimum."""
   let requiredGoVersion(goMod: File!): String! {
     codegenBuilder.withFile("/consumer.go.mod", goMod)
-      .withExec(["dagger-go-sdk-codegen", "go-version", "--go-mod", "/consumer.go.mod", "--minimum", "1.26.1"])
+      .withExec(["dagger-go-sdk-codegen", "go-version", "--go-mod", "/consumer.go.mod", "--minimum", minimumGoVersion])
       .stdout.trimSpace
   }
 
@@ -678,7 +684,7 @@ type GoSdk {
       raise "unknown init template: " + selected
     } else {
       let builder = container
-        .from("golang:1.25-alpine")
+        .from("golang:" + minimumGoVersion + "-alpine")
         .withoutEntrypoint
         .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
         .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
