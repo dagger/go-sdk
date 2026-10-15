@@ -12,18 +12,12 @@ type Entrypoint implements ModuleEntrypoint {
       .withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git"], gitignore: true))
   }
 
-  let assembled: Directory! {
-    let source = currentModule.source
-    currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)
-  }
-
   let dispatch: File! {
-    let source = assembled
     container
       .from("golang:1.26.1-alpine")
       .withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-build"))
-      .withMountedDirectory("/workspace", source)
+      .withMountedDirectory("/workspace", currentModule.contextDirectory)
       .withWorkdir("/workspace/" + currentModule.sourceSubpath)
       .withEnvVariable("CGO_ENABLED", "0")
       .withEnvVariable("GOWORK", "off")
@@ -80,7 +74,7 @@ type Entrypoint implements ModuleEntrypoint {
     let result = container
       .from("alpine:3.22")
       .withFile("/usr/local/bin/dispatch", dispatch, permissions: 755)
-      .withMountedDirectory("/workspace", assembled)
+      .withMountedDirectory("/workspace", currentModule.contextDirectory)
       .withWorkdir("/workspace/" + currentModule.sourceSubpath)
       .withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")
       .withExec(

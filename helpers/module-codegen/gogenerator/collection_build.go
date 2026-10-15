@@ -79,8 +79,16 @@ func writeCollectionBuild(root string, entrypoint []byte, files map[string][]byt
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	var source strings.Builder
-	source.WriteString("let source = currentModule.source")
+	if len(names) == 0 {
+		return entrypoint, nil
+	}
+	dispatch := []byte("  let dispatch: File! {")
+	mount := []byte(`.withMountedDirectory("/workspace", currentModule.contextDirectory)`)
+	if bytes.Count(entrypoint, dispatch) != 1 || bytes.Count(entrypoint, mount) != 2 {
+		return nil, fmt.Errorf("collection build: the entrypoint needs one dispatch and two context mounts to rewrite")
+	}
+	var overlay strings.Builder
+	overlay.WriteString("  let collectionContext: Directory! {\n    currentModule.contextDirectory")
 	for _, name := range names {
 		if !fs.ValidPath(name) || filepath.Base(name) != name {
 			return nil, fmt.Errorf("invalid runtime source path %q", name)
@@ -93,7 +101,11 @@ func writeCollectionBuild(root string, entrypoint []byte, files map[string][]byt
 		if err := writeFile(filepath.Join(root, rel), data); err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(&source, "\n      .withFile(%s, currentModule.source.file(%s))", strconv.Quote(name), strconv.Quote(rel))
+		fmt.Fprintf(&overlay, "\n      .withFile(currentModule.sourceSubpath + %s, currentModule.contextDirectory.file(currentModule.sourceSubpath + %s))",
+			strconv.Quote("/"+name), strconv.Quote("/"+rel))
 	}
-	return bytes.Replace(entrypoint, []byte("let source = currentModule.source"), []byte(source.String()), 1), nil
+	overlay.WriteString("\n  }\n\n")
+	overlay.Write(dispatch)
+	entrypoint = bytes.Replace(entrypoint, dispatch, []byte(overlay.String()), 1)
+	return bytes.ReplaceAll(entrypoint, mount, []byte(`.withMountedDirectory("/workspace", collectionContext)`)), nil
 }

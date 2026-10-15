@@ -350,12 +350,11 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	writeSources(&b, mod.sources)
 	workdir := `"/workspace/" + currentModule.sourceSubpath`
 	b.WriteString("  let dispatch: File! {\n")
-	b.WriteString("    let source = assembled\n")
 	b.WriteString("    container\n")
 	fmt.Fprintf(&b, "      .from(%s)\n", strconv.Quote(goImage))
 	b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
 	b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
-	b.WriteString("      .withMountedDirectory(\"/workspace\", source)\n")
+	b.WriteString("      .withMountedDirectory(\"/workspace\", currentModule.contextDirectory)\n")
 	fmt.Fprintf(&b, "      .withWorkdir(%s)\n", workdir)
 	b.WriteString("      .withEnvVariable(\"CGO_ENABLED\", \"0\")\n")
 	b.WriteString("      .withEnvVariable(\"GOWORK\", \"off\")\n")
@@ -399,7 +398,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
     let result = container
       .from("alpine:3.22")
       .withFile("/usr/local/bin/dispatch", dispatch, permissions: 755)
-      .withMountedDirectory("/workspace", assembled)
+      .withMountedDirectory("/workspace", currentModule.contextDirectory)
 `)
 	fmt.Fprintf(&b, "      .withWorkdir(%s)\n", workdir)
 	b.WriteString(`      .withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")
@@ -419,9 +418,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 
 // writeSources writes the sources function, which returns the module
 // directory and the files its build reads outside it at their paths from the
-// workspace root, and the directory that the build and the calls mount: the
-// module context with the module source placed back, so the collection build
-// can overlay it.
+// workspace root.
 func writeSources(b *bytes.Buffer, sources *EntrypointSources) {
 	b.WriteString("  pub sources(workspace: Workspace!): Directory! {\n    directory\n")
 	if sources != nil && len(sources.Include) > 0 {
@@ -433,11 +430,6 @@ func writeSources(b *bytes.Buffer, sources *EntrypointSources) {
 `, strconv.Quote("/"+sources.Anchor), strconv.Quote(sources.Anchor), dangStringList(sources.Include))
 	}
 	b.WriteString(`      .withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git"], gitignore: true))
-  }
-
-  let assembled: Directory! {
-    let source = currentModule.source
-    currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)
   }
 
 `)

@@ -26,14 +26,13 @@ type SourcesChecks {
       "# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing \"workspace\" argument.\ntype Entrypoint implements ModuleEntrypoint {",
       "pub types: [TypeDef!]! {",
       "pub call(\n    receiverType: String!,\n",
-      "currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)",
       ".withWorkdir(\"/workspace/\" + currentModule.sourceSubpath)",
       ".withEnvVariable(\"GOWORK\", \"off\")",
-      ".withMountedDirectory(\"/workspace\", assembled)",
+      ".withMountedDirectory(\"/workspace\", currentModule.contextDirectory)",
     ].each { literal =>
       assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
     }
-    [".glob(", "--inventory", "go-inputs", "Dagger.node", "resources", "workspace != null"].each { literal =>
+    [".glob(", "--inventory", "go-inputs", "Dagger.node", "resources", "workspace != null", "let source", "currentModule.source."].each { literal =>
       assert("the entrypoint mentions " + literal) { entrypoint.contains(literal) == false }
     }
     assert("generation vendored the discovery tool") {
@@ -85,8 +84,8 @@ type SourcesChecks {
       "type Item struct{ Name string }\n")
     let entrypoint = generated(input).file("internal/dagger/entrypoint/main.dang").contents
     [
-      ".withFile(\"items.go\", currentModule.source.file(\"internal/dagger/entrypoint/runtime/items.go.src\"))",
-      "currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)",
+      ".withFile(currentModule.sourceSubpath + \"/items.go\", currentModule.contextDirectory.file(currentModule.sourceSubpath + \"/internal/dagger/entrypoint/runtime/items.go.src\"))",
+      ".withMountedDirectory(\"/workspace\", collectionContext)",
     ].each { literal =>
       assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
     }

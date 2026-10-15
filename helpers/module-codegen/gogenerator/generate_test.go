@@ -297,3 +297,21 @@ func writeTestFile(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
+
+func TestWriteCollectionBuildRefusesMissingAnchors(t *testing.T) {
+	files := map[string][]byte{"items.go": []byte("package app\n")}
+	for name, entrypoint := range map[string]string{
+		"no dispatch": `.withMountedDirectory("/workspace", currentModule.contextDirectory)` + "\n" +
+			`.withMountedDirectory("/workspace", currentModule.contextDirectory)` + "\n",
+		"one mount": "  let dispatch: File! {\n" + `.withMountedDirectory("/workspace", currentModule.contextDirectory)` + "\n",
+	} {
+		root := t.TempDir()
+		_, err := writeCollectionBuild(root, []byte(entrypoint), files)
+		if err == nil || !strings.Contains(err.Error(), "one dispatch and two context mounts") {
+			t.Errorf("%s: writeCollectionBuild() error = %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, "internal")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s: a refused rewrite wrote runtime files: %v", name, err)
+		}
+	}
+}

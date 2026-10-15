@@ -92,7 +92,7 @@ func TestEntrypointShapeIsUniform(t *testing.T) {
 		source, err := mod.renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
 		require.NoError(t, err)
 		text := string(source)
-		start, end := strings.Index(text, "  pub sources("), strings.Index(text, "  let assembled:")
+		start, end := strings.Index(text, "  pub sources("), strings.Index(text, "  let dispatch:")
 		require.Positive(t, start)
 		require.Greater(t, end, start)
 		return text[:start] + text[end:], text[start:end]

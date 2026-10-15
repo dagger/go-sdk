@@ -164,7 +164,7 @@ type Item struct { Name string }
 				require.NoError(t, Generate(t.Context(), cfg), "regeneration")
 				entry, err := os.ReadFile(filepath.Join(root, "internal/dagger/entrypoint/main.dang"))
 				require.NoError(t, err)
-				require.Contains(t, string(entry), "currentModule.source")
+				require.Contains(t, string(entry), "let collectionContext: Directory! {\n    currentModule.contextDirectory\n")
 				require.Contains(t, string(entry), ".withCollection\n")
 				require.Contains(t, string(entry), `.withCollectionKeys("Keys")`)
 				require.Contains(t, string(entry), `.withCollectionGet("Lookup")`)
@@ -223,7 +223,9 @@ func TestGenerateModuleWithSources(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(entrypoint), `.withDirectory(workspace.cwd + "/..", workspace.directory("..",
         include: ["lib/go.mod", "lib/greet/*.go", "lib/greet/*.h", "lib/greet/*.s", "lib/greet/*.syso", "lib/greet/greeting.txt"],`)
-	require.Contains(t, string(entrypoint), "currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)")
+	require.Contains(t, string(entrypoint), `.withMountedDirectory("/workspace", currentModule.contextDirectory)`)
+	require.NotContains(t, string(entrypoint), "let source")
+	require.NotContains(t, string(entrypoint), "currentModule.source.")
 	require.NoDirExists(t, filepath.Join(root, "internal", "dagger", "entrypoint", "go-inputs"))
 	lib, err := os.ReadFile(filepath.Join(buildRoot, "lib", "greet", "greet.go"))
 	require.NoError(t, err)
@@ -324,12 +326,14 @@ func TestGenerateCollectionModuleWithSources(t *testing.T) {
 
 	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
 	require.NoError(t, err)
-	require.Contains(t, string(entrypoint), `.withFile("main.go", currentModule.source.file("internal/dagger/entrypoint/runtime/main.go.src"))`)
-	require.Contains(t, string(entrypoint), "currentModule.contextDirectory.withDirectory(currentModule.sourceSubpath, source)")
+	require.Contains(t, string(entrypoint), `.withFile(currentModule.sourceSubpath + "/main.go", currentModule.contextDirectory.file(currentModule.sourceSubpath + "/internal/dagger/entrypoint/runtime/main.go.src"))`)
+	require.Contains(t, string(entrypoint), `.withMountedDirectory("/workspace", collectionContext)`)
+	require.NotContains(t, string(entrypoint), "let source")
+	require.NotContains(t, string(entrypoint), "currentModule.source.")
 	require.Contains(t, string(entrypoint), `.withCollectionGet("Lookup")`)
 
-	// Build the directory the entrypoint assembles: the included files beside
-	// the module, with the runtime sources in place of the author's.
+	// Build the directory the entrypoint mounts: the included files beside the
+	// module, with the runtime sources in place of the author's.
 	assembled := t.TempDir()
 	require.NoError(t, os.CopyFS(assembled, os.DirFS(buildRoot)))
 	runtimeDir := filepath.Join(root, "internal", "dagger", "entrypoint", "runtime")
