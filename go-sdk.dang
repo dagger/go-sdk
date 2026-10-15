@@ -55,7 +55,8 @@ type GoSdk {
   `field "types": missing argument "workspace" required by interface`.
   Unset enables entrypoints for new modules and keeps the runner of existing
   modules. Explicit true migrates a supported existing module; false keeps the
-  Go runtime.
+  Go runtime. A migrated module whose code uses the global `dag` also needs
+  globalClient = true.
 
   The entrypoint's sources function returns what the build reads: the module
   directory and the files outside it that reach the build through the local

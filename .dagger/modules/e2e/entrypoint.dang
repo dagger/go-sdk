@@ -335,6 +335,10 @@ type EntrypointChecks {
     let embedded = goSdk(dangEntrypoint: true, unifiedClients: false, globalClient: true).generateScope(
       ws: input, isModule: true, name: "generate-app", clients: [],
     )
+    assert("explicit settings did not migrate the runtime module to the entrypoint") {
+      embedded.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
+        embedded.file("internal/dagger/entrypoint/main.dang").contents.contains("  pub sources(workspace: Workspace!): Directory! {\n")
+    }
     let retainedEmbedded = goSdk(globalClient: true).generateScope(
       ws: embedded, isModule: true, name: "generate-app", clients: [],
     )
