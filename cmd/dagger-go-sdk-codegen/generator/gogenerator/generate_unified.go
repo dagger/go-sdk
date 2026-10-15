@@ -93,7 +93,9 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 		// Public signatures omit private fields and function bodies. Preserve
 		// the core aliases author code uses there, from the complete bootstrap
 		// surface emitted before module analysis.
-		if err := addAuthorCoreAliases(ctx, g.Config, coreNames, referenced, constants); err != nil {
+		funcs := templates.GoTemplateFuncs(schema, schema, schemaVersion, g.Config)
+		helpers := coreHelpers(schema, funcs["FormatName"].(func(string) string), funcs["IsSelfChainable"].(func(introspection.Type) bool))
+		if err := addAuthorCoreAliases(ctx, g.Config, coreNames, helpers, referenced, constants); err != nil {
 			return nil, err
 		}
 	}
@@ -175,7 +177,44 @@ func Load[T core.Loadable[T]](ctx context.Context,client *Client,id core.ID)(T,e
 	return &generator.GeneratedState{Overlay: mfs}, nil
 }
 
-func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, referenced, constants map[string]bool) error {
+// coreHelpers names the option structs and With functions that core types
+// generate. The bootstrap client also has those of dependency types, which
+// core does not.
+func coreHelpers(schema *introspection.Schema, formatName func(string) string, selfChainable func(introspection.Type) bool) map[string]bool {
+	moduleType := func(ref *introspection.TypeRef) bool {
+		for ref != nil && ref.Name == "" {
+			ref = ref.OfType
+		}
+		if ref == nil {
+			return false
+		}
+		typ := schema.Types.Get(ref.Name)
+		return typ != nil && typ.Directives.SourceMap() != nil
+	}
+	names := map[string]bool{}
+	for _, typ := range schema.Types {
+		if typ.Directives.SourceMap() != nil {
+			continue
+		}
+		query := typ.Name == generator.QueryStructName
+		if typ.Kind == introspection.TypeKindObject && !query && selfChainable(*typ) {
+			names["With"+formatName(typ.Name)+"Func"] = true
+		}
+		for _, field := range typ.Fields {
+			if !field.Args.HasOptionals() || field.Directives.SourceMap() != nil {
+				continue
+			}
+			if !query {
+				names[formatName(typ.Name)+formatName(field.Name)+"Opts"] = true
+			} else if !moduleType(field.TypeRef) {
+				names[formatName(field.Name)+"Opts"] = true
+			}
+		}
+	}
+	return names
+}
+
+func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, helpers, referenced, constants map[string]bool) error {
 	symbols := map[string]bool{} // value is true for a constant, false for a type
 	bootstrap, err := filepath.Glob(filepath.Join(cfg.OutputDir, "internal", "dagger", "*.go"))
 	if err != nil {
@@ -202,11 +241,13 @@ func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, 
 				switch spec := spec.(type) {
 				case *ast.TypeSpec:
 					name := spec.Name.Name
-					if coreNames[name] || strings.HasSuffix(name, "Opts") || (strings.HasPrefix(name, "With") && strings.HasSuffix(name, "Func")) {
+					if coreNames[name] || helpers[name] {
 						symbols[name] = false
 					}
 				case *ast.ValueSpec:
-					if gen.Tok == token.CONST {
+					// Enum constants are typed by their enum; core has only
+					// those of core enums.
+					if enum, ok := spec.Type.(*ast.Ident); ok && gen.Tok == token.CONST && coreNames[enum.Name] {
 						for _, name := range spec.Names {
 							symbols[name.Name] = true
 						}
