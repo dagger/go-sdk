@@ -3,10 +3,10 @@ Checks the Go SDK against the Dagger development engine.
 """
 type EngineE2e {
   """
-  Commit of release v1.0.0-beta.17, shared by engine-dev and the target
+  Commit of release v1.0.0-beta.18, shared by engine-dev and the target
   engine. Keep it aligned with the dependency in dagger-module.toml.
   """
-  let engineCommit: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
+  let engineCommit: String! = "249edbd646e63c5181053c8af72623ed9bdf030d"
 
   """
   Commit of release v1.0.0-beta.12, shared by the runtime-floor-engine-dev
@@ -207,8 +207,8 @@ type EngineE2e {
   """
   On an engine that calls sources, the module builds from its context,
   reuses results across sessions until an included file changes, and runs
-  from anywhere. engineCommit names no such release yet, so pass
-  engineSource with a dagger checkout that has it.
+  from anywhere. engineSource replaces the pinned engine with a dagger
+  checkout.
   """
   sourcesCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
     sourcesCalls(sdkClient(
@@ -224,16 +224,24 @@ type EngineE2e {
   its directory, and the error shows the release it needs.
   """
   sourcesGuardCheck(ws: Workspace!): Void @check {
-    let client = sdkClient(
+    # beta.17 cannot generate the fixture: the caller's client loads
+    # include-app, which beta.17 refuses.
+    let generator = sdkClient(
+      ws,
+      engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase),
+      engineCommit,
+    )
+    let exported = runDagger(generator, generator.workdir, [
+      "-m", ".dagger/modules/e2e", "call", "sources", "fixture", "--ws", ".", "export", "--path", "/repo",
+    ])
+    succeeded(exported)
+    let repo = sdkClient(
       ws,
       beta17EngineDev(ws: daggerSource(beta17Commit)).installClient(client: clientBase),
       beta17Commit,
     )
-    let exported = runDagger(client, client.workdir, [
-      "-m", ".dagger/modules/e2e", "call", "sources", "fixture", "--ws", ".", "export", "--path", "/repo",
-    ])
-    succeeded(exported)
-    let repo = exported.withExec(["git", "-C", "/repo", "init", "-q"])
+      .withDirectory("/repo", exported.directory("/repo"))
+      .withExec(["git", "-C", "/repo", "init", "-q"])
     [["-m", "app", "call", "greeting"], ["-m", "control", "call", "nonce"]].each { args =>
       let refused = runDagger(repo, "/repo", args)
       assert("beta.17 did not refuse " + args.join(" ") + " with the release it needs:\n" + refused.stdout + refused.stderr) {
