@@ -11,13 +11,14 @@ import (
 	"github.com/vito/dang/v2/pkg/introspection"
 )
 
-// moduleEntrypointContract is the engine's ModuleEntrypoint interface, copied
-// verbatim from moduleEntrypointInterface in dagger/dagger
-// core/sdk/dang/v2/entrypoint.go (v1.0.0-beta.14).
+// moduleEntrypointContract is the engine's ModuleEntrypoint interface for an
+// entrypoint that declares sources, copied verbatim from
+// sourcesEntrypointInterface in dagger/dagger core/sdk/dang/v2/entrypoint.go
+// (branch entrypoint-sources, 3f1a7a8c6c).
 const moduleEntrypointContract = `interface ModuleEntrypoint {
-  types(workspace: Workspace!): [TypeDef!]!
+  sources(workspace: Workspace!): Directory!
+  types: [TypeDef!]!
   call(
-    workspace: Workspace!
     receiverType: String!
     receiverValue: JSON
     fnName: String!

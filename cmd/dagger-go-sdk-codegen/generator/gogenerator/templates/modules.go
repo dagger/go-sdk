@@ -749,8 +749,7 @@ func (ps *parseState) fillObjectFunctionCase(
 }
 
 type parseState struct {
-	workspaceBuild bool
-	schema         *introspection.Schema
+	schema *introspection.Schema
 
 	pkg               *packages.Package
 	fset              *token.FileSet

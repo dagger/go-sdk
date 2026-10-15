@@ -32,6 +32,9 @@ type Includes struct {
 	// Paths holds the same list as clean patterns relative to the module
 	// directory.
 	Paths []string
+	// Warnings names the required local replace targets from which the module
+	// imports no package, so that only their go.mod reaches the build.
+	Warnings []string
 }
 
 type IncludePattern struct {
@@ -42,6 +45,8 @@ type IncludePattern struct {
 	Path string
 	// Pattern is relative to the anchor.
 	Pattern string
+	// PackageSource marks the source glob of an imported package, as opposed to an embed pattern.
+	PackageSource bool
 }
 
 // ReadIncludes lists what the build of the module at root reads outside its
@@ -62,11 +67,11 @@ func ReadIncludes(root, workspacePath string) (*Includes, error) {
 			depth = len(strings.Split(strings.TrimPrefix(location, "/"), "/"))
 		}
 	}
-	outside, err := outsideFiles(root, depth)
+	outside, warnings, err := outsideFiles(root, depth)
 	if err != nil {
 		return nil, err
 	}
-	includes := &Includes{Anchor: ".", ModulePath: "."}
+	includes := &Includes{Anchor: ".", ModulePath: ".", Warnings: warnings}
 	if len(outside) == 0 {
 		return includes, nil
 	}
@@ -79,11 +84,10 @@ func ReadIncludes(root, workspacePath string) (*Includes, error) {
 	includes.ModulePath = strings.Join(parts[len(parts)-anchorUp:], "/")
 	includes.Anchor = strings.TrimSuffix(strings.Repeat("../", anchorUp), "/")
 	for _, p := range slices.Sorted(maps.Keys(outside)) {
-		includes.Include = append(includes.Include, IncludePattern{
-			Position: outside[p],
-			Path:     p,
-			Pattern:  path.Join(includes.ModulePath, p),
-		})
+		include := outside[p]
+		include.Path = p
+		include.Pattern = path.Join(includes.ModulePath, p)
+		includes.Include = append(includes.Include, include)
 		includes.Paths = append(includes.Paths, p)
 	}
 	return includes, nil
@@ -146,13 +150,19 @@ func splitEmbedArgs(text string) ([]string, error) {
 type localReplace struct {
 	module string
 	text   string
+	path   string
 	dir    string
 	line   int
 	inside bool
+	// candidate marks a replace of a version that go.mod does not require,
+	// which only a dependency's go.mod can select.
+	candidate bool
 }
 
 // localReplaces reads go.mod and its replace directives that name a local
-// directory. It returns a nil file for a module without go.mod.
+// directory, except those of a version other than the one go.mod requires, and
+// unversioned ones that a replace of the required version shadows. It returns a
+// nil file for a module without go.mod.
 func localReplaces(root string) (*modfile.File, []localReplace, error) {
 	goModPath := filepath.Join(root, "go.mod")
 	data, err := os.ReadFile(goModPath)
@@ -166,9 +176,28 @@ func localReplaces(root string) (*modfile.File, []localReplace, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	required := map[string]string{}
+	for _, req := range mod.Require {
+		required[req.Mod.Path] = req.Mod.Version
+	}
+	shadowed := map[string]bool{}
+	for _, replace := range mod.Replace {
+		if replace.Old.Version != "" && replace.Old.Version == required[replace.Old.Path] {
+			shadowed[replace.Old.Path] = true
+		}
+	}
 	var replaces []localReplace
 	for _, replace := range mod.Replace {
 		if replace.New.Version != "" || !modfile.IsDirectoryPath(replace.New.Path) {
+			continue
+		}
+		if replace.Old.Version == "" && shadowed[replace.Old.Path] {
+			continue
+		}
+		// A dependency's go.mod can require a module that go.mod does not,
+		// which activates a replace of that version.
+		version, ok := required[replace.Old.Path]
+		if ok && replace.Old.Version != "" && replace.Old.Version != version {
 			continue
 		}
 		dir := replace.New.Path
@@ -177,11 +206,13 @@ func localReplaces(root string) (*modfile.File, []localReplace, error) {
 		}
 		rel, err := filepath.Rel(root, dir)
 		replaces = append(replaces, localReplace{
-			module: replace.Old.Path,
-			text:   strings.TrimSpace(replace.Old.Path + " " + replace.Old.Version),
-			dir:    dir,
-			line:   replace.Syntax.Start.Line,
-			inside: err == nil && filepath.IsLocal(rel),
+			module:    replace.Old.Path,
+			text:      strings.TrimSpace(replace.Old.Path + " " + replace.Old.Version),
+			path:      replace.New.Path,
+			dir:       dir,
+			line:      replace.Syntax.Start.Line,
+			inside:    err == nil && filepath.IsLocal(rel),
+			candidate: !ok && replace.Old.Version != "",
 		})
 	}
 	return mod, replaces, nil
@@ -201,26 +232,33 @@ func LocalReplaceTargets(root string) ([]string, error) {
 	var targets []string
 	for _, replace := range replaces {
 		if !replace.inside {
-			targets = append(targets, replaceText(root, replace.dir))
+			// The caller lists targets from a copy of the module near the file
+			// system root, where resolving would drop the ".." that climb above
+			// it; go.mod keeps them.
+			target := replaceText(root, replace.dir)
+			if !filepath.IsAbs(replace.path) {
+				target = path.Clean(filepath.ToSlash(replace.path))
+			}
+			targets = append(targets, target)
 		}
 	}
 	return targets, nil
 }
 
-// outsideFiles maps what the build reads outside the module directory to the
-// go.mod line, import or //go:embed line that needs it: the go.mod of each
-// local replace target go.mod requires, the Go files of every package
-// imported from one, and the files those packages embed, with their assembly,
-// header and syso files. Imports count under every build tag and test files
-// of the module count, as go mod tidy loads them.
-func outsideFiles(root string, depth int) (map[string]string, error) {
+// outsideFiles maps what the build reads outside the module directory to its
+// include, with the go.mod line, import or //go:embed line that needs it as
+// the position: the go.mod of each local replace target go.mod requires, the
+// Go files of every package imported from one, and the files those packages
+// embed, with their assembly, header and syso files. Imports count under every
+// build tag and test files of the module count, as go mod tidy loads them.
+func outsideFiles(root string, depth int) (map[string]IncludePattern, []string, error) {
 	mod, replaces, err := localReplaces(root)
 	if err != nil || !slices.ContainsFunc(replaces, func(replace localReplace) bool { return !replace.inside }) {
-		return nil, err
+		return nil, nil, err
 	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// With graph pruning, the build reads the go.mod of each module go.mod
@@ -230,10 +268,10 @@ func outsideFiles(root string, depth int) (map[string]string, error) {
 		required[req.Mod.Path] = true
 	}
 
-	found := map[string]string{}
+	found := map[string]IncludePattern{}
 	add := func(position, file string) {
 		if _, ok := found[file]; !ok {
-			found[file] = position
+			found[file] = IncludePattern{Position: position}
 		}
 	}
 	checkGoMod := func(replace localReplace) error {
@@ -255,7 +293,7 @@ func outsideFiles(root string, depth int) (map[string]string, error) {
 	for _, replace := range replaces {
 		if !replace.inside && required[replace.module] {
 			if err := checkGoMod(replace); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
@@ -279,9 +317,10 @@ func outsideFiles(root string, depth int) (map[string]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	visited := map[string]bool{}
+	importedFrom := map[string]bool{}
 	for len(queue) > 0 {
 		next := queue[0]
 		queue = queue[1:]
@@ -295,7 +334,7 @@ func outsideFiles(root string, depth int) (map[string]string, error) {
 		}
 		imports, err := packageImports(root, next.dir, next.tests, addFiles)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, imported := range imports {
 			// The module's own packages are walked above, even under a
@@ -303,37 +342,54 @@ func outsideFiles(root string, depth int) (map[string]string, error) {
 			if mod.Module != nil && (imported.path == mod.Module.Mod.Path || strings.HasPrefix(imported.path, mod.Module.Mod.Path+"/")) {
 				continue
 			}
-			var match *localReplace
-			for i, replace := range replaces {
-				if (imported.path == replace.module || strings.HasPrefix(imported.path, replace.module+"/")) &&
-					(match == nil || len(replace.module) > len(match.module)) {
-					match = &replaces[i]
+			module := ""
+			for _, replace := range replaces {
+				if (imported.path == replace.module || strings.HasPrefix(imported.path, replace.module+"/")) && len(replace.module) > len(module) {
+					module = replace.module
 				}
 			}
-			if match == nil {
-				continue
-			}
-			if !match.inside {
-				if err := checkGoMod(*match); err != nil {
-					return nil, err
+			// Without module graph selection, any candidate of the module can be
+			// the one Go uses, so every usable one counts.
+			for _, match := range replaces {
+				if match.module != module {
+					continue
 				}
-			}
-			dir := filepath.Join(match.dir, filepath.FromSlash(strings.TrimPrefix(imported.path, match.module)))
-			if !match.inside {
-				if !hasGoFiles(dir) {
-					return nil, fmt.Errorf("%s: package %s is in %s (go.mod:%d), but %s has no Go files",
-						imported.position, imported.path, replaceText(root, match.dir), match.line, replaceText(root, dir))
+				dir := filepath.Join(match.dir, filepath.FromSlash(strings.TrimPrefix(imported.path, match.module)))
+				if match.candidate {
+					if _, err := os.Stat(filepath.Join(match.dir, "go.mod")); err != nil || !hasGoFiles(dir) {
+						continue
+					}
 				}
-				if throughSymlink(root, realRoot, dir) {
-					return nil, fmt.Errorf("%s: package %s reads %s through a symlink; %s",
-						imported.position, imported.path, replaceText(root, dir), symlinkRefusal)
+				if !match.inside {
+					if err := checkGoMod(match); err != nil {
+						return nil, nil, err
+					}
+					if !hasGoFiles(dir) {
+						return nil, nil, fmt.Errorf("%s: package %s is in %s (go.mod:%d), but %s has no Go files",
+							imported.position, imported.path, replaceText(root, match.dir), match.line, replaceText(root, dir))
+					}
+					if throughSymlink(root, realRoot, dir) {
+						return nil, nil, fmt.Errorf("%s: package %s reads %s through a symlink; %s",
+							imported.position, imported.path, replaceText(root, dir), symlinkRefusal)
+					}
+					importedFrom[match.module] = true
+					glob := path.Join(replaceText(root, dir), "*.go")
+					add(imported.position, glob)
+					found[glob] = IncludePattern{Position: found[glob].Position, PackageSource: true}
 				}
-				add(imported.position, path.Join(replaceText(root, dir), "*.go"))
+				queue = append(queue, pkg{dir: dir})
 			}
-			queue = append(queue, pkg{dir: dir})
 		}
 	}
-	return found, nil
+	var warnings []string
+	for _, replace := range replaces {
+		if !replace.inside && required[replace.module] && !importedFrom[replace.module] {
+			dir := replaceText(root, replace.dir)
+			warnings = append(warnings, fmt.Sprintf("go.mod:%d: replace %s => %s: the module imports no package of it, so only %s reaches the build",
+				replace.line, replace.text, dir, path.Join(dir, "go.mod")))
+		}
+	}
+	return found, warnings, nil
 }
 
 // throughSymlink reports whether p resolves through a symlink. The list names

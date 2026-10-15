@@ -1,0 +1,164 @@
+# Files outside the module directory
+
+A Go module can build code from another directory of its repository through
+a local `replace` directive in `go.mod`.
+That code can embed files with `//go:embed`.
+Every Dang entrypoint that go-sdk generates declares a `sources` function.
+`sources` returns the module directory and the files the build reads outside
+it.
+The rest of the entrypoint is the same for every module.
+
+## What generation writes
+
+`dagger generate` scans the module and finds the files its build reads
+outside the module directory:
+
+- the `go.mod` of each local replace target that `go.mod` requires;
+- the Go files of each package the module imports from a replace target,
+  and of the packages those import from a replace target;
+- the files those packages embed, and their assembly, header and syso files.
+
+The scan counts imports under every build tag and in the module's test files.
+Generation writes the patterns of these files into `sources`.
+For a module whose build reads nothing outside its directory, `sources`
+returns the module directory only.
+
+The `go mod tidy` of generation removes a requirement that nothing imports,
+so `sources` does not return the replace target of that requirement.
+When a dependency outside the workspace still needs packages of that replace
+target, generation fails.
+The generation error ends with one line per such replace target, for example
+`warning: go.mod:7: replace example.com/lib => ../lib: the module imports no package of it, so only ../lib/go.mod reaches the build`.
+A replace target that is neither required nor imported is unused.
+Generation ignores an unused replace target.
+
+For example, `app/go.mod` replaces `example.com/lib` with `../lib`, and
+`app/main.go` imports `example.com/lib/greet`, which embeds `greeting.txt`:
+
+```go
+package app
+
+import "example.com/lib/greet"
+
+type App struct{}
+
+func (*App) Greeting() string { return greet.Greeting() }
+```
+
+Generation writes this function into `app/internal/dagger/entrypoint/main.dang`:
+
+```dang
+pub sources(workspace: Workspace!): Directory! {
+  directory
+    .withDirectory(workspace.cwd + "/..", workspace.directory("..",
+      include: ["lib/go.mod", "lib/greet/*.go", "lib/greet/*.h", "lib/greet/*.s", "lib/greet/*.syso", "lib/greet/greeting.txt"],
+      exclude: ["**/.git", "**/*_test.go"],
+      gitignore: true,
+    ))
+    .withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git"], gitignore: true))
+}
+```
+
+## How the engine uses sources
+
+The engine calls `sources` when it loads the module.
+`sources` runs with a working client and the same trust as module code.
+The workspace that `sources` receives is rooted at the module's context root,
+and its current directory is the module directory.
+`sources` returns the module directory and the outside files at their paths
+from the workspace root.
+The engine adds the returned files to the module context.
+The engine keys the module's types and every function result on the content
+of that context.
+
+A function result is reused across sessions until a file that `sources`
+returns changes.
+A change to another file outside the module directory does not invalidate a
+result.
+Exported functions need no workspace argument for the build.
+
+The entrypoint builds the module and runs each call with the context mounted
+at `/workspace` and the module directory as the working directory.
+A function can therefore read `../lib/greet/greeting.txt` when it runs.
+
+## Engine versions
+
+Every Dang entrypoint that go-sdk generates needs Dagger v1.0.0-beta.18 or
+later, with or without files outside the module directory.
+On v1.0.0-beta.17 and older, loading the module fails with
+`field "types": missing argument "workspace" required by interface`.
+The error prints the line above the entrypoint type, which reads
+`# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing "workspace" argument.`
+Generation refuses on v1.0.0-beta.16 and older.
+
+## When to generate again
+
+Run `dagger generate` again after one of these changes:
+
+- a change to the replace directives of `go.mod`;
+- a new import of another package from a replace target;
+- a new `//go:embed` directive in an imported package.
+
+A new Go, assembly, header or syso file in an imported package needs no
+generation.
+A new file that matches an existing embed pattern needs no generation.
+When the build misses a file, it fails with `The build misses files outside
+the module directory: run dagger generate`.
+
+## Limits
+
+- A function cannot read another file outside the module directory: reading
+  one fails with `open ../x: no such file or directory`.
+- A replace target must stay inside the workspace. Generation refuses a
+  target above the workspace root.
+- A version-specific replace whose version only a dependency's `go.mod`
+  selects can add extra files to `sources` when the replace targets of
+  several versions exist.
+- A version-specific replace of a nested module path that `go.mod` does not
+  require, such as `example.com/a/sub v1.0.0`, hides the packages under that
+  path from a required replace of its parent `example.com/a`: `sources`
+  misses their files and the build fails.
+- Generation refuses a symlink that leads outside the module directory.
+- `sources` returns no file that `.gitignore` ignores. Generation refuses a
+  pattern that matches only ignored files.
+
+## Migration
+
+A module that uses the Go runtime keeps it after an SDK update.
+With `dangEntrypoint` unset, only new modules get the entrypoint, and
+`dagger generate` reports no change for an existing module.
+To switch one module, set both settings on its scope in `dagger.toml`, then
+run `dagger generate`:
+
+```toml
+[sdks.go.scopes."path/to/module".settings]
+dangEntrypoint = true
+globalClient = true
+```
+
+`globalClient = true` keeps the global `dag` that the module's code may use;
+without it, generation fails with `undefined: dag`.
+The same settings under `[modules.go-sdk.settings]` apply to every Go module
+of the workspace.
+`dagger generate` skips a module that fails to load: it shows the error only
+on the module's span, prints `no changes to apply` and exits 0.
+
+PR #64 compiled such modules from a workspace argument instead.
+go-sdk `3d4c37a0a2` merges PR #63, which contains the design of PR #64.
+To migrate a module generated by that commit:
+
+1. Remove the `ws *dagger.Workspace` arguments that served only compilation.
+2. Remove the `ws` arguments from the calls of the module's functions in
+   other modules, for example `appClient.New(ws).Greeting(ctx, ws)` becomes
+   `appClient.New().Greeting(ctx)`.
+3. Run `dagger generate`.
+
+Generation removes the vendored `internal/dagger/entrypoint/go-inputs`
+directory.
+A function that keeps a `ws *dagger.Workspace` argument still works, but the
+engine passes a new workspace to it on every call, so its results are never
+reused.
+
+A `dagger.json` or `dagger-module.toml` with `include` cannot carry a Dang
+entrypoint.
+Remove `include`: the local replace directives of `go.mod` select the files.

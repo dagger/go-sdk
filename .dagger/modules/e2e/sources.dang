@@ -1,0 +1,217 @@
+"""
+Generate modules whose build reads files outside the module directory,
+through the local replace directives of go.mod.
+"""
+type SourcesChecks {
+  let root: String! = ".dagger/modules/e2e/fixtures/include"
+  let appPath: String! = root + "/app"
+
+  let generated(ws: Workspace!): Workspace! {
+    goSdk(dangEntrypoint: true).generateScope(
+      ws: ws.withWorkdir(appPath), isModule: true, name: "include-app", clients: [],
+    )
+  }
+
+  """
+  The generated entrypoint returns the files the build reads outside the
+  module from sources, builds from the module context with GOWORK=off, and
+  regenerates without changes. Generation writes no file outside the module.
+  """
+  generateCheck(ws: Workspace!): Void @check {
+    let input = ws.withWorkdir(appPath)
+    let ready = generated(ws)
+    let entrypoint = ready.file("internal/dagger/entrypoint/main.dang").contents
+    [
+      "pub sources(workspace: Workspace!): Directory! {\n    directory\n      .withDirectory(workspace.cwd + \"/..\", workspace.directory(\"..\",\n        include: [\"lib/go.mod\", \"lib/greet/*.go\", \"lib/greet/*.h\", \"lib/greet/*.s\", \"lib/greet/*.syso\", \"lib/greet/greeting.txt\"],",
+      "# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing \"workspace\" argument.\ntype Entrypoint implements ModuleEntrypoint {",
+      "pub types: [TypeDef!]! {",
+      "pub call(\n    receiverType: String!,\n",
+      ".withWorkdir(\"/workspace/\" + currentModule.sourceSubpath)",
+      ".withEnvVariable(\"GOWORK\", \"off\")",
+      ".withMountedDirectory(\"/workspace\", currentModule.contextDirectory)",
+    ].each { literal =>
+      assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
+    }
+    [".glob(", "--inventory", "go-inputs", "Dagger.node", "resources", "workspace != null", "let source", "currentModule.source."].each { literal =>
+      assert("the entrypoint mentions " + literal) { entrypoint.contains(literal) == false }
+    }
+    assert("generation vendored the discovery tool") {
+      ready.directory("internal/dagger/entrypoint").exists("go-inputs") == false
+    }
+    assert("the manifest is not the entrypoint manifest") {
+      ready.file("dagger-module.toml").contents ==
+        "name = \"include-app\"\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+    }
+    assert("generation changed main.go") {
+      ready.file("main.go").contents == input.file("main.go").contents
+    }
+    ["/" + root + "/lib/go.mod", "/" + root + "/lib/greet/greet.go"].each { path =>
+      assert("generation changed " + path) {
+        ready.file(path).contents == ws.file(path).contents
+      }
+    }
+    let repeated = generated(ready.withWorkdir("."))
+    assert("regeneration changed files") { repeated.changes(ready).isEmpty }
+    null
+  }
+
+  """
+  A module directory without a manifest keeps its Go source: generation
+  adds the manifest, and sources returns the files the build reads outside
+  the module.
+  """
+  existingSourceCheck(ws: Workspace!): Void @check {
+    let ready = generated(ws.withoutFile("/" + appPath + "/dagger-module.toml"))
+    assert("generation replaced main.go") {
+      ready.file("main.go").contents == ws.file("/" + appPath + "/main.go").contents
+    }
+    assert("the entrypoint does not declare sources") {
+      ready.file("internal/dagger/entrypoint/main.dang").contents.contains("pub sources(workspace: Workspace!): Directory!")
+    }
+    null
+  }
+
+  """
+  A module with a collection prepares its runtime sources beside the
+  included paths, and places them in the module context it builds from.
+  """
+  collectionCheck(ws: Workspace!): Void @check {
+    let input = ws.withNewFile("/" + appPath + "/items.go",
+      "package include_app\n\nimport \"example.com/lib/greet\"\n\n" +
+      "func (*IncludeApp) Items() *Items { return &Items{Keys: []string{greet.Greeting()}} }\n\n" +
+      "// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n" +
+      "// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
+      "type Item struct{ Name string }\n")
+    let entrypoint = generated(input).file("internal/dagger/entrypoint/main.dang").contents
+    [
+      ".withFile(currentModule.sourceSubpath + \"/items.go\", currentModule.contextDirectory.file(currentModule.sourceSubpath + \"/internal/dagger/entrypoint/runtime/items.go.src\"))",
+      ".withMountedDirectory(\"/workspace\", collectionContext)",
+    ].each { literal =>
+      assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
+    }
+    null
+  }
+
+  let withReplace(ws: Workspace!, target: String!): Workspace! {
+    let goMod = "/" + appPath + "/go.mod"
+    ws.withNewFile(goMod, ws.file(goMod).contents.replace("=> ../lib", "=> " + target))
+  }
+
+  let expectRefusal(input: Workspace!, want: String!): Void {
+    let got = generated(input).file("dagger.gen.go").contents rescue { err: Error => err.message }
+    assert("generation did not refuse with " + want + ": " + got) { got.contains(want) }
+    null
+  }
+
+  """Every refusal of a file outside the module names the line to fix."""
+  refusalsCheck(ws: Workspace!): Void @check {
+    expectRefusal(withReplace(ws, "../../../../../../../x"),
+      "go.mod:7: replace example.com/lib => ../../../../../../../x leaves the workspace root")
+    expectRefusal(withReplace(ws, "../lbi"),
+      "go.mod:7: replace example.com/lib => ../lbi reads ../lbi/go.mod, which is missing")
+    expectRefusal(ws.withNewFile("/" + appPath + "/extra.go", "package include_app\n\nimport _ \"example.com/lib/missing\"\n"),
+      "extra.go:3:8: package example.com/lib/missing is in ../lib (go.mod:7), but ../lib/missing has no Go files")
+    # The engine applies .gitignore files from the host only, so the ignored
+    # fixture module is committed rather than written as a workspace edit.
+    expectRefusal(withReplace(ws, "../ignored"),
+      "go.mod:7: \"../ignored/go.mod\" matches only files ignored by .gitignore")
+    expectRefusal(ws.withNewFile("/" + appPath + "/dagger-module.toml", "name = \"include-app\"\ninclude = [\"../shared\", \"./data\"]\n\n[runtime]\n  source = \"go\"\n"),
+      "dagger-module.toml has settings a Dang entrypoint cannot carry (include); remove them or set dangEntrypoint = false. A Dang entrypoint finds the files outside its module directory from the local replace directives of go.mod; remove include")
+    null
+  }
+
+  """
+  A module three levels below the workspace root that replaces a module
+  with the root itself reads the root's go.mod and the package it imports.
+  """
+  rootReplaceCheck: Void @check {
+    let inputs = directory
+      .withNewFile("go.mod", "module example.com/root\n\ngo 1.26.1\n")
+      .withNewFile("greet/greet.go", "package greet\n\nfunc Greeting() string { return \"root\" }\n")
+      .withNewFile("a/b/deep/dagger-module.toml", "name = \"deep\"\n")
+      .withNewFile("a/b/deep/go.mod", "module example.com/deep\n\ngo 1.26.1\n\nrequire example.com/root v0.0.0\n\nreplace example.com/root => ../../..\n")
+      .withNewFile("a/b/deep/main.go", "package deep\n\nimport \"example.com/root/greet\"\n\ntype Deep struct{}\n\nfunc (*Deep) Greeting() string { return greet.Greeting() }\n")
+      .asWorkspace
+    let entrypoint = goSdk(dangEntrypoint: true).generateScope(
+      ws: inputs.withWorkdir("a/b/deep"), isModule: true, name: "deep", clients: [],
+    ).file("internal/dagger/entrypoint/main.dang").contents
+    assert("the entrypoint does not read the root's files:\n" + entrypoint) {
+      entrypoint.contains(".withDirectory(workspace.cwd + \"/../../..\", workspace.directory(\"../../..\",\n        include: [\"go.mod\", \"greet/*.go\", \"greet/*.h\", \"greet/*.s\", \"greet/*.syso\"],")
+    }
+    null
+  }
+
+  """
+  The generated fixture repository: the app and the files it includes, a
+  caller that reaches the app through a generated client, and a control
+  module without files outside its directory.
+  """
+  fixture(ws: Workspace!): Directory! {
+    # The fixture root is the workspace, so the caller's client names the app
+    # by its path in the exported repository.
+    let inputs = ws.directory("/" + root).asWorkspace
+    let app = goSdk(dangEntrypoint: true).generateScope(
+      ws: inputs.withWorkdir("app"), isModule: true, name: "include-app", clients: [],
+    )
+    let control = goSdk(dangEntrypoint: true).generateScope(
+      ws: app.withWorkdir("control"), isModule: true, name: "include-control", clients: [],
+    )
+    goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: control.withWorkdir("caller"), isModule: true, name: "include-caller",
+      clients: [control.withWorkdir(".").moduleSource("/app")],
+    ).directory("/")
+  }
+
+  """
+  The caller returns its own files outside its directory from sources. The
+  control module, which reads nothing outside, gets the same entrypoint
+  shape, and its sources returns its directory only.
+  """
+  familyCheck(ws: Workspace!): Void @check {
+    let repo = fixture(ws)
+    let caller = repo.file("caller/internal/dagger/entrypoint/main.dang").contents
+    assert("the caller does not return its own files from sources:\n" + caller) {
+      caller.contains("workspace.directory(\"..\",\n        include: [\"lib/go.mod\", \"lib/greet/*.go\", \"lib/greet/*.h\", \"lib/greet/*.s\", \"lib/greet/*.syso\", \"lib/greet/greeting.txt\"],")
+    }
+    let control = repo.file("control/internal/dagger/entrypoint/main.dang").contents
+    assert("the control entrypoint does not return its own directory from sources:\n" + control) {
+      control.contains("pub sources(workspace: Workspace!): Directory! {\n    directory\n      .withDirectory(workspace.cwd, workspace.directory(\".\", exclude: [\"**/.git\"], gitignore: true))\n  }") and
+        control.contains("include:") == false
+    }
+    let app = repo.file("app/internal/dagger/entrypoint/main.dang").contents
+    assert("the app and control entrypoints differ in call") {
+      (app.split("  pub call(")[1] ?? "") == (control.split("  pub call(")[1] ?? "")
+    }
+    null
+  }
+
+  """
+  A git source reads its files outside the module from its own commit. cli
+  is this engine's dagger CLI: it runs nested in this session, where the git
+  service is reachable.
+  """
+  gitSourceCall(ws: Workspace!, cli: File!): Void {
+    let server = container.from("alpine:3.22").withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
+      .withDirectory("/srv/repo", fixture(ws))
+      .withWorkdir("/srv/repo")
+      .withExec(["git", "init", "-q", "-b", "main"])
+      .withExec(["git", "config", "user.name", "SDK test"])
+      .withExec(["git", "config", "user.email", "sdk-test@example.com"])
+      .withExec(["git", "add", "."])
+      .withExec(["git", "commit", "-q", "-m", "include fixture"])
+      .withExec(["git", "clone", "-q", "--bare", ".", "/srv/repo.git"])
+      .withExposedPort(9418)
+      .withDefaultArgs(["git", "daemon", "--export-all", "--base-path=/srv", "/srv"])
+      .asService
+    let called = container.from("alpine:3.22").withoutEntrypoint
+      .withFile("/usr/local/bin/dagger", cli, permissions: 755)
+      .withServiceBinding(server.hostname, server)
+      .withExec(["dagger", "-m", "git://" + server.hostname + "/repo.git#main:app", "call", "greeting"],
+        experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    assert("a git module with files outside its directory failed:\n" + called.stdout + called.stderr) {
+      called.exitCode == 0 and called.stdout.trimSpace == "one"
+    }
+    null
+  }
+}

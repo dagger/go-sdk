@@ -13,9 +13,8 @@ import (
 
 func (ps *parseState) parseGoStruct(t *types.Struct, named *types.Named) (*parsedObjectType, error) { //nolint:gocyclo // parsing struct metadata is inherently branchy
 	spec := &parsedObjectType{
-		workspaceBuild: ps.workspaceBuild,
-		goType:         t,
-		moduleName:     ps.moduleName,
+		goType:     t,
+		moduleName: ps.moduleName,
 	}
 
 	if named == nil {
@@ -180,13 +179,12 @@ func (ps *parseState) parseGoStruct(t *types.Struct, named *types.Named) (*parse
 }
 
 type parsedObjectType struct {
-	workspaceBuild bool
-	isCollection   bool
-	name           string
-	moduleName     string
-	doc            string
-	sourceMap      *sourceMap
-	deprecated     *string
+	isCollection bool
+	name         string
+	moduleName   string
+	doc          string
+	sourceMap    *sourceMap
+	deprecated   *string
 
 	fields      []*fieldSpec
 	methods     []*funcTypeSpec
@@ -441,10 +439,6 @@ func (spec *parsedObjectType) marshalJSONMethodCode() (*Statement, error) {
 		getFieldCodes = append(getFieldCodes, getFieldCode)
 	}
 
-	if spec.workspaceBuild && spec.isCollection {
-		concreteFields = append(concreteFields, Id("CompilationWorkspace").String().Tag(map[string]string{"json": "__daggerCompilationWorkspace"}))
-		getFieldCodes = append(getFieldCodes, Id("concrete").Dot("CompilationWorkspace").Op("=").Id("compilationWorkspace"))
-	}
 	return Func().Params(Id("r").Id(spec.name)).
 		Id("MarshalJSON").
 		Params().

@@ -1,19 +1,17 @@
+// Package main calls the include fixture through its generated client.
 package main
 
 import (
 	"context"
-	"dagger/include-caller/internal/dagger"
+
 	appClient "dagger/include-caller/internal/dagger/clients/include-app"
+	"example.com/lib/greet"
 )
 
-type IncludeCaller struct {
-	App *appClient.IncludeApp // +private
-}
+type IncludeCaller struct{}
 
-func New(ws *dagger.Workspace) *IncludeCaller {
-	return &IncludeCaller{App: appClient.New(ws)}
-}
-
-func (c *IncludeCaller) Greeting(ctx context.Context, ws *dagger.Workspace) (string, error) {
-	return c.App.Greeting(ctx, ws)
+// Greeting returns this module's embedded greeting and the app's.
+func (*IncludeCaller) Greeting(ctx context.Context) (string, error) {
+	app, err := appClient.New().Greeting(ctx)
+	return greet.Greeting() + " " + app, err
 }

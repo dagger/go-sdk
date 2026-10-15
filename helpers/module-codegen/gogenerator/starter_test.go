@@ -12,8 +12,7 @@ import (
 // The default starter must compile in every entrypoint layout, with and
 // without the global dag.
 func TestGenerateDefaultStarter(t *testing.T) {
-	schema, err := filepath.Abs("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
-	require.NoError(t, err)
+	schema := moduleContextSchema(t)
 	starter, err := filepath.Abs("../../../templates/default")
 	require.NoError(t, err)
 	for _, unified := range []bool{false, true} {

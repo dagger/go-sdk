@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
+	"strings"
 
+	"module-codegen/discovery"
 	"module-codegen/gogenerator"
 )
 
@@ -17,6 +23,12 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "includes" {
+		return runIncludes(os.Args[2:])
+	}
+	if len(os.Args) > 1 && os.Args[1] == "replaces" {
+		return runReplaces(os.Args[2:])
+	}
 	var cfg gogenerator.GenerateConfig
 	flag.StringVar(&cfg.BuildRoot, "build-root", "", "workspace snapshot containing compilation inputs")
 	flag.StringVar(&cfg.ModuleRoot, "module-root", "", "path to the Go module implementation")
@@ -40,4 +52,78 @@ func run() error {
 		return fmt.Errorf("--introspection-json-path is required")
 	}
 	return gogenerator.Generate(context.Background(), cfg)
+}
+
+type includeEntry struct {
+	Position string `json:"position"`
+	Path     string `json:"path"`
+	Pattern  string `json:"pattern"`
+}
+
+// runIncludes writes what the module's build reads outside its module
+// directory to a directory, one file per part, so the caller can read those
+// paths from its workspace before generation. The include file holds one JSON
+// value per line.
+func runIncludes(args []string) error {
+	flags := flag.NewFlagSet("includes", flag.ContinueOnError)
+	root := flags.String("module-root", "", "path to the Go module implementation")
+	workspacePath := flags.String("workspace-path", "", "module directory relative to the workspace root")
+	output := flags.String("output", "", "directory that receives the include list")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *root == "" || *workspacePath == "" || *output == "" {
+		return fmt.Errorf("includes needs --module-root, --workspace-path and --output")
+	}
+	includes, err := discovery.ReadIncludes(*root, *workspacePath)
+	if err != nil {
+		return err
+	}
+	var lines bytes.Buffer
+	for _, include := range includes.Include {
+		line, err := json.Marshal(includeEntry{Position: include.Position, Path: include.Path, Pattern: include.Pattern})
+		if err != nil {
+			return err
+		}
+		lines.Write(append(line, '\n'))
+	}
+	files := map[string][]byte{
+		"anchor":  []byte(path.Join(*workspacePath, includes.Anchor)),
+		"module":  []byte(includes.ModulePath),
+		"include": lines.Bytes(),
+	}
+	if err := os.MkdirAll(*output, 0o755); err != nil {
+		return err
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(*output, name), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runReplaces prints the local replace targets of go.mod outside the module
+// directory and inside the workspace, relative to the workspace root, one per
+// line, so the caller can read their sources before it scans the module.
+func runReplaces(args []string) error {
+	flags := flag.NewFlagSet("replaces", flag.ContinueOnError)
+	root := flags.String("module-root", "", "path to the Go module implementation")
+	workspacePath := flags.String("workspace-path", "", "module directory relative to the workspace root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *root == "" || *workspacePath == "" {
+		return fmt.Errorf("replaces needs --module-root and --workspace-path")
+	}
+	targets, err := discovery.LocalReplaceTargets(*root)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if p := path.Join(*workspacePath, target); p != ".." && !strings.HasPrefix(p, "../") {
+			fmt.Println(p)
+		}
+	}
+	return nil
 }

@@ -6,7 +6,7 @@ source = "dang"
 
 [[dependencies]]
 name = "engine-dev"
-source = "github.com/dagger/dagger/.dagger/modules/engine-dev@0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
+source = "github.com/dagger/dagger/.dagger/modules/engine-dev@249edbd646e63c5181053c8af72623ed9bdf030d"
 
 [[dependencies]]
 name = "runtime-floor-engine-dev"
@@ -17,5 +17,5 @@ name = "entrypoint-floor-engine-dev"
 source = "github.com/dagger/dagger/.dagger/modules/engine-dev@2d95ef98b6824c5aaca4a43eb172c9a057c18619"
 
 [[dependencies]]
-name = "workspace-floor-engine-dev"
+name = "beta17-engine-dev"
 source = "github.com/dagger/dagger/.dagger/modules/engine-dev@0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
