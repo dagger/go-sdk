@@ -159,6 +159,9 @@ A function that keeps a `ws *dagger.Workspace` argument still works, but the
 engine passes a new workspace to it on every call, so its results are never
 reused.
 
-A `dagger.json` or `dagger-module.toml` with `include` cannot carry a Dang
-entrypoint.
-Remove `include`: the local replace directives of `go.mod` select the files.
+Generation removes `include` from `dagger-module.toml` and `dagger.json`:
+the local replace directives of `go.mod` select the files outside the module
+directory.
+The removal shows in the changes that `dagger generate` applies.
+A file outside the module directory that only a function reads at run time is
+no longer available.
