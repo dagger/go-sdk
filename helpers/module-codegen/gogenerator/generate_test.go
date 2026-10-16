@@ -264,6 +264,25 @@ func TestPinGeneratedTelemetryPreservesUserChoices(t *testing.T) {
 	}
 }
 
+// A dependency that requires the pre-split genproto module, as old protobuf
+// releases do, must not make the bootstrap's otel-go imports ambiguous.
+func TestPinGeneratedTelemetryTidiesBesidePreSplitGenproto(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(root, "old", "go.mod"), "module example.com/old\n\ngo 1.26\n\nrequire google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013\n")
+	writeTestFile(t, filepath.Join(root, "old", "old.go"), "package old\n")
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26\n\nrequire example.com/old v0.0.0\n\nreplace example.com/old => ./old\n")
+	writeTestFile(t, filepath.Join(root, "main.go"), "package app\n\nimport (\n\t_ \"example.com/old\"\n\t_ \"github.com/dagger/otel-go\"\n)\n")
+	if err := pinGeneratedTelemetry(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatal(err)
+	}
+	if err := goModTidy(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRemoveStaleBindingsReportsRemovedFiles(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "internal", "dagger")

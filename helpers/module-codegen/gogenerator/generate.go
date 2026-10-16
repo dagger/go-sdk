@@ -446,6 +446,7 @@ func pinDagger(path, version string) error {
 func pinGeneratedTelemetry(path string) error {
 	const modulePath = "github.com/dagger/otel-go"
 	const version = "v1.43.0"
+	const genprotoVersion = "v0.0.0-20260226221140-a57be14db171"
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -454,18 +455,37 @@ func pinGeneratedTelemetry(path string) error {
 	if err != nil {
 		return err
 	}
-	for _, replacement := range mod.Replace {
-		if replacement.Old.Path == modulePath {
-			return nil
+	chosen := func(module, minimum string) bool {
+		for _, replacement := range mod.Replace {
+			if replacement.Old.Path == module {
+				return true
+			}
 		}
+		for _, requirement := range mod.Require {
+			if requirement.Mod.Path == module && semver.Compare(requirement.Mod.Version, minimum) >= 0 {
+				return true
+			}
+		}
+		return false
 	}
-	for _, requirement := range mod.Require {
-		if requirement.Mod.Path == modulePath && semver.Compare(requirement.Mod.Version, version) >= 0 {
-			return nil
-		}
+	if chosen(modulePath, version) {
+		return nil
 	}
 	if err := mod.AddRequire(modulePath, version); err != nil {
 		return err
+	}
+	// otel-go's gRPC exporters import googleapis packages that the pre-split
+	// google.golang.org/genproto module also contains, and an old dependency
+	// can bring that module. Go looks for a package in the go.mod requirements
+	// before the whole graph, so requiring the split modules, as otel-go does,
+	// keeps those imports unambiguous.
+	for _, split := range []string{"google.golang.org/genproto/googleapis/api", "google.golang.org/genproto/googleapis/rpc"} {
+		if chosen(split, genprotoVersion) {
+			continue
+		}
+		if err := mod.AddRequire(split, genprotoVersion); err != nil {
+			return err
+		}
 	}
 	body, err := mod.Format()
 	if err != nil {
