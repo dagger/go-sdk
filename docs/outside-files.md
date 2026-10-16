@@ -165,3 +165,10 @@ directory.
 The removal shows in the changes that `dagger generate` applies.
 A file outside the module directory that only a function reads at run time is
 no longer available.
+
+Generation also removes `codegen`: only the engine's codegen for the Go
+runtime reads `automaticGitignore`.
+It removes `dependencies` when the scope's `clients` in `dagger.toml` list
+every dependency by module name: the entrypoint reaches them through the
+generated clients.
+It refuses a dependency that the scope's `clients` do not list, and names it.
