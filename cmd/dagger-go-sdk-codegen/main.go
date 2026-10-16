@@ -37,6 +37,7 @@ import (
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	gogenerator "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
+	"github.com/psanford/memfs"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
 )
@@ -104,6 +105,80 @@ type clientMeta struct {
 	EngineVersion string                `json:"engineVersion"`
 	Module        generator.BoundModule `json:"module"`
 	ClientVersion string                `json:"clientVersion"`
+	// Workspace and Git are set for a GIT_SOURCE module, to recognize a module
+	// of the Git workspace that generates the client.
+	Workspace workspaceMeta `json:"workspace"`
+	Git       gitMeta       `json:"git"`
+}
+
+type workspaceMeta struct {
+	Address string `json:"address"`
+	Commit  string `json:"commit"`
+}
+
+type gitMeta struct {
+	CloneRef    string `json:"cloneRef"`
+	HTMLRepoURL string `json:"htmlRepoURL"`
+}
+
+// workspaceModule reports whether a Git module is part of the Git workspace
+// that generates its client: in its repository, at its commit and selector.
+// Its address then names that commit, which every commit changes. A workspace
+// without a selector resolves its modules at the default branch, which its
+// address does not name, so any selector at its commit matches.
+func workspaceModule(meta clientMeta) bool {
+	if meta.Module.Kind != generator.ModuleKindGit || meta.Git.CloneRef == "" || meta.Module.Pin == "" || meta.Module.Pin != meta.Workspace.Commit {
+		return false
+	}
+	workspaceSelector, ok := gitSelector(meta.Workspace.Address, meta.Git.CloneRef)
+	if !ok {
+		return false
+	}
+	moduleSelector, ok := gitSelector(meta.Module.Ref, meta.Git.CloneRef)
+	return ok && (workspaceSelector == "" || workspaceSelector == moduleSelector)
+}
+
+// gitSelector returns the version after "@" in a ref of the repository at
+// cloneRef, or false for a ref of another repository.
+func gitSelector(ref, cloneRef string) (string, bool) {
+	rest, ok := strings.CutPrefix(ref, cloneRef)
+	if !ok || (rest != "" && rest[0] != '/' && rest[0] != '@') {
+		return "", false
+	}
+	_, selector, _ := strings.Cut(rest, "@")
+	return selector, true
+}
+
+// localSourceLinks rewrites the links into the workspace commit to the local
+// source positions a local workspace generates, so that the client does not
+// change with every commit. Client bindings render those relative to "../..",
+// as moduleRelPath does without a module.
+func localSourceLinks(overlay fs.FS, schema *introspection.Schema, schemaVersion, repo, pin string) (fs.FS, error) {
+	anchor, err := workspaceSourceLinkAnchor(repo, pin)
+	if err != nil {
+		return nil, err
+	}
+	catalog := newSourceLinkCatalog(schema, schemaVersion)
+	normalized := memfs.New()
+	err = fs.WalkDir(overlay, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil || name == "." {
+			return err
+		}
+		if entry.IsDir() {
+			return normalized.MkdirAll(name, 0o755)
+		}
+		data, err := fs.ReadFile(overlay, name)
+		if err != nil {
+			return err
+		}
+		if strings.HasSuffix(name, ".go") {
+			if data, err = normalizeGeneratedSourceLinks(name, data, catalog, anchor, "../.."); err != nil {
+				return err
+			}
+		}
+		return normalized.WriteFile(name, data, 0o644)
+	})
+	return normalized, err
 }
 
 // validateBoundModuleKind fails closed on a source kind the generated client
@@ -173,6 +248,11 @@ func runClient(args []string) error {
 	if err := validateBoundModuleKind(meta.Module); err != nil {
 		return err
 	}
+	pin := meta.Module.Pin
+	inWorkspace := workspaceModule(meta)
+	if inWorkspace {
+		meta.Module = generator.BoundModule{Kind: generator.ModuleKindLocal, Path: meta.Module.Path}
+	}
 
 	packageImport, err := packageImportPath(*moduleRoot, *outputDir)
 	if err != nil {
@@ -193,6 +273,11 @@ func runClient(args []string) error {
 	state, err := gen.GenerateClient(ctx, resp.Schema, resp.SchemaVersion)
 	if err != nil {
 		return fmt.Errorf("generate client: %w", err)
+	}
+	if inWorkspace {
+		if state.Overlay, err = localSourceLinks(state.Overlay, resp.Schema, resp.SchemaVersion, meta.Git.HTMLRepoURL, pin); err != nil {
+			return fmt.Errorf("normalize client source links: %w", err)
+		}
 	}
 
 	if err := generator.ValidateOwnedOverlay(ctx, state.Overlay, cfg.OutputDir); err != nil {

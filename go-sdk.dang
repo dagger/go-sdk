@@ -258,7 +258,7 @@ type GoSdk {
       # Keep prior client outputs and go.mod updates in the same container.
       # Only the completed batch needs to be merged into the workspace.
       let generated = clients.reduce(base) { current, target =>
-        generateStandaloneClient(current, target, moduleUnified)
+        generateStandaloneClient(current, target, moduleUnified, ws)
       }
       let pruned = generated.withExec([
         "dagger-go-sdk-codegen", "prune-clients",
@@ -744,8 +744,19 @@ type GoSdk {
     "{\"kind\":" + kindJSON + ",\"path\":" + JSON.encode(path) + ",\"ref\":" + JSON.encode(ref) + ",\"pin\":" + JSON.encode(pin) + "}"
   }
 
+  """
+  The repository of a Git module and the Git workspace, which tell whether the
+  module is part of that workspace.
+  """
+  let gitMetaJSON(target: ModuleSource!, ws: Workspace!): String! {
+    if (target.kind != GIT_SOURCE) { return "" }
+    let commit = ws.git.head.commit rescue { err: Error => "" }
+    ",\"workspace\":{\"address\":" + JSON.encode(ws.address) + ",\"commit\":" + JSON.encode(commit) + "}" +
+      ",\"git\":{\"cloneRef\":" + JSON.encode(target.cloneRef) + ",\"htmlRepoURL\":" + JSON.encode(target.htmlRepoURL) + "}"
+  }
+
   """Generate one target client in the batch's Go module at /out."""
-  let generateStandaloneClient(ctr: Container!, target: ModuleSource!, moduleUnified: Boolean!): Container! {
+  let generateStandaloneClient(ctr: Container!, target: ModuleSource!, moduleUnified: Boolean!, ws: Workspace!): Container! {
     let targetName = target.moduleOriginalName
     let outputPath = "internal/dagger/clients/" + targetName
     # The existing package's transport tells auto whether it already uses
@@ -764,7 +775,7 @@ type GoSdk {
         target.sourceRootSubpath,
         target.asString,
         target.pin,
-      ) + "}"
+      ) + gitMetaJSON(target, ws) + "}"
     ctr
       .withFile("/schema.json", target.clientSchemaIntrospectionJSON)
       .withNewFile("/meta.json", metaJSON)
