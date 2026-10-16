@@ -88,14 +88,20 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 			return true
 		})
 	}
-	constants := map[string]bool{}
+	constants, owners := map[string]bool{}, map[string]string{}
+	var deps []dependencyClient
 	if g.Config.ModuleConfig != nil {
+		if g.Config.GlobalClient {
+			if deps, err = dependencyClients(g.Config); err != nil {
+				return nil, err
+			}
+		}
 		// Public signatures omit private fields and function bodies. Preserve
 		// the core aliases author code uses there, from the complete bootstrap
 		// surface emitted before module analysis.
 		funcs := templates.GoTemplateFuncs(schema, schema, schemaVersion, g.Config)
 		helpers := coreHelpers(schema, funcs["FormatName"].(func(string) string), funcs["IsSelfChainable"].(func(introspection.Type) bool))
-		if err := addAuthorCoreAliases(ctx, g.Config, coreNames, helpers, referenced, constants); err != nil {
+		if err := addAuthorCoreAliases(ctx, g.Config, coreNames, helpers, deps, referenced, constants, owners); err != nil {
 			return nil, err
 		}
 	}
@@ -106,15 +112,29 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 	}
 	sort.Strings(names)
 	for _, n := range names {
+		pkg := "core"
+		if owner, ok := owners[n]; ok {
+			pkg = owner
+		}
 		if constants[n] {
-			fmt.Fprintf(&aliases, "const %s = core.%s\n", n, n)
+			fmt.Fprintf(&aliases, "const %s = %s.%s\n", n, pkg, n)
 			continue
 		}
 		target := n
-		if n != "ID" && strings.HasSuffix(n, "ID") {
+		if pkg == "core" && n != "ID" && strings.HasSuffix(n, "ID") {
 			target = "ID"
 		}
-		fmt.Fprintf(&aliases, "type %s = core.%s\n", n, target)
+		fmt.Fprintf(&aliases, "type %s = %s.%s\n", n, pkg, target)
+	}
+	// The global client of legacy author code reaches each dependency the way
+	// the embedded bindings did: dag.Wolfi() is promoted from the dependency's
+	// client, which shares the connection.
+	var depImports, clientFields, clientInits strings.Builder
+	for _, dep := range deps {
+		fmt.Fprintf(&depImports, " %s %q\n", dep.qualifier, dep.importPath)
+		fmt.Fprintf(&aliases, "type %sClient = %s.Client\n", dep.qualifier, dep.qualifier)
+		fmt.Fprintf(&clientFields, "; *%sClient", dep.qualifier)
+		fmt.Fprintf(&clientInits, ",%sClient:%s.Connect(connection)", dep.qualifier, dep.qualifier)
 	}
 	transport := fmt.Sprintf("dagger.ModuleGraphQLClient(connection, %q, %q)", address, bound.Pin)
 	if address == "" {
@@ -139,10 +159,10 @@ import (
  "dagger.io/dagger/core"
  "github.com/dagger/querybuilder"
  "github.com/Khan/genqlient/graphql"
-)
+%s)
 %s
 // Client borrows a shared connection. Its API contains only the bound module.
-type Client struct { *Query }
+type Client struct { *Query%s }
 type Query struct { query *querybuilder.Selection; refetchID bool %s }
 type DaggerObject = core.DaggerObject
 type ExecError = dagger.ExecError
@@ -154,7 +174,7 @@ func Connect(connections ...*dagger.Client) *Client {
  var connection *dagger.Client
  if len(connections)==1 {connection=connections[0]}
  q := querybuilder.Query().Client(%s)
- return &Client{Query:%s}
+ return &Client{Query:%s%s}
 }
 
 func defaultOrExplicit(client *dagger.Client) graphql.Client {
@@ -166,7 +186,7 @@ func assertNotNil(name string,value any){if reflect.ValueOf(value).IsNil(){panic
 func Ref[T core.Loadable[T]](client *Client,id core.ID)T{return core.Ref[T](new(core.Query).WithGraphQLQuery(client.query),id)}
 func Load[T core.Loadable[T]](ctx context.Context,client *Client,id core.ID)(T,error){return core.Load[T](ctx,new(core.Query).WithGraphQLQuery(client.query),id)}
 
-%s`, name, aliases.String(), embeddedCore, transport, initQuery, templates.IDMemoHelper)
+%s`, name, depImports.String(), aliases.String(), clientFields.String(), embeddedCore, transport, initQuery, clientInits.String(), templates.IDMemoHelper)
 	formatted, err := imports.Process(filepath.Join(g.Config.OutputDir, "dagger.gen.go"), []byte(source), nil)
 	if err != nil {
 		return nil, err
@@ -214,7 +234,109 @@ func coreHelpers(schema *introspection.Schema, formatName func(string) string, s
 	return names
 }
 
-func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, helpers, referenced, constants map[string]bool) error {
+type dependencyClient struct {
+	// qualifier imports the client: its package name can be core or any other
+	// name the module package already uses.
+	qualifier, importPath string
+	// exported names the types the client declares and the constants of its
+	// enums, true for a constant.
+	exported map[string]bool
+}
+
+func dependencyClients(cfg generator.Config) ([]dependencyClient, error) {
+	dirs, err := filepath.Glob(filepath.Join(cfg.OutputDir, "internal", "dagger", "clients", "*"))
+	if err != nil {
+		return nil, err
+	}
+	var deps []dependencyClient
+	for _, dir := range dirs {
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil {
+			return nil, err
+		}
+		dep := dependencyClient{
+			qualifier:  fmt.Sprintf("dep%d", len(deps)),
+			importPath: cfg.PackageImport + "/clients/" + filepath.Base(dir),
+			exported:   map[string]bool{},
+		}
+		generated := false
+		enums := map[string]string{}
+		for _, path := range files {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			if !bytes.HasPrefix(data, []byte("// Code generated by dagger. DO NOT EDIT.")) {
+				continue
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), path, data, 0)
+			if err != nil {
+				return nil, err
+			}
+			generated = true
+			for _, decl := range file.Decls {
+				gen, ok := decl.(*ast.GenDecl)
+				if !ok {
+					continue
+				}
+				for _, spec := range gen.Specs {
+					switch spec := spec.(type) {
+					case *ast.TypeSpec:
+						// Aliases are the core types the client reuses.
+						if name := spec.Name.Name; ast.IsExported(name) && !spec.Assign.IsValid() && name != "Client" && name != "Query" {
+							dep.exported[name] = false
+						}
+					case *ast.ValueSpec:
+						if enum, ok := spec.Type.(*ast.Ident); ok && gen.Tok == token.CONST {
+							for _, name := range spec.Names {
+								enums[name.Name] = enum.Name
+							}
+						}
+					}
+				}
+			}
+		}
+		for name, enum := range enums {
+			if _, ok := dep.exported[enum]; ok {
+				dep.exported[name] = true
+			}
+		}
+		if generated {
+			deps = append(deps, dep)
+		}
+	}
+	return deps, nil
+}
+
+func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, helpers map[string]bool, deps []dependencyClient, referenced, constants map[string]bool, owners map[string]string) error {
+	// Dependency names never exist in core, and a name two dependencies
+	// export stays unaliased.
+	type depSymbol struct {
+		pkg      string
+		constant bool
+	}
+	depSymbols, shared := map[string]depSymbol{}, map[string]bool{}
+	for _, dep := range deps {
+		for name, constant := range dep.exported {
+			if _, ok := depSymbols[name]; ok {
+				shared[name] = true
+			}
+			depSymbols[name] = depSymbol{dep.qualifier, constant}
+		}
+	}
+	for name := range shared {
+		delete(depSymbols, name)
+	}
+	use := func(name string, symbols map[string]bool) {
+		if shared[name] {
+			return
+		}
+		if dep, ok := depSymbols[name]; ok {
+			referenced[name], constants[name], owners[name] = true, dep.constant, dep.pkg
+		} else if constant, exists := symbols[name]; exists {
+			referenced[name], constants[name] = true, constant
+		}
+	}
 	symbols := map[string]bool{} // value is true for a constant, false for a type
 	bootstrap, err := filepath.Glob(filepath.Join(cfg.OutputDir, "internal", "dagger", "*.go"))
 	if err != nil {
@@ -325,10 +447,7 @@ func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, 
 		}
 		ast.Inspect(file, func(node ast.Node) bool {
 			if id, ok := node.(*ast.Ident); ok && dotImport {
-				if constant, exists := symbols[id.Name]; exists {
-					referenced[id.Name] = true
-					constants[id.Name] = constant
-				}
+				use(id.Name, symbols)
 			}
 			selector, ok := node.(*ast.SelectorExpr)
 			if !ok {
@@ -338,11 +457,7 @@ func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, 
 			if !ok || !imports[pkg.Name] {
 				return true
 			}
-			name := selector.Sel.Name
-			if constant, exists := symbols[name]; exists {
-				referenced[name] = true
-				constants[name] = constant
-			}
+			use(selector.Sel.Name, symbols)
 			return true
 		})
 	}
