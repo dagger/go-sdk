@@ -360,13 +360,15 @@ type GoSdk {
       if (fat) {
         raise "a fat module is not available with a Dang entrypoint: dagger.json would point older engines at the Go runtime, which cannot load an importable package; set fat = false or dangEntrypoint = false"
       }
-      refuseManifestSettings("dagger-module.toml", decodedManifest(ws), "runtime")
+      let clientNames = clients.map { client => client.moduleOriginalName }
+      let clientSources = clients.map { client => client.asString }
+      refuseManifestSettings("dagger-module.toml", decodedManifest(ws), "runtime", clientNames, clientSources)
       let legacyJSON = if (exists(ws, "dagger.json")) {
         Dagger.json.withContents(ws.file("dagger.json").contents :: Dagger.JSON!)
       } else {
         null
       }
-      refuseManifestSettings("dagger.json", legacyJSON, "sdk")
+      refuseManifestSettings("dagger.json", legacyJSON, "sdk", clientNames, clientSources)
     } else if (hasGeneratedEntrypoint(ws)) {
       raise "this module is generated with a Dang entrypoint, and the Go runtime cannot load its importable package; set dangEntrypoint = true, or change the package to main and remove the [entrypoint] table from dagger-module.toml"
     }
@@ -377,7 +379,7 @@ type GoSdk {
   Refuse what a manifest sets that a manifest with an entrypoint drops:
   sdk-helpers writes that manifest from the name and the entrypoint only.
   """
-  let refuseManifestSettings(fileName: String!, manifest: Dagger.JSONValue, runtimeKey: String!): Void {
+  let refuseManifestSettings(fileName: String!, manifest: Dagger.JSONValue, runtimeKey: String!, clientNames: [String!]!, clientSources: [String!]!): Void {
     if (manifest == null) {
       return null
     }
@@ -385,7 +387,46 @@ type GoSdk {
     if (objections.length > 0) {
       raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false"
     }
+    let uncovered = uncoveredDependencies(fileName, manifest, clientNames, clientSources)
+    if (uncovered.length > 0) {
+      raise fileName + " depends on " + uncovered.join(", ") + ", which the scope's clients do not list; a Dang entrypoint reaches its dependencies through them: add them to the scope's clients in dagger.toml or set dangEntrypoint = false"
+    }
     null
+  }
+
+  """
+  The dependencies of a manifest that no client of the scope provides: by
+  module name, or by source for a dependency without a name. The Go runtime
+  generator writes one dependency per client, and the generated manifest
+  drops them; a dependency the author added would be lost.
+  """
+  let uncoveredDependencies(fileName: String!, manifest: Dagger.JSONValue!, clientNames: [String!]!, clientSources: [String!]!): [String!]! {
+    if (manifest.fields.contains("dependencies") == false) {
+      return [] :: [String!]!
+    }
+    let entries = manifest.field(["dependencies"]).contents :: String!
+    let missing = fileName + " has a dependency without name or source; remove it or set dangEntrypoint = false"
+    # dagger.json also accepts a dependency as a bare source string. The form
+    # is told apart before decoding, so a refusal is not rescued.
+    let strings = ((JSON.decode(entries) :: [String!]!).length >= 0) rescue { err: Error => false }
+    if (strings) {
+      return (JSON.decode(entries) :: [String!]!).map { source =>
+        if (source == "") { raise missing }
+        if (clientSources.contains(source)) { "" } else { source }
+      }.filter { label => label != "" }
+    }
+    let objects = ((JSON.decode(entries) :: [{{name: String, source: String}}!]!).length >= 0) rescue { err: Error => false }
+    if (objects == false) {
+      raise fileName + " mixes dependency strings and objects; write each dependency as an object with its name, or set dangEntrypoint = false"
+    }
+    (JSON.decode(entries) :: [{{name: String, source: String}}!]!).map { dependency =>
+      let name = dependency.name ?? ""
+      let source = dependency.source ?? ""
+      if (name == "" and source == "") { raise missing }
+      if (name != "") {
+        if (clientNames.contains(name)) { "" } else { name }
+      } else if (clientSources.contains(source)) { "" } else { source }
+    }.filter { label => label != "" }
   }
 
   """
@@ -394,7 +435,9 @@ type GoSdk {
   dagger.json. A Go runtime is what dangEntrypoint replaces, so it is kept.
   The local replace directives of go.mod replace include, so generation drops
   it rather than refusing it: refusing would leave a module that neither
-  runtime builds while the author removes it.
+  runtime builds while the author removes it. For the same reason it drops
+  codegen, which only the engine's runtime codegen reads, and the
+  dependencies that the scope's clients provide.
   """
   let manifestObjections(manifest: Dagger.JSONValue!, runtimeKey: String!): [String!]! {
     let fields = manifest.fields
@@ -408,7 +451,7 @@ type GoSdk {
     } else {
       [] :: [String!]!
     }
-    let tables = ["codegen", "clients", "dependencies"].filter { key =>
+    let tables = ["clients"].filter { key =>
       fields.contains(key)
     }
     let runtime = if (fields.contains(runtimeKey) and runtimeSource(manifest.field([runtimeKey])) != "go") {

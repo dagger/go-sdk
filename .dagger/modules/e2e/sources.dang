@@ -138,6 +138,74 @@ type SourcesChecks {
   }
 
   """
+  Generation drops the codegen settings and the dependencies that the
+  scope's clients provide, and refuses a dependency they do not.
+  """
+  manifestDependenciesCheck(ws: Workspace!): Void @check {
+    let app = goSdk(dangEntrypoint: true).generateScope(
+      ws: ws.directory("/" + root).asWorkspace.withWorkdir("app"), isModule: true, name: "include-app", clients: [],
+    )
+    let legacy = "name = \"include-caller\"\n\n[runtime]\n  source = \"go\"\n\n" +
+      "[[dependencies]]\n  name = \"include-app\"\n  source = \"../app\"\n\n[codegen]\n  automaticGitignore = false\n"
+    let clients = [app.withWorkdir(".").moduleSource("/app")]
+    let migrated = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: app.withWorkdir("caller").withNewFile("dagger-module.toml", legacy), isModule: true, name: "include-caller", clients: clients,
+    ).file("dagger-module.toml").contents
+    assert("generation kept codegen or dependencies, or lacks the entrypoint:\n" + migrated) {
+      migrated.contains("codegen") == false and migrated.contains("dependencies") == false and migrated.contains("[entrypoint]")
+    }
+    let uncovered = legacy + "\n[[dependencies]]\n  name = \"other\"\n  source = \"../other\"\n"
+    let refused = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: app.withWorkdir("caller").withNewFile("dagger-module.toml", uncovered), isModule: true, name: "include-caller", clients: clients,
+    ).file("dagger-module.toml").contents rescue {
+      err: Error => err.message
+    }
+    assert("an uncovered dependency was not refused: " + refused) {
+      refused.contains("dagger-module.toml depends on other, which the scope's clients do not list")
+    }
+    # dagger.json can name a dependency by its source only; a directory
+    # client has no source string, so this one stays uncovered.
+    let bySource = "{\"name\": \"include-caller\", \"sdk\": \"go\", \"dependencies\": [\"../elsewhere\"]}\n"
+    let refusedSource = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: app.withWorkdir("caller").withNewFile("dagger.json", bySource), isModule: true, name: "include-caller", clients: clients,
+    ).file("dagger-module.toml").contents rescue {
+      err: Error => err.message
+    }
+    assert("an uncovered dependency source was not refused: " + refusedSource) {
+      refusedSource.contains("dagger.json depends on ../elsewhere, which the scope's clients do not list")
+    }
+    let nameless = legacy + "\n[[dependencies]]\n  pin = \"0\"\n"
+    let refusedNameless = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: app.withWorkdir("caller").withNewFile("dagger-module.toml", nameless), isModule: true, name: "include-caller", clients: clients,
+    ).file("dagger-module.toml").contents rescue {
+      err: Error => err.message
+    }
+    assert("a dependency without name or source was not refused: " + refusedNameless) {
+      refusedNameless.contains("dagger-module.toml has a dependency without name or source")
+    }
+    let refusedEmpty = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: app.withWorkdir("caller").withNewFile("dagger.json", "{\"name\": \"include-caller\", \"sdk\": \"go\", \"dependencies\": [\"\"]}\n"),
+      isModule: true, name: "include-caller", clients: clients,
+    ).file("dagger-module.toml").contents rescue {
+      err: Error => err.message
+    }
+    assert("an empty dependency string was not refused: " + refusedEmpty) {
+      refusedEmpty.contains("dagger.json has a dependency without name or source")
+    }
+    let mixed = "{\"name\": \"include-caller\", \"sdk\": \"go\", \"dependencies\": [" + JSON.encode(clients[0].asString) +
+      ", {\"name\": \"include-app\", \"source\": \"../app\"}]}\n"
+    let refusedMixed = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: app.withWorkdir("caller").withNewFile("dagger.json", mixed), isModule: true, name: "include-caller", clients: clients,
+    ).file("dagger-module.toml").contents rescue {
+      err: Error => err.message
+    }
+    assert("a mixed dependency list was not refused: " + refusedMixed) {
+      refusedMixed.contains("dagger.json mixes dependency strings and objects")
+    }
+    null
+  }
+
+  """
   A module three levels below the workspace root that replaces a module
   with the root itself reads the root's go.mod and the package it imports.
   """
