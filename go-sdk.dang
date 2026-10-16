@@ -383,31 +383,22 @@ type GoSdk {
     }
     let objections = manifestObjections(manifest, runtimeKey)
     if (objections.length > 0) {
-      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false" + includeHint(manifest)
+      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false"
     }
     null
-  }
-
-  """
-  How a manifest's include list carries over: a Dang entrypoint finds the
-  files outside its module directory from the local replace directives of
-  go.mod.
-  """
-  let includeHint(manifest: Dagger.JSONValue!): String! {
-    if (manifest.fields.contains("include") == false) {
-      return ""
-    }
-    ". A Dang entrypoint finds the files outside its module directory from the local replace directives of go.mod; remove include"
   }
 
   """
   The settings of a decoded manifest that a manifest with an entrypoint has
   no place for. runtimeKey is `runtime` in dagger-module.toml and `sdk` in
   dagger.json. A Go runtime is what dangEntrypoint replaces, so it is kept.
+  The local replace directives of go.mod replace include, so generation drops
+  it rather than refusing it: refusing would leave a module that neither
+  runtime builds while the author removes it.
   """
   let manifestObjections(manifest: Dagger.JSONValue!, runtimeKey: String!): [String!]! {
     let fields = manifest.fields
-    let keys = ["include", "disableDefaultFunctionCaching"].filter { key =>
+    let keys = ["disableDefaultFunctionCaching"].filter { key =>
       fields.contains(key)
     }
     # A module is rooted at its own directory, which is what `source = "."`

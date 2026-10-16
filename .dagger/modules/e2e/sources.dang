@@ -115,8 +115,25 @@ type SourcesChecks {
     # fixture module is committed rather than written as a workspace edit.
     expectRefusal(withReplace(ws, "../ignored"),
       "go.mod:7: \"../ignored/go.mod\" matches only files ignored by .gitignore")
-    expectRefusal(ws.withNewFile("/" + appPath + "/dagger-module.toml", "name = \"include-app\"\ninclude = [\"../shared\", \"./data\"]\n\n[runtime]\n  source = \"go\"\n"),
-      "dagger-module.toml has settings a Dang entrypoint cannot carry (include); remove them or set dangEntrypoint = false. A Dang entrypoint finds the files outside its module directory from the local replace directives of go.mod; remove include")
+    null
+  }
+
+  """
+  Generation drops the include list of a migrated manifest: the local replace
+  directives of go.mod select the files outside the module directory.
+  """
+  manifestIncludeCheck(ws: Workspace!): Void @check {
+    [
+      ["dagger-module.toml", "name = \"include-app\"\ninclude = [\"../shared\", \"./data\"]\n\n[runtime]\n  source = \"go\"\n"],
+      ["dagger.json", "{\"name\": \"include-app\", \"sdk\": \"go\", \"include\": [\"../shared\", \"./data\"]}\n"],
+    ].each { file =>
+      let ready = generated(ws.withNewFile("/" + appPath + "/" + (file[0] ?? ""), file[1] ?? ""))
+      let manifest = ready.file("dagger-module.toml").contents
+      assert((file[0] ?? "") + ": generation kept include or lacks the entrypoint:\n" + manifest) {
+        manifest.contains("include =") == false and manifest.contains("[entrypoint]") and
+          ready.directory(".").exists("dagger.json") == false
+      }
+    }
     null
   }
 
