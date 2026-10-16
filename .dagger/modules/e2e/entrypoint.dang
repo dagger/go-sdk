@@ -320,6 +320,32 @@ type EntrypointChecks {
     null
   }
 
+  """
+  A function's error reaches its caller with its text, not as the
+  dispatcher's exit code: the check of a module with a Dang entrypoint fails
+  with the error of the module it calls. The called module is a fixture of
+  this repository, since a generated client loads its target from the host.
+  """
+  errorTextCheck(ws: Workspace!): Void @check {
+    let relayPath = outputRoot + "/error-relay"
+    let staged = ws.withDirectory(relayPath, ws.directory("/" + fixtureRoot + "/error/relay"))
+      .withNewFile(relayPath + "/go.mod", "module example.com/error-relay\n\ngo 1.26.1\n")
+      .withNewFile(relayPath + "/dagger-module.toml", "name = \"error-relay\"\n")
+    let relay = goSdk(dangEntrypoint: true, globalClient: true, unifiedClients: true).generateScope(
+      ws: staged.withWorkdir(relayPath), isModule: true, name: "error-relay",
+      clients: [staged.withWorkdir(".").moduleSource("/" + fixtureRoot + "/error/leaf")],
+    )
+    let messages = relay.withWorkdir(".").withModule(relayPath, name: "error-relay")
+      .artifacts(include: ["error-relay:relay-check"]).asChecks
+      .{{ error.{{ message }} }}
+      .map { c => c.error.message ?? "the check passed" }
+    let message = messages.join("")
+    assert("the relayed error lost its text: " + message) {
+      message.contains("error-leaf failed: boom") and message.contains("exit code") == false
+    }
+    null
+  }
+
   """Automatic runner selection preserves existing legacy and custom runners."""
   defaultCompatibilityCheck(ws: Workspace!): Void @check {
     let legacyManifest = "name = 'generate-app'\n[runtime]\nsource = 'go'\n"

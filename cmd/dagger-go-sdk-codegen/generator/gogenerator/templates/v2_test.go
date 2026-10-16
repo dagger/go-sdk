@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"encoding/json"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	. "github.com/dave/jennifer/jen" //nolint:staticcheck
 	"github.com/stretchr/testify/require"
@@ -210,6 +212,42 @@ func DaggerDispatch(ctx context.Context, _ []byte, _, _ string, _ map[string][]b
 	out, err := call.Output()
 	require.NoError(t, err)
 	require.JSONEq(t, `"4bf92f3577b34da6a3ce929d0e0e4736"`, string(out))
+}
+
+// The entrypoint reads only the last 100 KiB of a failed dispatcher's
+// stderr, and the function may have written to it.
+func TestDispatchCommandReportsTheErrorLast(t *testing.T) {
+	binary := buildDispatchCommand(t, "main", `
+import("context";"errors";"fmt";"os";"strings")
+func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string][]byte) (any, error) {
+ fmt.Fprint(os.Stderr, strings.Repeat("a user log line\n", 10000))
+ if fnName == "huge" { return nil, errors.New("abc" + strings.Repeat("\u00e9\x01<", 20000)) }
+ return nil, errors.New("leaf failed:\n boom")
+}
+`)
+	reported := func(fnName string) (string, string) {
+		var stderr strings.Builder
+		call := exec.CommandContext(t.Context(), binary, "engine-call", filepath.Join(t.TempDir(), "result.json"))
+		call.Stdin = strings.NewReader(`{"receiverType":"Hello","fnName":"` + fnName + `","fnArgs":{}}`)
+		call.Stderr = &stderr
+		var exitErr *exec.ExitError
+		require.ErrorAs(t, call.Run(), &exitErr)
+		require.Equal(t, 2, exitErr.ExitCode())
+		lines := strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+		last := lines[len(lines)-1]
+		require.True(t, strings.HasPrefix(last, functionErrorMarker), last)
+		var text string
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(last, functionErrorMarker)), &text))
+		return last, text
+	}
+	_, text := reported("fail")
+	require.Equal(t, "leaf failed:\n boom", text)
+
+	last, text := reported("huge")
+	require.Less(t, len(last), 100<<10)
+	require.True(t, utf8.ValidString(text))
+	require.True(t, strings.HasSuffix(text, "..."))
+	require.True(t, strings.HasPrefix("abc"+strings.Repeat("\u00e9\x01<", 20000), strings.TrimSuffix(text, "...")))
 }
 
 // entrypointFixture covers each part of the entrypoint that varies with the
