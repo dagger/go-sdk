@@ -1,0 +1,11 @@
+"""
+Fails on purpose, for the error text check.
+"""
+type ErrorLeaf {
+  """
+  Fails with a message.
+  """
+  fail: Void {
+    raise "error-leaf failed: boom"
+  }
+}
