@@ -757,6 +757,11 @@ type parseState struct {
 	legacyGoSDKCompat bool
 	objs              []types.Object
 
+	// dependencyTypes are the dependency client types referenced through
+	// global client aliases. The module's schema has no dependencies, so its
+	// API cannot use them; private fields and function bodies can.
+	dependencyTypes map[types.Object]bool
+
 	methods map[string][]method
 
 	// If it exists, constructor is the New func that returns the main module object
@@ -1046,6 +1051,52 @@ func (ps *parseState) commentForFuncField(fnDecl *ast.FuncDecl, unpackedParams [
 		}
 	}
 	return docComment, lineComment
+}
+
+// dependencyAliasReference references a dependency client's type through the
+// alias the global client declares in the module package: as a type of that
+// package, which the generated code spells dagger.<Name>, like the embedded
+// bindings did. The client package itself is not imported there.
+func (ps *parseState) dependencyAliasReference(alias *types.Alias, isPtr bool) ParsedType {
+	named, ok := ps.dependencyAlias(alias)
+	if !ok {
+		return nil
+	}
+	if ps.dependencyTypes == nil {
+		ps.dependencyTypes = map[types.Object]bool{}
+	}
+	ps.dependencyTypes[named.Obj()] = true
+	name := alias.Obj().Name()
+	switch underlying := named.Underlying().(type) {
+	case *types.Struct:
+		return &parsedObjectTypeReference{name: name, isPtr: isPtr, goType: named}
+	case *types.Basic:
+		return &parsedPrimitiveType{goType: underlying, isPtr: isPtr, alias: name, scalarType: named}
+	case *types.Interface:
+		return &parsedIfaceTypeReference{name: name, goType: named}
+	}
+	return nil
+}
+
+// dependencyAlias returns the dependency client type that a global client
+// alias in the module package names.
+func (ps *parseState) dependencyAlias(alias *types.Alias) (*types.Named, bool) {
+	named, ok := types.Unalias(alias).(*types.Named)
+	if !ok || !ps.isDaggerGenerated(alias.Obj()) || !ps.isDependencyClientType(named.Obj()) {
+		return nil, false
+	}
+	return named, true
+}
+
+// isDependencyClientType reports whether obj is declared by a generated
+// dependency client, in internal/dagger/clients/<dependency>/.
+func (ps *parseState) isDependencyClientType(obj types.Object) bool {
+	tokenFile := ps.fset.File(obj.Pos())
+	if tokenFile == nil {
+		return false
+	}
+	filename := filepath.ToSlash(tokenFile.Name())
+	return strings.Contains(filename, "/internal/dagger/clients/") && strings.HasSuffix(filename, ".gen.go")
 }
 
 func (ps *parseState) isDaggerGenerated(obj types.Object) bool {

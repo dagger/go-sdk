@@ -45,6 +45,9 @@ func typeName(spec NamedParsedType) string {
 func (ps *parseState) parseGoTypeReference(typ types.Type, named *types.Named, isPtr bool) (ParsedType, error) {
 	switch t := typ.(type) {
 	case *types.Alias:
+		if ref := ps.dependencyAliasReference(t, isPtr); ref != nil {
+			return ref, nil
+		}
 		typeSpec, err := ps.parseGoTypeReference(t.Rhs(), nil, isPtr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse alias type: %w", err)

@@ -333,6 +333,10 @@ func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, 
 		}
 		if dep, ok := depSymbols[name]; ok {
 			referenced[name], constants[name], owners[name] = true, dep.constant, dep.pkg
+			// Generated code holds an interface value as its client struct.
+			if client, ok := depSymbols[name+"Client"]; ok && !shared[name+"Client"] && client.pkg == dep.pkg {
+				referenced[name+"Client"], constants[name+"Client"], owners[name+"Client"] = true, client.constant, client.pkg
+			}
 		} else if constant, exists := symbols[name]; exists {
 			referenced[name], constants[name] = true, constant
 		}
