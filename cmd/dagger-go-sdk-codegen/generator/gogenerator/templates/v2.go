@@ -395,9 +395,11 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
       fnName: fnName,
       fnArgs: fnArgs,
     }})
+    # A build failure stays out of the rescue below, so it surfaces unchanged.
+    let binary = dispatch.sync
     let result = container
       .from("alpine:3.22")
-      .withFile("/usr/local/bin/dispatch", dispatch, permissions: 755)
+      .withFile("/usr/local/bin/dispatch", binary, permissions: 755)
       .withMountedDirectory("/workspace", currentModule.contextDirectory)
 `)
 	fmt.Fprintf(&b, "      .withWorkdir(%s)\n", workdir)
@@ -408,13 +410,32 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
         experimentalPrivilegedNesting: true,
       )
       .file("/dagger/result.json")
-      .contents
+      .contents rescue {
+        err: GraphQLError => raiseFunctionError(err)
+      }
     (result :: JSON!)
+  }
+
+  # The exec error carries the end of the dispatcher's stderr, where its last
+  # marker line holds the function's error; without one, the exec failed
+  # before the function returned, and its error is raised again.
+  let raiseFunctionError(err: GraphQLError!): String! {
+    let marker = "` + functionErrorMarker + `"
+    let stderr = ((JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? "") rescue ""
+    let lines = stderr.split("\n").filter { line => line.hasPrefix(marker) }
+    if (lines.isEmpty) {
+      raise err
+    }
+    raise ((JSON.decode(lines.takeLast(1).join("").trimPrefix(marker)) :: String!) rescue err.message)
   }
 }
 `)
 	return b.Bytes(), nil
 }
+
+// functionErrorMarker starts the stderr line on which the dispatcher reports
+// the function's error. The function's own output shares that stderr.
+const functionErrorMarker = "::dagger-function-error::"
 
 // writeSources writes the sources function, which returns the module
 // directory and the files its build reads outside it at their paths from the
@@ -825,8 +846,17 @@ func main() {
 	if err != nil { fatalf("%%v", err) }
 }
 
+// fatalf reports the error last on stderr, as one marker line: a failed exec
+// gives the entrypoint only its last 100 KiB of stderr. JSON can encode a
+// byte in six, so 16 KiB of text keeps the line within that.
 func fatalf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	message := fmt.Sprintf(format, args...)
+	reported := message
+	if len(reported) > 16<<10 {
+		reported = strings.ToValidUTF8(reported[:16<<10], "") + "..."
+	}
+	encoded, _ := json.Marshal(reported)
+	fmt.Fprintf(os.Stderr, "%%s\n%%s%%s\n", message, %q, encoded)
 	os.Exit(2)
 }
 
@@ -928,7 +958,7 @@ func findFunction(name string) (functionSpec, error) {
 	if len(found) > 1 { return functionSpec{}, fmt.Errorf("function %%q is ambiguous; use engine-call with receiverType", name) }
 	return found[0], nil
 }
-`, packageImport, table.String())
+`, packageImport, table.String(), functionErrorMarker)
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		source = strings.Replace(source, "\tmodule "+strconv.Quote(packageImport)+"\n", "", 1)
 		source = strings.Replace(source, "module.DaggerDispatch(", "DaggerDispatch(", 1)
