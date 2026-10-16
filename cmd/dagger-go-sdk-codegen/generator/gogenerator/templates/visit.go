@@ -87,6 +87,9 @@ func (funcs goTemplateFuncs) visitTypes(
 			}
 
 			obj := named.Obj()
+			if ps.dependencyTypes[obj] {
+				return fmt.Errorf("the module's API uses %s, a type of a dependency: a module with a Dang entrypoint can hold it only in private fields and function bodies", obj.Name())
+			}
 			basePkg := funcs.modulePkg.Types.Path()
 			if obj.Pkg().Path() != basePkg && !ps.isDaggerGenerated(obj) {
 				// the type must be created in the target package (if not a
