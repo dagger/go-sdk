@@ -243,6 +243,11 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := writeFile(filepath.Join(entrypointDir, "main.dang"), artifacts.EntrypointSource); err != nil {
 		return err
 	}
+	// The dispatcher imports otel-go, which the previous tidy removed with
+	// the bootstrap bindings.
+	if err := pinGeneratedTelemetry(goModPath); err != nil {
+		return err
+	}
 	if err := goModTidy(ctx, root); err != nil {
 		return withWarnings(err, untidied.Warnings)
 	}
