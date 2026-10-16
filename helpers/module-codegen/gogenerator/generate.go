@@ -225,6 +225,18 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := writeFile(dispatchPath, artifacts.DispatchSource); err != nil {
 		return err
 	}
+	// The dispatcher imports otel-go, which the previous tidy removed with
+	// the bootstrap bindings. The collection build below loads the package
+	// with the dispatcher, so go.mod and go.sum must already provide it.
+	if err := pinGeneratedTelemetry(goModPath); err != nil {
+		return err
+	}
+	if err := goModTidy(ctx, root); err != nil {
+		return withWarnings(err, untidied.Warnings)
+	}
+	if err := normalizeGoMod(goModPath); err != nil {
+		return fmt.Errorf("normalize generated go.mod: %w", err)
+	}
 	buildRoot := root
 	if cfg.BuildRoot != "" {
 		buildRoot, err = filepath.Abs(cfg.BuildRoot)
@@ -242,17 +254,6 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	if err := writeFile(filepath.Join(entrypointDir, "main.dang"), artifacts.EntrypointSource); err != nil {
 		return err
-	}
-	// The dispatcher imports otel-go, which the previous tidy removed with
-	// the bootstrap bindings.
-	if err := pinGeneratedTelemetry(goModPath); err != nil {
-		return err
-	}
-	if err := goModTidy(ctx, root); err != nil {
-		return withWarnings(err, untidied.Warnings)
-	}
-	if err := normalizeGoMod(goModPath); err != nil {
-		return fmt.Errorf("normalize generated go.mod: %w", err)
 	}
 	// Introspection loads declarations without function bodies. Compile the
 	// completed dispatcher before committing the staged tree, so a migration

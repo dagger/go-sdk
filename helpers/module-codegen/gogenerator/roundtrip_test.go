@@ -354,6 +354,28 @@ func TestGenerateCollectionModuleWithSources(t *testing.T) {
 	require.NotContains(t, string(out), "__daggerCompilationWorkspace")
 }
 
+// Unified bindings do not import otel-go, so its requirement is gone when the
+// collection runtime loads package main, whose dispatcher imports it.
+func TestGenerateUnifiedCollectionModule(t *testing.T) {
+	root := t.TempDir()
+	writeModuleFiles(t, root, map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.26.1\n",
+		"main.go": "package main\n\ntype App struct{}\n\n" +
+			"func (*App) Items() *Items { return &Items{Keys: []string{\"first\"}} }\n\n" +
+			"// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n" +
+			"// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
+			"type Item struct{ Name string }\n",
+	})
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", DaggerVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26-alpine"}
+	require.NoError(t, Generate(t.Context(), cfg))
+	dispatcher, err := os.ReadFile(filepath.Join(root, "dagger.dispatch.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(dispatcher), `"github.com/dagger/otel-go"`)
+	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
+	require.NoError(t, err)
+	require.Contains(t, string(entrypoint), `.withMountedDirectory("/workspace", collectionContext)`)
+}
+
 // Workspace compilation vendored a discovery tool into the entrypoint
 // directory; generating the module again removes it.
 func TestGenerateRemovesVendoredDiscoveryTool(t *testing.T) {
