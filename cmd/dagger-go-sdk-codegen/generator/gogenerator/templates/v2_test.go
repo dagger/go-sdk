@@ -145,38 +145,49 @@ func TestEntrypointExposesDefaultConstructor(t *testing.T) {
 	require.Equal(t, 1, strings.Count(string(source), ".withConstructor("))
 }
 
+// buildDispatchCommand builds the dispatch command of a module whose
+// DaggerDispatch is the fixture, and returns the binary's path.
+func buildDispatchCommand(t *testing.T, packageName, fixture string) string {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.43.0\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "module.go"), []byte("package "+packageName+"\n"+fixture), 0644))
+	generated, err := (&v2Module{}).renderDispatchSource("hello", "example.com/hello", packageName)
+	require.NoError(t, err)
+	dir := root
+	target := "."
+	if packageName != "main" {
+		dir = filepath.Join(root, "cmd", "hello-dispatch")
+		target = "./cmd/hello-dispatch"
+	}
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dispatch.go"), generated, 0644))
+	tidy := exec.CommandContext(t.Context(), "go", "mod", "tidy")
+	tidy.Dir = root
+	out, err := tidy.CombinedOutput()
+	require.NoError(t, err, string(out))
+	binary := filepath.Join(root, "dispatch")
+	build := exec.CommandContext(t.Context(), "go", "build", "-buildvcs=false", "-o", binary, target)
+	build.Dir = root
+	out, err = build.CombinedOutput()
+	require.NoError(t, err, string(out))
+	return binary
+}
+
 func TestDispatchCommandSeparatesLogsFromResult(t *testing.T) {
 	for _, packageName := range []string{"main", "hello"} {
 		t.Run(packageName, func(t *testing.T) {
-			root := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26\n"), 0644))
-			fixture := "package " + packageName + `
+			binary := buildDispatchCommand(t, packageName, `
 import("context";"fmt")
 func DaggerDispatch(context.Context, []byte, string, string, map[string][]byte) (any, error) {
  fmt.Println("a user log")
  return map[string]bool{"ok": true}, nil
 }
-`
-			require.NoError(t, os.WriteFile(filepath.Join(root, "module.go"), []byte(fixture), 0644))
-			generated, err := (&v2Module{}).renderDispatchSource("hello", "example.com/hello", packageName)
-			require.NoError(t, err)
-			dir := root
-			target := "."
-			if packageName != "main" {
-				dir = filepath.Join(root, "cmd", "hello-dispatch")
-				target = "./cmd/hello-dispatch"
-			}
-			require.NoError(t, os.MkdirAll(dir, 0755))
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "dispatch.go"), generated, 0644))
-			binary := filepath.Join(root, "dispatch")
-			build := exec.CommandContext(t.Context(), "go", "build", "-buildvcs=false", "-o", binary, target)
-			build.Dir = root
-			out, err := build.CombinedOutput()
-			require.NoError(t, err, string(out))
-			resultPath := filepath.Join(root, "output", "result.json")
+`)
+			resultPath := filepath.Join(t.TempDir(), "output", "result.json")
 			call := exec.CommandContext(t.Context(), binary, "engine-call", resultPath)
 			call.Stdin = strings.NewReader(`{"receiverType":"Hello","fnName":"hi","fnArgs":{}}`)
-			out, err = call.CombinedOutput()
+			out, err := call.CombinedOutput()
 			require.NoError(t, err, string(out))
 			require.Equal(t, "a user log\n", string(out))
 			result, err := os.ReadFile(resultPath)
@@ -184,6 +195,21 @@ func DaggerDispatch(context.Context, []byte, string, string, map[string][]byte) 
 			require.JSONEq(t, `{"ok":true}`, string(result))
 		})
 	}
+}
+
+func TestDispatchCommandContinuesEngineTrace(t *testing.T) {
+	binary := buildDispatchCommand(t, "main", `
+import("context";"go.opentelemetry.io/otel/trace")
+func DaggerDispatch(ctx context.Context, _ []byte, _, _ string, _ map[string][]byte) (any, error) {
+ return trace.SpanContextFromContext(ctx).TraceID().String(), nil
+}
+`)
+	call := exec.CommandContext(t.Context(), binary, "engine-call")
+	call.Env = append(os.Environ(), "TRACEPARENT=00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+	call.Stdin = strings.NewReader(`{"receiverType":"Hello","fnName":"hi","fnArgs":{}}`)
+	out, err := call.Output()
+	require.NoError(t, err)
+	require.JSONEq(t, `"4bf92f3577b34da6a3ce929d0e0e4736"`, string(out))
 }
 
 // entrypointFixture covers each part of the entrypoint that varies with the
