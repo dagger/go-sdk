@@ -376,6 +376,27 @@ func TestGenerateUnifiedCollectionModule(t *testing.T) {
 	require.Contains(t, string(entrypoint), `.withMountedDirectory("/workspace", collectionContext)`)
 }
 
+// A module's own check is Check! in the v1 session its bindings run in, so a
+// self-call binding returns *Check.
+func TestGenerateUnifiedModuleProjectsOwnChecks(t *testing.T) {
+	root := t.TempDir()
+	writeModuleFiles(t, root, map[string]string{
+		"go.mod": "module example.com/hello\n\ngo 1.26.1\n",
+		"main.go": "package hello\n\nimport \"context\"\n\ntype Hello struct{}\n\n" +
+			"// +check\nfunc (*Hello) Lint(ctx context.Context) error { return nil }\n\n" +
+			"func (*Hello) Echo(value string) string { return value }\n",
+	})
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", DaggerVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26-alpine"}
+	require.NoError(t, Generate(t.Context(), cfg))
+	self, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "hello.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(self), "func (r *Hello) Lint() *Check")
+	require.Contains(t, string(self), "func (r *Hello) Echo(ctx context.Context, value string) (string, error)")
+	bindings, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "dagger.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(bindings), "type Check = core.Check\n")
+}
+
 // Workspace compilation vendored a discovery tool into the entrypoint
 // directory; generating the module again removes it.
 func TestGenerateRemovesVendoredDiscoveryTool(t *testing.T) {
