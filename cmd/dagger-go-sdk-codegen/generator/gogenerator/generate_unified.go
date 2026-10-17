@@ -27,6 +27,7 @@ import (
 // GenerateUnifiedClient emits module bindings that reuse core's Go types.
 // The generated root owns no engine lifecycle and exposes only module fields.
 func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
+	schema = projectChecks(schema)
 	generator.SetSchemaParents(schema)
 	generator.SetSchema(schema)
 	if g.Config.PackageImport == "" {
@@ -466,4 +467,58 @@ func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, 
 		})
 	}
 	return nil
+}
+
+// projectChecks returns the schema with each check function of an object
+// typed Check!, as a v1 view types it. A unified client runs in a v1 session:
+// the dispatcher's nested session takes the engine's version, and
+// dagger.io/dagger/core is a v1 package. The target's schema can be older,
+// where a check keeps the type its author wrote, so a v1 caller would query a
+// Check without a selection.
+func projectChecks(schema *introspection.Schema) *introspection.Schema {
+	checkRef := &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindObject, Name: "Check"}}
+	projected := *schema
+	projected.Types = make(introspection.Types, 0, len(schema.Types)+1)
+	changed, declared := false, false
+	for _, typ := range schema.Types {
+		if typ.Name == "Check" && typ.Directives.SourceMap() == nil {
+			declared = true
+		}
+		var fields []*introspection.Field
+		for i, field := range typ.Fields {
+			if typ.Kind != introspection.TypeKindObject || field.Directives.Directive("check") == nil {
+				continue
+			}
+			named := field.TypeRef
+			if named.Kind == introspection.TypeKindNonNull {
+				named = named.OfType
+			}
+			if named.Kind == introspection.TypeKindObject && named.Name == "Check" {
+				continue
+			}
+			if fields == nil {
+				fields = make([]*introspection.Field, len(typ.Fields))
+				for j, f := range typ.Fields {
+					copied := *f
+					fields[j] = &copied
+				}
+			}
+			fields[i].TypeRef = checkRef
+		}
+		if fields == nil {
+			projected.Types = append(projected.Types, typ)
+			continue
+		}
+		copied := *typ
+		copied.Fields = fields
+		projected.Types = append(projected.Types, &copied)
+		changed = true
+	}
+	if !changed {
+		return schema
+	}
+	if !declared {
+		projected.Types = append(projected.Types, &introspection.Type{Kind: introspection.TypeKindObject, Name: "Check"})
+	}
+	return &projected
 }
