@@ -141,12 +141,21 @@ func workspaceModule(meta clientMeta) bool {
 // gitSelector returns the version after "@" in a ref of the repository at
 // cloneRef, or false for a ref of another repository.
 func gitSelector(ref, cloneRef string) (string, bool) {
-	rest, ok := strings.CutPrefix(ref, cloneRef)
+	rest, ok := strings.CutPrefix(trimURLScheme(ref), trimURLScheme(cloneRef))
 	if !ok || (rest != "" && rest[0] != '/' && rest[0] != '@') {
 		return "", false
 	}
 	_, selector, _ := strings.Cut(rest, "@")
 	return selector, true
+}
+
+// trimURLScheme drops a URL scheme: a GitHub workspace address has none,
+// while the clone URL of its modules has https://.
+func trimURLScheme(ref string) string {
+	if _, rest, ok := strings.Cut(ref, "://"); ok {
+		return rest
+	}
+	return ref
 }
 
 // localSourceLinks rewrites the links into the workspace commit to the local

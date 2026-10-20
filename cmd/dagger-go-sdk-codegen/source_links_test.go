@@ -189,6 +189,10 @@ func TestWorkspaceModule(t *testing.T) {
 		module := generator.BoundModule{Kind: generator.ModuleKindGit, Path: "app", Ref: "http://h/r.git/app@" + selector, Pin: sha}
 		return clientMeta{Module: module, Workspace: workspaceMeta{Address: address, Commit: commit}, Git: repo}
 	}
+	github := func(address string) clientMeta {
+		module := generator.BoundModule{Kind: generator.ModuleKindGit, Path: "app", Ref: "https://github.com/o/r/app@" + sha, Pin: sha}
+		return clientMeta{Module: module, Workspace: workspaceMeta{Address: address, Commit: sha}, Git: gitMeta{CloneRef: "https://github.com/o/r"}}
+	}
 	for name, test := range map[string]struct {
 		meta clientMeta
 		want bool
@@ -201,6 +205,8 @@ func TestWorkspaceModule(t *testing.T) {
 		"another repository":                  {at("http://h/r.git-fork@"+sha, sha, sha), false},
 		"workspace commit unknown":            {at("http://h/r.git@"+sha, sha, ""), false},
 		"local module in a git workspace":     {clientMeta{Module: generator.BoundModule{Kind: generator.ModuleKindLocal, Path: "app"}, Workspace: workspaceMeta{Address: "http://h/r.git@" + sha, Commit: sha}}, false},
+		"github address without a scheme":     {github("github.com/o/r@" + sha), true},
+		"another host without a scheme":       {github("gitlab.com/o/r@" + sha), false},
 	} {
 		require.Equal(t, test.want, workspaceModule(test.meta), name)
 	}
