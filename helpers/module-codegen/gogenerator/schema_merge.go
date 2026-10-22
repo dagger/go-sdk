@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iancoleman/strcase"
-
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
@@ -41,7 +40,7 @@ func mergeSchema(base *introspection.Response, moduleJSON []byte, moduleName str
 		typ.Directives = append(typ.Directives, sourceMapDirective(moduleName))
 		target.Types = append(target.Types, typ)
 	}
-	if err := mergeQueryConstructor(target, module.Schema, moduleName); err != nil {
+	if err := mergeQueryConstructor(target, module.Schema, moduleName, base.SchemaVersion); err != nil {
 		return nil, err
 	}
 	return merged, nil
@@ -63,12 +62,15 @@ func isModuleDefinedType(typ *introspection.Type) bool {
 	return true
 }
 
-func mergeQueryConstructor(target, module *introspection.Schema, moduleName string) error {
+// mergeQueryConstructor adds the module's constructor to Query, with the
+// names the engine gives it for the schema's version: the emitted module
+// types already use them.
+func mergeQueryConstructor(target, module *introspection.Schema, moduleName, schemaVersion string) error {
 	query := target.Query()
 	if query == nil {
 		return fmt.Errorf("schema has no Query type")
 	}
-	fieldName := strcase.ToLowerCamel(moduleName)
+	fieldName, objectName := templates.ModuleConstructorNames(target, schemaVersion, moduleName)
 	if findField(query, fieldName) != nil {
 		return nil
 	}
@@ -79,7 +81,7 @@ func mergeQueryConstructor(target, module *introspection.Schema, moduleName stri
 			return nil
 		}
 	}
-	mainObject := target.Types.Get(strcase.ToCamel(moduleName))
+	mainObject := target.Types.Get(objectName)
 	if mainObject == nil {
 		return nil
 	}

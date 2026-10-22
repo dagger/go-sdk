@@ -83,6 +83,9 @@ type v2Module struct {
 	functionCases  map[string][]Code
 	implementation *Statement
 	sources        *EntrypointSources
+	// namer names the module's types like the engine, to find its main
+	// object.
+	namer moduleNamer
 }
 
 func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage string, sources *EntrypointSources) (*V2Artifacts, error) {
@@ -93,6 +96,7 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		functionCases:  map[string][]Code{},
 		implementation: Empty(),
 		sources:        sources,
+		namer:          funcs.moduleNamer(),
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -321,7 +325,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 		}
 		// The entrypoint protocol needs an explicit constructor to expose the
 		// module's main object. Match the Go runtime's implicit zero-value New.
-		if obj.constructor == nil && strcase.ToCamel(obj.name) == strcase.ToCamel(moduleName) {
+		if obj.constructor == nil && mod.namer.objectName(obj.name) == mod.namer.objectName(moduleName) {
 			def += "\n  .withConstructor(function(\"\", typeDef.withObject(" + strconv.Quote(obj.name) + ")))"
 		}
 		defs = append(defs, def)

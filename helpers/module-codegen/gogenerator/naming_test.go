@@ -1,0 +1,136 @@
+package gogenerator
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// identifierNamingSchema is moduleContextSchema with Query.formatIdentifiers,
+// which engines serve from the v1.0.0-beta.21 API view: the view whose
+// modules the engine names by engine/naming rather than strcase.
+func identifierNamingSchema(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(moduleContextSchema(t))
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(data, &schema))
+	for _, typ := range schema["__schema"].(map[string]any)["types"].([]any) {
+		typ := typ.(map[string]any)
+		if typ["name"] == "Query" {
+			typ["fields"] = append(typ["fields"].([]any), map[string]any{
+				"name": "formatIdentifiers", "args": []any{},
+				"type": map[string]any{"kind": "NON_NULL", "ofType": map[string]any{"kind": "LIST", "ofType": map[string]any{"kind": "NON_NULL", "ofType": map[string]any{"kind": "SCALAR", "name": "String"}}}},
+			})
+		}
+	}
+	data, err = json.Marshal(schema)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "schema.json")
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+	return path
+}
+
+// acronymModule references core types whose names strcase spells otherwise
+// (JSONValue, LLMMessage) and declares names with acronyms. Generated from a
+// schema the engine names by the new rules, the self-call schema must use the
+// engine's names, or the bindings don't build.
+var acronymModule = map[string]string{
+	"go.mod": "module example.com/app\n\ngo 1.26.1\n",
+	"main.go": `package app
+
+import "example.com/app/internal/dagger"
+
+type MyLlmMod struct{}
+
+type HTTPClient struct {
+	BaseURL string
+}
+
+type Protocol string
+
+const (
+	ProtocolHTTP2 Protocol = "HTTP2"
+	ProtocolTcpIp Protocol = "tcpIp"
+)
+
+func (m *MyLlmMod) Value(value *dagger.JSONValue) *dagger.JSONValue { return value }
+
+func (m *MyLlmMod) Message(message *dagger.LLMMessage) *dagger.LLMMessage { return message }
+
+func (m *MyLlmMod) Client(baseURL string) *HTTPClient { return &HTTPClient{BaseURL: baseURL} }
+
+func (m *MyLlmMod) Protocol(protocol Protocol) Protocol { return protocol }
+
+func (c *HTTPClient) GetURL(path string) string { return c.BaseURL + path }
+`,
+}
+
+func TestGenerateModuleWithEngineNaming(t *testing.T) {
+	root := t.TempDir()
+	writeModuleFiles(t, root, acronymModule)
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	// Generate compiles the dispatcher, with the self-call bindings.
+	require.NoError(t, Generate(t.Context(), cfg))
+
+	// The module's self-call bindings use the engine's names: on the wire,
+	// and in Go.
+	bindings, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "my-llm-mod.gen.go"))
+	require.NoError(t, err)
+	for _, want := range []string{
+		"type MyLLMModHTTPClient struct",
+		`q := r.query.Select("getURL")`,
+		`q = q.Arg("baseURL", baseURL)`,
+		"func (r *MyLLMModHTTPClient) GetURL(",
+		`MyLLMModProtocolTCPIP MyLLMModProtocol = "TCP_IP"`,
+		`MyLLMModProtocolHTTP2 MyLLMModProtocol = "HTTP2"`,
+	} {
+		require.Contains(t, string(bindings), want)
+	}
+	require.NotContains(t, string(bindings), "Httpclient")
+	require.NotContains(t, string(bindings), "Llm")
+
+	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
+	require.NoError(t, err)
+	// The engine names the main object by the new rules: MyLlmMod is the
+	// module's main object, so it gets the implicit constructor.
+	require.Contains(t, string(entrypoint), `.withConstructor(function("", typeDef.withObject("MyLlmMod")))`)
+	// The old spellings of FunctionCachePolicy are valid at every view.
+	require.NotContains(t, string(entrypoint), "PER_SESSION")
+
+	cmd := exec.CommandContext(t.Context(), "go", "run", "-buildvcs=false", "./cmd/my-llm-mod-dispatch", "engine-call")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	cmd.Stdin = strings.NewReader(`{"receiverType":"HTTPClient","receiverValue":{"BaseURL":"https://dagger.io"},"fnName":"GetURL","fnArgs":{"path":"/docs"}}`)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.JSONEq(t, `"https://dagger.io/docs"`, strings.TrimSpace(string(out)))
+}
+
+func TestGenerateModuleWithLegacyNaming(t *testing.T) {
+	root := t.TempDir()
+	module := map[string]string{
+		"go.mod":  acronymModule["go.mod"],
+		"main.go": strings.ReplaceAll(strings.ReplaceAll(acronymModule["main.go"], "*dagger.JSONValue", "*dagger.Directory"), "*dagger.LLMMessage", "*dagger.Container"),
+	}
+	writeModuleFiles(t, root, module)
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.20", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	require.NoError(t, Generate(t.Context(), cfg))
+
+	// Without Query.formatIdentifiers, the names are strcase's, as before.
+	bindings, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "my-llm-mod.gen.go"))
+	require.NoError(t, err)
+	for _, want := range []string{
+		"type MyLLMModHttpclient struct",
+		`q := r.query.Select("getUrl")`,
+		`q = q.Arg("baseUrl", baseUrl)`,
+		`MyLlmModProtocolTcpIp MyLlmModProtocol = "TCP_IP"`,
+	} {
+		require.Contains(t, string(bindings), want)
+	}
+}
