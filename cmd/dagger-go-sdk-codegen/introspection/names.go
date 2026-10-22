@@ -12,7 +12,7 @@ import (
 // Codegen names SDK identifiers like the engine's Query.formatIdentifiers
 // does, with the naming rules of the schema's engine version.
 //
-// The gate is the schema being generated and its version (see
+// The gate is the schema being generated and the engine that served it (see
 // NamesIdentifiers): engines name identifiers with the new rules from
 // v1.0.0-beta.21, and serve Query.formatIdentifiers exactly at those views.
 // Otherwise codegen keeps its legacy converters, so older schemas generate
@@ -50,30 +50,50 @@ func (s *Schema) HasFormatIdentifiers() bool {
 	return false
 }
 
-// IdentifierNamingVersion is the first engine version whose API view names
-// identifiers by engine/naming (engine.IdentifierCasingVersion in
-// dagger/dagger).
+// IdentifierNamingVersion is the first engine version that names identifiers
+// by engine/naming, at the views from that version on
+// (engine.IdentifierCasingVersion in dagger/dagger).
 const IdentifierNamingVersion = "v1.0.0-beta.21"
 
-// NamesIdentifiers reports whether identifiers of the schema, generated for
-// schemaVersion, follow the engine's naming rules: the gate for codegen to
-// apply them. Engines serve Query.formatIdentifiers exactly at those views,
-// from IdentifierNamingVersion on. Released engines before it served the
-// field at every v1.0.0 prerelease view while still naming by strcase, so
-// the version must be at least IdentifierNamingVersion too. An empty or
-// unparseable version is the latest, and only the field decides.
-func (s *Schema) NamesIdentifiers(schemaVersion string) bool {
+// NamesIdentifiers reports whether the schema's identifiers follow the
+// engine's naming rules, served by an engine of engineVersion (Query.version):
+// the gate for codegen to apply them. Engines from IdentifierNamingVersion on
+// serve Query.formatIdentifiers exactly at those views. Released engines
+// before it (v1.0.0-beta.19 and v1.0.0-beta.20) serve the field too, at every
+// v1.0.0 view, while still naming by strcase, and report each of those views
+// as v1.0.0, so the schema can't tell: the engine's version must be at least
+// IdentifierNamingVersion too. An empty or unparseable engine version is
+// unknown, and keeps the legacy names.
+func (s *Schema) NamesIdentifiers(engineVersion string) bool {
 	if !s.HasFormatIdentifiers() {
 		return false
 	}
-	v := schemaVersion
-	if v != "" && !strings.HasPrefix(v, "v") {
+	v, ok := engineReleaseVersion(engineVersion)
+	if !ok {
+		return false
+	}
+	return semver.Compare(v, IdentifierNamingVersion) >= 0
+}
+
+// engineReleaseVersion normalizes an engine's version for comparison: build
+// metadata dropped, and a development build (a prerelease mentioning "dev",
+// such as v1.0.0-dev-123) as its release, like the engine's views treat it.
+func engineReleaseVersion(version string) (string, bool) {
+	v := version
+	if v == "" {
+		return "", false
+	}
+	if !strings.HasPrefix(v, "v") {
 		v = "v" + v
 	}
 	if !semver.IsValid(v) {
-		return true
+		return "", false
 	}
-	return semver.Compare(v, IdentifierNamingVersion) >= 0
+	v = strings.TrimSuffix(v, semver.Build(v))
+	if pre := semver.Prerelease(v); strings.Contains(pre, "dev") {
+		v = strings.TrimSuffix(v, pre)
+	}
+	return v, true
 }
 
 // Names returns the distinct type, field, argument, input field and enum
@@ -115,12 +135,13 @@ func (s *Schema) Names() []string {
 // LoadFormattedNames formats every name of the schema (see Names) in each of
 // formats, with the naming rules of schemaVersion, the version of the schema
 // being generated, and keeps the results on the schema for FormattedName. A
-// schema that doesn't name identifiers by the engine's rules (see
-// NamesIdentifiers) is left as is, so FormattedName reports false and codegen
-// falls back to its legacy converters. It fails for a schema version newer
-// than the rules codegen knows (see naming.CheckKnownVersion).
-func (s *Schema) LoadFormattedNames(schemaVersion string, formats ...NameFormat) error {
-	if !s.NamesIdentifiers(schemaVersion) {
+// schema that doesn't name identifiers by the engine's rules, as served by
+// an engine of engineVersion (see NamesIdentifiers), is left as is, so
+// FormattedName reports false and codegen falls back to its legacy
+// converters. It fails for a schema version newer than the rules codegen
+// knows (see naming.CheckKnownVersion).
+func (s *Schema) LoadFormattedNames(schemaVersion, engineVersion string, formats ...NameFormat) error {
+	if !s.NamesIdentifiers(engineVersion) {
 		return nil
 	}
 	if err := naming.CheckKnownVersion(schemaVersion); err != nil {

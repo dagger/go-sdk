@@ -31,6 +31,7 @@ func runNormalizeSourceLinks(args []string) error {
 	scope := flags.String("scope", ".", "scope directory relative to the workspace root")
 	repo := flags.String("workspace-repo-url", "", "workspace HTML repository URL")
 	pin := flags.String("workspace-pin", "", "workspace commit")
+	engineVersion := flags.String("engine-version", "", "version of the engine that served the schema (Query.version), which decides whether identifiers follow its naming rules")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -48,7 +49,7 @@ func runNormalizeSourceLinks(args []string) error {
 	if response.Schema == nil {
 		return fmt.Errorf("introspection JSON has no __schema")
 	}
-	catalog := newSourceLinkCatalog(response.Schema, response.SchemaVersion)
+	catalog := newSourceLinkCatalog(response.Schema, response.SchemaVersion, generator.Config{EngineVersion: *engineVersion})
 	anchor, err := workspaceSourceLinkAnchor(*repo, *pin)
 	if err != nil {
 		return err
@@ -117,16 +118,14 @@ type sourceLinkCatalog struct {
 	values  map[string]*introspection.SourceMap
 }
 
-func newSourceLinkCatalog(schema *introspection.Schema, version string) sourceLinkCatalog {
+func newSourceLinkCatalog(schema *introspection.Schema, version string, cfg generator.Config) sourceLinkCatalog {
 	generator.SetSchemaParents(schema)
-	// Name declarations like the generator that wrote them, which loaded the
-	// names already when it shares the schema. Rules too new for this copy
-	// only leave their links as they are, so that isn't an error here.
-	if schema.FormattedNames == nil {
-		_ = templates.LoadNames(schema, version, generator.Config{})
-	}
+	// Name declarations like the generator that wrote them, from the same
+	// configuration. Rules too new for this copy only leave their links as
+	// they are, so that isn't an error here.
+	_ = templates.LoadNames(schema, version, cfg)
 	generator.SetSchema(schema)
-	funcs := templates.GoTemplateFuncs(schema, schema, version, generator.Config{})
+	funcs := templates.GoTemplateFuncs(schema, schema, version, cfg)
 	name := funcs["FormatName"].(func(string) string)
 	enum := funcs["FormatEnum"].(func(string, string) string)
 	opts := funcs["FieldOptionsStructName"].(func(introspection.Field, ...string) string)

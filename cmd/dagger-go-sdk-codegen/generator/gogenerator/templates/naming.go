@@ -33,15 +33,16 @@ var (
 var NameFormats = []introspection.NameFormat{pascalNames, camelNames}
 
 // LoadNames formats the names of a schema for Go identifiers, with the rules
-// of its version (cfg.NamingVersion, or schemaVersion), before it is
-// rendered. A schema that doesn't name identifiers by the engine's rules (see
-// introspection.Schema.NamesIdentifiers) keeps the legacy names, and so do
-// core declarations with cfg.LegacyCoreNames.
+// of its version, before it is rendered. A schema that doesn't name
+// identifiers by the engine's rules, as served by an engine of
+// cfg.EngineVersion (see introspection.Schema.NamesIdentifiers), keeps the
+// legacy names, and so do core declarations in unified clients and with
+// cfg.LegacyCoreNames.
 func LoadNames(schema *introspection.Schema, schemaVersion string, cfg generator.Config) error {
-	if err := schema.LoadFormattedNames(namingVersion(cfg, schemaVersion), NameFormats...); err != nil {
+	if err := schema.LoadFormattedNames(schemaVersion, cfg.EngineVersion, NameFormats...); err != nil {
 		return err
 	}
-	if cfg.LegacyCoreNames && schema.FormattedNames != nil {
+	if (cfg.LegacyCoreNames || cfg.UnifiedClient) && schema.FormattedNames != nil {
 		core := coreDeclaredNames(schema)
 		for _, names := range schema.FormattedNames {
 			for name := range core {
@@ -50,15 +51,6 @@ func LoadNames(schema *introspection.Schema, schemaVersion string, cfg generator
 		}
 	}
 	return nil
-}
-
-// namingVersion is the version identifiers are named for (see
-// generator.Config.NamingVersion).
-func namingVersion(cfg generator.Config, schemaVersion string) string {
-	if cfg.NamingVersion != "" {
-		return cfg.NamingVersion
-	}
-	return schemaVersion
 }
 
 // coreDeclaredNames are the names of core declarations: types, fields,

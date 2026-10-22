@@ -38,14 +38,14 @@ type moduleNamer struct {
 }
 
 func (funcs goTemplateFuncs) moduleNamer() moduleNamer {
-	return newModuleNamer(funcs.fullSchema, funcs.schema, namingVersion(funcs.cfg, funcs.schemaVersion))
+	return newModuleNamer(funcs.fullSchema, funcs.schema, funcs.schemaVersion, funcs.cfg.EngineVersion)
 }
 
-func newModuleNamer(fullSchema, schema *introspection.Schema, schemaVersion string) moduleNamer {
+func newModuleNamer(fullSchema, schema *introspection.Schema, schemaVersion, engineVersion string) moduleNamer {
 	if fullSchema != nil {
 		schema = fullSchema
 	}
-	if !schema.NamesIdentifiers(schemaVersion) {
+	if !schema.NamesIdentifiers(engineVersion) {
 		return moduleNamer{schema: schema}
 	}
 	// No version is the latest, as for the engine's views.
@@ -54,9 +54,9 @@ func newModuleNamer(fullSchema, schema *introspection.Schema, schemaVersion stri
 
 // ModuleConstructorNames returns the schema names the engine gives the
 // constructor field of a module and its main object, for a module generated
-// from schema at schemaVersion.
-func ModuleConstructorNames(schema *introspection.Schema, schemaVersion, moduleName string) (field, object string) {
-	n := newModuleNamer(schema, nil, schemaVersion)
+// from schema at schemaVersion, served by an engine of engineVersion.
+func ModuleConstructorNames(schema *introspection.Schema, schemaVersion, engineVersion, moduleName string) (field, object string) {
+	n := newModuleNamer(schema, nil, schemaVersion, engineVersion)
 	return n.fieldName(moduleName), n.objectName(moduleName)
 }
 

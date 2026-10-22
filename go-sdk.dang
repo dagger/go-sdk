@@ -539,6 +539,7 @@ type GoSdk {
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
+      "--engine-version", runningEngineVersion,
       "--go-image", goImage,
       "--dagger-version", if (unified) { runtimeVersion(true) } else { schemaVersion },
       "--unified=" + JSON.encode(unified),
@@ -674,6 +675,16 @@ type GoSdk {
 
   """Directory of the generated Dang entrypoint, relative to the module."""
   let entrypointPath: String! = "internal/dagger/entrypoint"
+
+  """
+  The version of the engine generating, which serves the schemas the
+  generators read. Identifiers follow the engine's naming rules only on
+  engines from v1.0.0-beta.21: older engines serve Query.formatIdentifiers
+  too, but still name by strcase, and their schemas can't tell.
+  """
+  let runningEngineVersion: String! {
+    Dagger.version
+  }
 
   """
   The Dagger version the module's entrypoint is generated for, which its
@@ -832,6 +843,7 @@ type GoSdk {
         "--module-root", "/out",
         "--unified=" + JSON.encode(unified),
         "--removed-list", "/removed-clients.txt",
+        "--engine-version", runningEngineVersion,
       ])
   }
 

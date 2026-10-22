@@ -11,7 +11,7 @@ import (
 
 // mergeSchema is the userland form of core.Schema.Merge. It is kept as a
 // direct port so module self-call bindings use the same schema shape.
-func mergeSchema(base *introspection.Response, moduleJSON []byte, moduleName string) (*introspection.Response, error) {
+func mergeSchema(base *introspection.Response, moduleJSON []byte, moduleName, engineVersion string) (*introspection.Response, error) {
 	if moduleName == "" {
 		return nil, fmt.Errorf("module name is required")
 	}
@@ -40,7 +40,7 @@ func mergeSchema(base *introspection.Response, moduleJSON []byte, moduleName str
 		typ.Directives = append(typ.Directives, sourceMapDirective(moduleName))
 		target.Types = append(target.Types, typ)
 	}
-	if err := mergeQueryConstructor(target, module.Schema, moduleName, base.SchemaVersion); err != nil {
+	if err := mergeQueryConstructor(target, module.Schema, moduleName, base.SchemaVersion, engineVersion); err != nil {
 		return nil, err
 	}
 	return merged, nil
@@ -65,12 +65,12 @@ func isModuleDefinedType(typ *introspection.Type) bool {
 // mergeQueryConstructor adds the module's constructor to Query, with the
 // names the engine gives it for the schema's version: the emitted module
 // types already use them.
-func mergeQueryConstructor(target, module *introspection.Schema, moduleName, schemaVersion string) error {
+func mergeQueryConstructor(target, module *introspection.Schema, moduleName, schemaVersion, engineVersion string) error {
 	query := target.Query()
 	if query == nil {
 		return fmt.Errorf("schema has no Query type")
 	}
-	fieldName, objectName := templates.ModuleConstructorNames(target, schemaVersion, moduleName)
+	fieldName, objectName := templates.ModuleConstructorNames(target, schemaVersion, engineVersion, moduleName)
 	if findField(query, fieldName) != nil {
 		return nil
 	}

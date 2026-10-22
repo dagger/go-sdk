@@ -327,7 +327,9 @@ func TestNamespaceTypeName(t *testing.T) {
 // TestModuleNamerVersions verifies the Go SDK names a module's types the way
 // the engine does for the module: with engine/naming exactly when the schema
 // it generates from has Query.formatIdentifiers, which the engine hides from
-// the views of modules it names with strcase.
+// the views of modules it names with strcase, and the engine is
+// v1.0.0-beta.21 or later: older engines serve the field at every v1.0.0
+// view while still naming by strcase.
 func TestModuleNamerVersions(t *testing.T) {
 	withFormat := &introspection.Schema{
 		QueryType: struct {
@@ -346,27 +348,27 @@ func TestModuleNamerVersions(t *testing.T) {
 		},
 	}
 	for _, tc := range []struct {
-		schemaVersion string
+		engineVersion string
 		schema        *introspection.Schema
 		legacy        bool
 	}{
-		{"", withFormat, false},
 		{"v1.0.0", withFormat, false},
 		{"v1.0.0-beta.21", withFormat, false},
+		{"v1.0.0-beta.21+abc.dirty", withFormat, false},
 		{"v1.0.0-dev-123", withFormat, false},
-		// Released engines before v1.0.0-beta.21 serve the field at every
-		// v1.0.0 prerelease view, and name modules by strcase.
 		{"v1.0.0-beta.20", withFormat, true},
-		{"v1.0.0", withoutFormat, true},
-		{"v0.21.9", withoutFormat, true},
-		{"v1.0.0", nil, true},
+		{"v1.0.0-beta.19", withFormat, true},
+		{"", withFormat, true},
+		{"v1.0.0-beta.21", withoutFormat, true},
+		{"v1.0.0-beta.21", nil, true},
 	} {
 		funcs := goTemplateFuncs{
-			CommonFunctions: generator.NewCommonFunctions(tc.schemaVersion, &FormatTypeFunc{}),
-			schemaVersion:   tc.schemaVersion,
+			CommonFunctions: generator.NewCommonFunctions("v1.0.0", &FormatTypeFunc{}),
+			cfg:             generator.Config{EngineVersion: tc.engineVersion},
+			schemaVersion:   "v1.0.0",
 			schema:          tc.schema,
 		}
-		require.Equal(t, tc.legacy, funcs.moduleNamer().dict == nil, "schema version %q", tc.schemaVersion)
+		require.Equal(t, tc.legacy, funcs.moduleNamer().dict == nil, "engine version %q", tc.engineVersion)
 	}
 
 	latest := moduleNamer{dict: naming.Latest}

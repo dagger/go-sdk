@@ -74,7 +74,7 @@ func (c *HTTPClient) GetURL(path string) string { return c.BaseURL + path }
 func TestGenerateModuleWithEngineNaming(t *testing.T) {
 	root := t.TempDir()
 	writeModuleFiles(t, root, acronymModule)
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", EngineVersion: "v1.0.0-beta.21", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
 	// Generate compiles the dispatcher, with the self-call bindings.
 	require.NoError(t, Generate(t.Context(), cfg))
 
@@ -113,11 +113,13 @@ func TestGenerateModuleWithEngineNaming(t *testing.T) {
 }
 
 func TestGenerateModuleWithLegacyNaming(t *testing.T) {
-	for name, schema := range map[string]string{
-		"without formatIdentifiers": moduleContextSchema(t),
-		// Released engines before v1.0.0-beta.21 serve the field at every
-		// v1.0.0 prerelease view, and still name modules by strcase.
-		"with formatIdentifiers before v1.0.0-beta.21": identifierNamingSchema(t),
+	for name, tc := range map[string]struct{ schema, schemaVersion, engineVersion string }{
+		"without formatIdentifiers": {moduleContextSchema(t), "v1.0.0-beta.20", "v1.0.0-beta.21"},
+		// Released v1.0.0-beta.19 and v1.0.0-beta.20 engines serve the field
+		// at every v1.0.0 view, report each of them as v1.0.0, and still name
+		// modules by strcase.
+		"with formatIdentifiers from a v1.0.0-beta.20 engine": {identifierNamingSchema(t), "v1.0.0", "v1.0.0-beta.20"},
+		"with formatIdentifiers from an unknown engine":       {identifierNamingSchema(t), "v1.0.0", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -126,7 +128,7 @@ func TestGenerateModuleWithLegacyNaming(t *testing.T) {
 				"main.go": strings.ReplaceAll(strings.ReplaceAll(acronymModule["main.go"], "*dagger.JSONValue", "*dagger.Directory"), "*dagger.LLMMessage", "*dagger.Container"),
 			}
 			writeModuleFiles(t, root, module)
-			cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.20", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+			cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: tc.schema, SchemaVersion: tc.schemaVersion, EngineVersion: tc.engineVersion, DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
 			require.NoError(t, Generate(t.Context(), cfg))
 
 			// The names are strcase's, as before.
@@ -171,7 +173,7 @@ func (m *MyLlmMod) Protocol() dagger.NetworkProtocol { return dagger.NetworkProt
 func (m *MyLlmMod) Commit(commit *dagger.GitRef) *dagger.GitRef { return commit }
 `,
 	})
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", DaggerVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26.1-alpine"}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", EngineVersion: "v1.0.0-beta.21", DaggerVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26.1-alpine"}
 	require.NoError(t, Generate(t.Context(), cfg))
 
 	bindings, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "my-llm-mod.gen.go"))
@@ -191,7 +193,7 @@ func TestGenerateModuleWithFlatMainObject(t *testing.T) {
 		"go.mod":  "module example.com/my2go\n\ngo 1.26.1\n",
 		"main.go": "package my2go\n\ntype My2Go struct{}\n\nfunc (m *My2Go) Hello() string { return \"hi\" }\n",
 	})
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my2go", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my2go", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", EngineVersion: "v1.0.0-dev-0123456789ab", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
 	require.NoError(t, Generate(t.Context(), cfg))
 
 	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))

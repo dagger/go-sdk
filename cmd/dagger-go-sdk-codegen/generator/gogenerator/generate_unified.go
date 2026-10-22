@@ -29,10 +29,8 @@ import (
 func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	generator.SetSchemaParents(schema)
 	// Core declarations are aliases of dagger.io/dagger/core, which names
-	// them itself.
-	namingCfg := g.Config
-	namingCfg.LegacyCoreNames = true
-	if err := templates.LoadNames(schema, schemaVersion, namingCfg); err != nil {
+	// them itself: LoadNames keeps their legacy names in unified clients.
+	if err := templates.LoadNames(schema, schemaVersion, g.Config); err != nil {
 		return nil, err
 	}
 	generator.SetSchema(schema)

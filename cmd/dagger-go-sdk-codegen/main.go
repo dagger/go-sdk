@@ -162,12 +162,12 @@ func trimURLScheme(ref string) string {
 // source positions a local workspace generates, so that the client does not
 // change with every commit. Client bindings render those relative to "../..",
 // as moduleRelPath does without a module.
-func localSourceLinks(overlay fs.FS, schema *introspection.Schema, schemaVersion, repo, pin string) (fs.FS, error) {
+func localSourceLinks(overlay fs.FS, schema *introspection.Schema, schemaVersion string, cfg generator.Config, repo, pin string) (fs.FS, error) {
 	anchor, err := workspaceSourceLinkAnchor(repo, pin)
 	if err != nil {
 		return nil, err
 	}
-	catalog := newSourceLinkCatalog(schema, schemaVersion)
+	catalog := newSourceLinkCatalog(schema, schemaVersion, cfg)
 	normalized := memfs.New()
 	err = fs.WalkDir(overlay, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || name == "." {
@@ -213,6 +213,7 @@ func runClient(args []string) error {
 		moduleRoot        = flags.String("module-root", "", "root of the Go module that owns the generated package")
 		unified           = flags.Bool("unified", false, "reuse dagger.io/dagger/core types and a shared session")
 		removedPath       = flags.String("removed-list", "", "append removed generated paths relative to module-root")
+		engineVersion     = flags.String("engine-version", "", "version of the engine that served the schema (Query.version), which decides whether identifiers follow its naming rules")
 	)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -272,9 +273,7 @@ func runClient(args []string) error {
 		PackageImport: packageImport,
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
 		UnifiedClient: *unified,
-		// The bound module's declared version: engines before v1.0.0-beta.21
-		// report the schema of every v1.0.0 prerelease as v1.0.0.
-		NamingVersion: meta.EngineVersion,
+		EngineVersion: *engineVersion,
 	}
 
 	generator.SetSchemaParents(resp.Schema)
@@ -287,7 +286,7 @@ func runClient(args []string) error {
 		return fmt.Errorf("generate client: %w", err)
 	}
 	if inWorkspace {
-		if state.Overlay, err = localSourceLinks(state.Overlay, resp.Schema, resp.SchemaVersion, meta.Git.HTMLRepoURL, pin); err != nil {
+		if state.Overlay, err = localSourceLinks(state.Overlay, resp.Schema, resp.SchemaVersion, cfg, meta.Git.HTMLRepoURL, pin); err != nil {
 			return fmt.Errorf("normalize client source links: %w", err)
 		}
 	}
@@ -376,6 +375,7 @@ func runCore(args []string) error {
 		outputDir         = flags.String("output", ".", "directory of the dagger.io/dagger/core package")
 		dagOutputDir      = flags.String("dag-output", "", "directory of the deprecated dagger.io/dagger/dag package (optional; if empty, do not generate it)")
 		introspectionPath = flags.String("introspection-json-path", "", "optional: read the schema from this introspection JSON file, not from the engine.\nThis is an escape hatch for advanced use. Most users do not need it.")
+		engineVersion     = flags.String("engine-version", "", "with --introspection-json-path: version of the engine that served the schema (Query.version), which decides whether identifiers follow its naming rules")
 	)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -397,9 +397,12 @@ func runCore(args []string) error {
 	}
 
 	ctx := context.Background()
-	schema, schemaVersion, err := loadSchema(ctx, *introspectionPath)
+	schema, schemaVersion, liveEngineVersion, err := loadSchema(ctx, *introspectionPath)
 	if err != nil {
 		return err
+	}
+	if *engineVersion == "" {
+		*engineVersion = liveEngineVersion
 	}
 	generator.SetSchemaParents(schema)
 
@@ -407,6 +410,7 @@ func runCore(args []string) error {
 		OutputDir:     *outputDir,
 		PackageImport: "dagger.io/dagger/core",
 		CoreLibrary:   true,
+		EngineVersion: *engineVersion,
 	}}
 	state, err := gen.GenerateCore(ctx, schema, schemaVersion)
 	if err != nil {
@@ -431,35 +435,40 @@ func runCore(args []string) error {
 }
 
 // loadSchema reads the API schema from an introspection JSON file if path is
-// set. Otherwise it connects to the Dagger engine and introspects it.
-func loadSchema(ctx context.Context, path string) (*introspection.Schema, string, error) {
+// set. Otherwise it connects to the Dagger engine and introspects it, and
+// also returns the engine's version.
+func loadSchema(ctx context.Context, path string) (*introspection.Schema, string, string, error) {
 	if path == "" {
 		dag, err := dagger.Connect(ctx)
 		if err != nil {
-			return nil, "", fmt.Errorf("connect to engine: %w", err)
+			return nil, "", "", fmt.Errorf("connect to engine: %w", err)
 		}
 		defer dag.Close()
 		schema, version, err := introspection.Introspect(ctx, dag)
 		if err != nil {
-			return nil, "", err
+			return nil, "", "", err
 		}
 		if schema == nil {
-			return nil, "", fmt.Errorf("engine returned no schema")
+			return nil, "", "", fmt.Errorf("engine returned no schema")
 		}
-		return schema, version, nil
+		engineVersion, err := introspection.EngineVersion(ctx, dag)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return schema, version, engineVersion, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("read introspection json: %w", err)
+		return nil, "", "", fmt.Errorf("read introspection json: %w", err)
 	}
 	var resp introspection.Response
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, "", fmt.Errorf("unmarshal introspection json: %w", err)
+		return nil, "", "", fmt.Errorf("unmarshal introspection json: %w", err)
 	}
 	if resp.Schema == nil {
-		return nil, "", fmt.Errorf("introspection json has no __schema")
+		return nil, "", "", fmt.Errorf("introspection json has no __schema")
 	}
-	return resp.Schema, resp.SchemaVersion, nil
+	return resp.Schema, resp.SchemaVersion, "", nil
 }
 
 // checkPackageDir makes sure that dir exists and is the directory of the Go
