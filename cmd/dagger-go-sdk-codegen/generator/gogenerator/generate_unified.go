@@ -137,8 +137,16 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 		fmt.Fprintf(&clientInits, ",%sClient:%s.Connect(connection)", dep.qualifier, dep.qualifier)
 	}
 	transport := fmt.Sprintf("dagger.ModuleGraphQLClient(connection, %q, %q)", address, bound.Pin)
-	if address == "" {
+	workspaceHelper := ""
+	switch {
+	case address == "":
 		transport = "defaultOrExplicit(connection)"
+	case bound.Kind != generator.ModuleKindGit:
+		// A module bound by path is in the repository of the calling module.
+		// The transport finds its Git ref at run time, so the generated client
+		// names no commit and does not change from one commit to the next.
+		transport = fmt.Sprintf("workspaceModuleClient(connection, %q)", address)
+		workspaceHelper = templates.WorkspaceModuleHelper
 	}
 	embeddedCore, initQuery := "", "&Query{query:q}"
 	if g.Config.ModuleConfig != nil {
@@ -186,7 +194,8 @@ func assertNotNil(name string,value any){if reflect.ValueOf(value).IsNil(){panic
 func Ref[T core.Loadable[T]](client *Client,id core.ID)T{return core.Ref[T](new(core.Query).WithGraphQLQuery(client.query),id)}
 func Load[T core.Loadable[T]](ctx context.Context,client *Client,id core.ID)(T,error){return core.Load[T](ctx,new(core.Query).WithGraphQLQuery(client.query),id)}
 
-%s`, name, depImports.String(), aliases.String(), clientFields.String(), embeddedCore, transport, initQuery, clientInits.String(), templates.IDMemoHelper)
+%s
+%s`, name, depImports.String(), aliases.String(), clientFields.String(), embeddedCore, transport, initQuery, clientInits.String(), templates.IDMemoHelper, workspaceHelper)
 	formatted, err := imports.Process(filepath.Join(g.Config.OutputDir, "dagger.gen.go"), []byte(source), nil)
 	if err != nil {
 		return nil, err

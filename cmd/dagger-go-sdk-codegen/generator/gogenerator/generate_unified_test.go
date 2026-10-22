@@ -238,7 +238,7 @@ func testUnifiedClientSharesCoreObjects(t *testing.T, schemaVersion string) {
 	require.Contains(t, bindings, "WithGraphQLQuery(q)")
 	require.NotContains(t, bindings, "type Container struct")
 	coreBindings := readOverlay(t, state, "dagger.gen.go")
-	require.Contains(t, coreBindings, `dagger.ModuleGraphQLClient(connection, "/hello", "")`)
+	require.Contains(t, coreBindings, `workspaceModuleClient(connection, "/hello")`)
 	require.NotContains(t, coreBindings, "func (r *Query) Container(")
 	_, err = fs.Stat(state.Overlay, "dag/dag.gen.go")
 	require.ErrorIs(t, err, fs.ErrNotExist)

@@ -138,6 +138,17 @@ func workspaceModule(meta clientMeta) bool {
 	return ok && (workspaceSelector == "" || workspaceSelector == moduleSelector)
 }
 
+// clientBoundModule returns the module a client serves, and whether it is a
+// module of the Git workspace that generates the client. Such a module is
+// bound by its path, as in a local workspace, so that the client does not
+// name the commit; the client finds the commit at run time.
+func clientBoundModule(meta clientMeta) (generator.BoundModule, bool) {
+	if !workspaceModule(meta) {
+		return meta.Module, false
+	}
+	return generator.BoundModule{Kind: generator.ModuleKindLocal, Path: meta.Module.Path}, true
+}
+
 // gitSelector returns the version of a ref of the repository at cloneRef, or
 // false for a ref of another repository. The ref is either in the legacy form
 // (repo/subpath@version) or, since dagger v1.0.0-beta.20, in the explicit Git
@@ -264,10 +275,8 @@ func runClient(args []string) error {
 		return err
 	}
 	pin := meta.Module.Pin
-	inWorkspace := workspaceModule(meta)
-	if inWorkspace {
-		meta.Module = generator.BoundModule{Kind: generator.ModuleKindLocal, Path: meta.Module.Path}
-	}
+	var inWorkspace bool
+	meta.Module, inWorkspace = clientBoundModule(meta)
 
 	packageImport, err := packageImportPath(*moduleRoot, *outputDir)
 	if err != nil {
