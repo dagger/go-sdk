@@ -15,6 +15,7 @@ import (
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"github.com/psanford/memfs"
 	"golang.org/x/mod/modfile"
 )
@@ -22,6 +23,9 @@ import (
 // Generate stages the complete operation, including package loading. Only a
 // successfully generated, collision-checked tree is copied back to the author.
 func Generate(ctx context.Context, cfg GenerateConfig) error {
+	if err := introspection.CheckNamingEngine(cfg.SchemaVersion, cfg.EngineVersion); err != nil {
+		return err
+	}
 	root, err := filepath.Abs(cfg.ModuleRoot)
 	if err != nil {
 		return err

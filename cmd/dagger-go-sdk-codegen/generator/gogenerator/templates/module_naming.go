@@ -24,10 +24,11 @@ import (
 // break: a module named by the new rules that references JSONValue or
 // LLMMessage doesn't build with strcase's JsonValue and LlmMessage.
 //
-// The engine serves a module it names by the legacy rules at a view without
-// Query.formatIdentifiers, so that field's presence in the schema the module
-// is generated from is the gate, the same one the Go identifiers use (see
-// naming.go), and the engine and codegen can't disagree.
+// The gate is the one the Go identifiers use (see naming.go and
+// introspection.Schema.NamesIdentifiers): the schema the module is generated
+// from has Query.formatIdentifiers, which the engine hides from the views of
+// modules it names by the legacy rules, and the engine is v1.0.0-beta.21 or
+// later, since older engines serve the field while still naming by strcase.
 //
 // The zero moduleNamer is the legacy strcase one.
 type moduleNamer struct {

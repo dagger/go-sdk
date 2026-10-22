@@ -112,13 +112,25 @@ func TestGenerateModuleWithEngineNaming(t *testing.T) {
 	require.JSONEq(t, `"https://dagger.io/docs"`, strings.TrimSpace(string(out)))
 }
 
+// A module that declares v1.0.0-beta.21 or later is named by the new rules
+// on the engines it declares. An older engine names by the legacy ones, so
+// generating there would commit bindings that break on those engines.
+func TestGenerateRefusesNamingOnAnOlderEngine(t *testing.T) {
+	root := t.TempDir()
+	writeModuleFiles(t, root, acronymModule)
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", EngineVersion: "v1.0.0-beta.20", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	err := Generate(t.Context(), cfg)
+	require.ErrorContains(t, err, "generate it with Dagger v1.0.0-beta.21 or later")
+	require.NoDirExists(t, filepath.Join(root, "internal"), "a refused module changed")
+}
+
 func TestGenerateModuleWithLegacyNaming(t *testing.T) {
 	for name, tc := range map[string]struct{ schema, schemaVersion, engineVersion string }{
 		"without formatIdentifiers": {moduleContextSchema(t), "v1.0.0-beta.20", "v1.0.0-beta.21"},
 		// Released v1.0.0-beta.19 and v1.0.0-beta.20 engines serve the field
 		// at every v1.0.0 view, report each of them as v1.0.0, and still name
 		// modules by strcase.
-		"with formatIdentifiers from a v1.0.0-beta.20 engine": {identifierNamingSchema(t), "v1.0.0", "v1.0.0-beta.20"},
+		"with formatIdentifiers from a v1.0.0-beta.20 engine": {identifierNamingSchema(t), "v1.0.0-beta.20", "v1.0.0-beta.20"},
 		"with formatIdentifiers from an unknown engine":       {identifierNamingSchema(t), "v1.0.0", ""},
 	} {
 		t.Run(name, func(t *testing.T) {

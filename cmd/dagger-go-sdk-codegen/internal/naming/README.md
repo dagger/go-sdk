@@ -3,7 +3,7 @@
 A copy of the Dagger engine's identifier naming rules,
 [`engine/naming`](https://github.com/dagger/dagger/tree/main/engine/naming),
 which Go codegen uses to name identifiers like the engine does for schemas
-that have `Query.formatIdentifiers` (engine API views from v1.0.0-beta.21).
+that have `Query.formatIdentifiers`, served by engines from v1.0.0-beta.21.
 
 The generators run without an engine connection, and a module's own types
 are only known after its Go package has been analyzed, so they can't ask the

@@ -1,6 +1,7 @@
 package introspection
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -14,7 +15,8 @@ import (
 //
 // The gate is the schema being generated and the engine that served it (see
 // NamesIdentifiers): engines name identifiers with the new rules from
-// v1.0.0-beta.21, and serve Query.formatIdentifiers exactly at those views.
+// v1.0.0-beta.21, at the views with Query.formatIdentifiers; older engines
+// serve the field too, but still name by the legacy rules.
 // Otherwise codegen keeps its legacy converters, so older schemas generate
 // byte-identical code.
 //
@@ -73,6 +75,23 @@ func (s *Schema) NamesIdentifiers(engineVersion string) bool {
 		return false
 	}
 	return semver.Compare(v, IdentifierNamingVersion) >= 0
+}
+
+// CheckNamingEngine refuses to generate for a declared schema version that
+// engines from IdentifierNamingVersion name by the new rules on a known
+// older engine, which names by the legacy ones: the bindings would not match
+// the names the module gets on the engines it declares. An unknown engine or
+// declared version passes.
+func CheckNamingEngine(schemaVersion, engineVersion string) error {
+	engine, ok := engineReleaseVersion(engineVersion)
+	if !ok || semver.Compare(engine, IdentifierNamingVersion) >= 0 {
+		return nil
+	}
+	declared, ok := engineReleaseVersion(schemaVersion)
+	if !ok || semver.Compare(declared, IdentifierNamingVersion) < 0 {
+		return nil
+	}
+	return fmt.Errorf("the module declares Dagger %s, which names its identifiers by rules this Dagger engine (%s) doesn't apply; generate it with Dagger %s or later", schemaVersion, engineVersion, IdentifierNamingVersion)
 }
 
 // engineReleaseVersion normalizes an engine's version for comparison: build

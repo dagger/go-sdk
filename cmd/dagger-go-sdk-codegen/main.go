@@ -375,7 +375,7 @@ func runCore(args []string) error {
 		outputDir         = flags.String("output", ".", "directory of the dagger.io/dagger/core package")
 		dagOutputDir      = flags.String("dag-output", "", "directory of the deprecated dagger.io/dagger/dag package (optional; if empty, do not generate it)")
 		introspectionPath = flags.String("introspection-json-path", "", "optional: read the schema from this introspection JSON file, not from the engine.\nThis is an escape hatch for advanced use. Most users do not need it.")
-		engineVersion     = flags.String("engine-version", "", "with --introspection-json-path: version of the engine that served the schema (Query.version), which decides whether identifiers follow its naming rules")
+		engineVersion     = flags.String("engine-version", "", "version of the engine that served the schema (Query.version): from v1.0.0-beta.21, name identifiers by its rules.\nUnset keeps the legacy names, which unified clients alias from dagger.io/dagger/core.")
 	)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -397,12 +397,9 @@ func runCore(args []string) error {
 	}
 
 	ctx := context.Background()
-	schema, schemaVersion, liveEngineVersion, err := loadSchema(ctx, *introspectionPath)
+	schema, schemaVersion, err := loadSchema(ctx, *introspectionPath)
 	if err != nil {
 		return err
-	}
-	if *engineVersion == "" {
-		*engineVersion = liveEngineVersion
 	}
 	generator.SetSchemaParents(schema)
 
@@ -435,40 +432,35 @@ func runCore(args []string) error {
 }
 
 // loadSchema reads the API schema from an introspection JSON file if path is
-// set. Otherwise it connects to the Dagger engine and introspects it, and
-// also returns the engine's version.
-func loadSchema(ctx context.Context, path string) (*introspection.Schema, string, string, error) {
+// set. Otherwise it connects to the Dagger engine and introspects it.
+func loadSchema(ctx context.Context, path string) (*introspection.Schema, string, error) {
 	if path == "" {
 		dag, err := dagger.Connect(ctx)
 		if err != nil {
-			return nil, "", "", fmt.Errorf("connect to engine: %w", err)
+			return nil, "", fmt.Errorf("connect to engine: %w", err)
 		}
 		defer dag.Close()
 		schema, version, err := introspection.Introspect(ctx, dag)
 		if err != nil {
-			return nil, "", "", err
+			return nil, "", err
 		}
 		if schema == nil {
-			return nil, "", "", fmt.Errorf("engine returned no schema")
+			return nil, "", fmt.Errorf("engine returned no schema")
 		}
-		engineVersion, err := introspection.EngineVersion(ctx, dag)
-		if err != nil {
-			return nil, "", "", err
-		}
-		return schema, version, engineVersion, nil
+		return schema, version, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("read introspection json: %w", err)
+		return nil, "", fmt.Errorf("read introspection json: %w", err)
 	}
 	var resp introspection.Response
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, "", "", fmt.Errorf("unmarshal introspection json: %w", err)
+		return nil, "", fmt.Errorf("unmarshal introspection json: %w", err)
 	}
 	if resp.Schema == nil {
-		return nil, "", "", fmt.Errorf("introspection json has no __schema")
+		return nil, "", fmt.Errorf("introspection json has no __schema")
 	}
-	return resp.Schema, resp.SchemaVersion, "", nil
+	return resp.Schema, resp.SchemaVersion, nil
 }
 
 // checkPackageDir makes sure that dir exists and is the directory of the Go

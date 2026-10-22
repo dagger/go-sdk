@@ -12,11 +12,12 @@ import (
 
 // Go identifiers are schema names formatted like the engine's
 // Query.formatIdentifiers formats them, when the schema being generated has
-// that field (engine API views v1.0.0-beta.21 and later), loaded onto the
-// schema in NameFormats before rendering (see LoadNames). When a name has no
-// format (an older schema, or a name that isn't one of the schema's names),
-// the legacy conversions apply: golint's initialisms for names, strcase for
-// enum values.
+// that field and the engine that served it is v1.0.0-beta.21 or later (see
+// introspection.Schema.NamesIdentifiers), loaded onto the schema in
+// NameFormats before rendering (see LoadNames). When a name has no format
+// (an older schema or engine, or a name that isn't one of the schema's
+// names), the legacy conversions apply: golint's initialisms for names,
+// strcase for enum values.
 //
 // Only Go identifiers go through here. Strings sent over the wire (selected
 // fields, argument names, enum values, GraphQL type names) always use the
@@ -54,8 +55,13 @@ func LoadNames(schema *introspection.Schema, schemaVersion string, cfg generator
 }
 
 // coreDeclaredNames are the names of core declarations: types, fields,
-// arguments, input fields and enum values that no module declares. A name
-// both core and a module declare counts as core's.
+// arguments, input fields and enum values. A unified module's bootstrap
+// bindings declare all of core, which author code compiles against before
+// the final bindings alias it from dagger.io/dagger/core, so all of core
+// keeps its legacy names. Names are formatted by name, not by declaration:
+// a module declaration named like a core one keeps its legacy Go name too
+// (a module field shortSha is ShortSha), in the bootstrap and the final
+// bindings alike.
 func coreDeclaredNames(schema *introspection.Schema) map[string]bool {
 	names := map[string]bool{}
 	for _, t := range schema.Types {
