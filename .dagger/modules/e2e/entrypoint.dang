@@ -113,6 +113,29 @@ type EntrypointChecks {
       recovered.changes(generated).isEmpty
     }
 
+    let config = "internal/dagger/entrypoint/dang.toml"
+    assert("the entrypoint does not declare its versions") {
+      generated.file(config).contents.contains("\ndang = \"2.1\"\n\n[imports.Dagger]\ndagger = \"v")
+    }
+    # An entrypoint generated before dang.toml declares nothing, and engines
+    # serve it v1.0.0-beta.20: generating it again keeps that version.
+    let undeclared = goSdk.generateScope(
+      ws: generated.withoutFile(config),
+      isModule: true, name: "entrypoint-init", clients: [],
+    )
+    assert("an existing entrypoint without dang.toml did not keep v1.0.0-beta.20") {
+      undeclared.file(config).contents.contains("\ndagger = \"v1.0.0-beta.20\"\n")
+    }
+    # A declared version is the module's: generation keeps the file as it is.
+    let pinned = "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = \"v1.0.0-beta.18\" # pinned\n"
+    let kept = goSdk.generateScope(
+      ws: generated.withNewFile(config, pinned),
+      isModule: true, name: "entrypoint-init", clients: [],
+    )
+    assert("generation rewrote a declared dang.toml") {
+      kept.file(config).contents == pinned
+    }
+
     # A binding an earlier schema generated is removed from the workspace. A
     # user file next to it is not generated code, so it stays.
     let userBinding = "package dagger\n\nfunc userHelper() {}\n"
