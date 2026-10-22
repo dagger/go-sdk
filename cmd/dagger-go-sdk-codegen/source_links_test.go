@@ -231,3 +231,26 @@ func TestLocalSourceLinks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "{}\n", string(data))
 }
+
+func TestWorkspaceModuleExplicitGitURL(t *testing.T) {
+	const sha = "419c4afea78603265c40e273c455623a0291922e"
+	meta := func(ref, cloneRef, address string) clientMeta {
+		module := generator.BoundModule{Kind: generator.ModuleKindGit, Path: "app", Ref: ref, Pin: sha}
+		return clientMeta{Module: module, Workspace: workspaceMeta{Address: address, Commit: sha}, Git: gitMeta{CloneRef: cloneRef}}
+	}
+	for name, tc := range map[string]struct {
+		meta clientMeta
+		want bool
+	}{
+		"github workspace":          {meta("https://github.com/o/r#"+sha+":app", "https://github.com/o/r", "github.com/o/r@"+sha), true},
+		"git server workspace":      {meta("http://h/r.git#"+sha+":app", "http://h/r.git", "http://h/r.git@"+sha), true},
+		"branch selector":           {meta("http://h/r.git#main:app", "http://h/r.git", "http://h/r.git@main"), true},
+		"another selector":          {meta("http://h/r.git#release:app", "http://h/r.git", "http://h/r.git@main"), false},
+		"another repository":        {meta("https://github.com/o/r-fork#"+sha+":app", "https://github.com/o/r-fork", "github.com/o/r@"+sha), false},
+		"explicit form at the root": {meta("https://github.com/o/r#"+sha, "https://github.com/o/r", "github.com/o/r@"+sha), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, workspaceModule(tc.meta))
+		})
+	}
+}
