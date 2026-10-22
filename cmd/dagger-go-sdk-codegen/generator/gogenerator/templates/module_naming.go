@@ -38,14 +38,14 @@ type moduleNamer struct {
 }
 
 func (funcs goTemplateFuncs) moduleNamer() moduleNamer {
-	return newModuleNamer(funcs.fullSchema, funcs.schema, funcs.schemaVersion)
+	return newModuleNamer(funcs.fullSchema, funcs.schema, namingVersion(funcs.cfg, funcs.schemaVersion))
 }
 
 func newModuleNamer(fullSchema, schema *introspection.Schema, schemaVersion string) moduleNamer {
 	if fullSchema != nil {
 		schema = fullSchema
 	}
-	if !schema.HasFormatIdentifiers() {
+	if !schema.NamesIdentifiers(schemaVersion) {
 		return moduleNamer{schema: schema}
 	}
 	// No version is the latest, as for the engine's views.
@@ -159,13 +159,67 @@ func (n moduleNamer) namespaceTypeName(typeName, moduleName string) string {
 		return n.objectName(moduleName + "_" + typeName)
 	}
 	// The prefix check compares words, so it only matches on a word
-	// boundary.
+	// boundary. The words may be cut differently in the type's and the
+	// module's spelling around digits and acronyms (K8STools in module
+	// k8s-tools, My2Go in module my2go), so failing that, words that spell
+	// the module's name once flattened count as the prefix too.
 	words := typ.Words
 	if hasWordPrefix(typ.Words, mod.Words) {
 		words = typ.Words[len(mod.Words):]
+	} else if k := flatWordPrefix(typ.Words, flatName(moduleName)); k >= 0 {
+		words = typ.Words[k:]
 	}
 	words = append(append([]naming.Word(nil), mod.Words...), words...)
 	return naming.Identifier{Words: words}.Format(naming.Pascal, naming.Uppercase)
+}
+
+// sameDeclaredName mirrors the engine's Namer.SameDeclaredName: whether a and
+// b, two spellings of a declared name, name the same thing, such as a module's
+// name and its main type. They normalize to the same schema name, or, with
+// the engine/naming rules, they're the same once flattened: a template may
+// spell the main type differently around digits and acronyms than the
+// module's name (K8STools for k8s-tools, My2Go for my2go), which strcase
+// happened to normalize alike but engine/naming doesn't.
+func (n moduleNamer) sameDeclaredName(a, b string) bool {
+	if n.objectName(a) == n.objectName(b) {
+		return true
+	}
+	return n.dict != nil && flatName(a) != "" && flatName(a) == flatName(b)
+}
+
+// flatName is name lowercased, with everything but ASCII letters and digits
+// dropped: the spelling every casing of a name shares.
+func flatName(name string) string {
+	var b strings.Builder
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case 'a' <= c && c <= 'z', '0' <= c && c <= '9':
+			b.WriteByte(c)
+		case 'A' <= c && c <= 'Z':
+			b.WriteByte(c + 'a' - 'A')
+		}
+	}
+	return b.String()
+}
+
+// flatWordPrefix returns how many of words, flattened and joined, spell
+// prefix exactly, ending on a word boundary; or -1.
+func flatWordPrefix(words []naming.Word, prefix string) int {
+	if prefix == "" {
+		return -1
+	}
+	var spelled string
+	for i, w := range words {
+		spelled += flatName(w.Text + w.Suffix)
+		switch {
+		case spelled == prefix:
+			return i + 1
+		case len(spelled) >= len(prefix) || !strings.HasPrefix(prefix, spelled):
+			return -1
+		}
+	}
+	return -1
 }
 
 func hasWordPrefix(words, prefix []naming.Word) bool {

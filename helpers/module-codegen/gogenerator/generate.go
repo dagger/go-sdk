@@ -138,7 +138,10 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		OutputDir:     root,
 		UnifiedClient: cfg.UnifiedClient,
 		GlobalClient:  cfg.GlobalClient,
-		ClientConfig:  &generator.ClientGeneratorConfig{},
+		// The bootstrap of a unified module declares the core names its
+		// final bindings alias from dagger.io/dagger/core.
+		LegacyCoreNames: cfg.UnifiedClient,
+		ClientConfig:    &generator.ClientGeneratorConfig{},
 		ModuleConfig: &generator.ModuleGeneratorConfig{
 			ModuleName: cfg.ModuleName,
 			LibVersion: cfg.DaggerVersion,

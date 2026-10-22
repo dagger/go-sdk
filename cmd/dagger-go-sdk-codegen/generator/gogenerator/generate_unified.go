@@ -28,7 +28,11 @@ import (
 // The generated root owns no engine lifecycle and exposes only module fields.
 func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	generator.SetSchemaParents(schema)
-	if err := templates.LoadNames(schema, schemaVersion); err != nil {
+	// Core declarations are aliases of dagger.io/dagger/core, which names
+	// them itself.
+	namingCfg := g.Config
+	namingCfg.LegacyCoreNames = true
+	if err := templates.LoadNames(schema, schemaVersion, namingCfg); err != nil {
 		return nil, err
 	}
 	generator.SetSchema(schema)

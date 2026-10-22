@@ -74,6 +74,15 @@ func TestIdentifierNamingGate(t *testing.T) {
 		require.Equal(t, string(want), got)
 	})
 
+	t.Run("with formatIdentifiers before v1.0.0-beta.21", func(t *testing.T) {
+		// Released engines before v1.0.0-beta.21 serve the field at every
+		// v1.0.0 prerelease view, and still name by the legacy rules.
+		got, err := generateCoreFile(t, coreSchema(t, true), "v1.0.0-beta.20")
+		require.NoError(t, err)
+		require.Contains(t, got, "func (r *GitCommit) ShortSha(ctx context.Context) (string, error) {")
+		require.Contains(t, got, "NetworkProtocolTcp NetworkProtocol")
+	})
+
 	t.Run("with formatIdentifiers", func(t *testing.T) {
 		got, err := generateCoreFile(t, coreSchema(t, true), "v1.0.0-beta.21")
 		require.NoError(t, err)

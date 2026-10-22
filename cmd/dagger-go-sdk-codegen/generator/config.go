@@ -31,6 +31,19 @@ type Config struct {
 	// dagger.io/dagger/core package, and the deprecated dagger.io/dagger/dag
 	// package that forwards to it.
 	CoreLibrary bool
+
+	// NamingVersion is the engine version the schema's identifiers are named
+	// for, when the schema's own version is less precise: engines before
+	// v1.0.0-beta.21 report v1.0.0 for every v1.0.0 prerelease view. Empty
+	// uses the schema version.
+	NamingVersion string
+
+	// LegacyCoreNames keeps the legacy Go names of core declarations when the
+	// schema names identifiers by the engine's rules: the generated package
+	// aliases them from a published dagger.io/dagger/core, whose names it
+	// doesn't choose. Unified clients, and the bootstrap of a unified module,
+	// set it.
+	LegacyCoreNames bool
 }
 
 // Specific configuration for module generation.

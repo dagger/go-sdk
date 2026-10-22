@@ -23,7 +23,7 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 	if g.Config.UnifiedClient {
 		return g.GenerateUnifiedClient(ctx, schema, schemaVersion)
 	}
-	if err := templates.LoadNames(schema, schemaVersion); err != nil {
+	if err := templates.LoadNames(schema, schemaVersion, g.Config); err != nil {
 		return nil, err
 	}
 	generator.SetSchema(schema)

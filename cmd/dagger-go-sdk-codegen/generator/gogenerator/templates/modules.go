@@ -778,7 +778,7 @@ type parseState struct {
 }
 
 func (ps *parseState) isMainModuleObject(name string) bool {
-	return ps.namer.objectName(ps.moduleName) == ps.namer.objectName(name)
+	return ps.namer.sameDeclaredName(ps.moduleName, name)
 }
 
 // pkgDoc returns the package level documentation comment, if any,

@@ -419,6 +419,10 @@ func (funcs goTemplateFuncs) ModuleIntrospectionJSON(moduleName string) ([]byte,
 
 	n := funcs.moduleNamer()
 	mainObjName := n.objectName(moduleName)
+	// Like the engine, a type that normalizes to the module's name is its main
+	// object, and failing that, the one type that matches it flattened (see
+	// moduleNamer.sameDeclaredName).
+	var flatMainObjects []*parsedObjectType
 
 	err := funcs.visitTypes(false, &visitorFuncs{
 		RootVisitor: func(_ string) error { return nil },
@@ -437,6 +441,8 @@ func (funcs goTemplateFuncs) ModuleIntrospectionJSON(moduleName string) ([]byte,
 			}
 			if n.objectName(spec.name) == mainObjName {
 				mainObject = spec
+			} else if n.sameDeclaredName(spec.name, moduleName) {
+				flatMainObjects = append(flatMainObjects, spec)
 			}
 			return nil
 		},
@@ -452,6 +458,9 @@ func (funcs goTemplateFuncs) ModuleIntrospectionJSON(moduleName string) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("visit module types: %w", err)
 	}
+	if mainObject == nil && len(flatMainObjects) == 1 {
+		mainObject = flatMainObjects[0]
+	}
 
 	// A module type whose namespaced name is already taken by a core or
 	// dependency type cannot be installed — the engine rejects the module at
@@ -461,7 +470,7 @@ func (funcs goTemplateFuncs) ModuleIntrospectionJSON(moduleName string) ([]byte,
 	kept := moduleTypes[:0]
 	for _, t := range moduleTypes {
 		if funcs.schema != nil && funcs.schema.Types.Get(t.Name) != nil {
-			if mainObject != nil && n.objectName(mainObject.name) == t.Name {
+			if mainObject != nil && n.typeName(mainObject.name, mainObject.moduleName) == t.Name {
 				mainObject = nil
 			}
 			continue

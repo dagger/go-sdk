@@ -33,10 +33,68 @@ var (
 var NameFormats = []introspection.NameFormat{pascalNames, camelNames}
 
 // LoadNames formats the names of a schema for Go identifiers, with the rules
-// of its version, before it is rendered. A schema without
-// Query.formatIdentifiers keeps the legacy names.
-func LoadNames(schema *introspection.Schema, schemaVersion string) error {
-	return schema.LoadFormattedNames(schemaVersion, NameFormats...)
+// of its version (cfg.NamingVersion, or schemaVersion), before it is
+// rendered. A schema that doesn't name identifiers by the engine's rules (see
+// introspection.Schema.NamesIdentifiers) keeps the legacy names, and so do
+// core declarations with cfg.LegacyCoreNames.
+func LoadNames(schema *introspection.Schema, schemaVersion string, cfg generator.Config) error {
+	if err := schema.LoadFormattedNames(namingVersion(cfg, schemaVersion), NameFormats...); err != nil {
+		return err
+	}
+	if cfg.LegacyCoreNames && schema.FormattedNames != nil {
+		core := coreDeclaredNames(schema)
+		for _, names := range schema.FormattedNames {
+			for name := range core {
+				delete(names, name)
+			}
+		}
+	}
+	return nil
+}
+
+// namingVersion is the version identifiers are named for (see
+// generator.Config.NamingVersion).
+func namingVersion(cfg generator.Config, schemaVersion string) string {
+	if cfg.NamingVersion != "" {
+		return cfg.NamingVersion
+	}
+	return schemaVersion
+}
+
+// coreDeclaredNames are the names of core declarations: types, fields,
+// arguments, input fields and enum values that no module declares. A name
+// both core and a module declare counts as core's.
+func coreDeclaredNames(schema *introspection.Schema) map[string]bool {
+	names := map[string]bool{}
+	for _, t := range schema.Types {
+		if moduleOwned(t.Directives) {
+			continue
+		}
+		names[t.Name] = true
+		for _, f := range t.Fields {
+			if moduleOwned(f.Directives) {
+				continue
+			}
+			names[f.Name] = true
+			for _, arg := range f.Args {
+				names[arg.Name] = true
+			}
+		}
+		for _, f := range t.InputFields {
+			names[f.Name] = true
+		}
+		for _, v := range t.EnumValues {
+			names[v.Name] = true
+		}
+	}
+	return names
+}
+
+// moduleOwned reports whether directives mark a module's declaration: the
+// engine gives every module typedef a @sourceMap naming its module.
+func moduleOwned(directives introspection.Directives) bool {
+	source := directives.SourceMap()
+	return source != nil && source.Module != ""
 }
 
 // engineName returns a schema name formatted in f, if the schema being

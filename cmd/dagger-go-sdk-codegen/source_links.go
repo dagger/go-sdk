@@ -119,10 +119,12 @@ type sourceLinkCatalog struct {
 
 func newSourceLinkCatalog(schema *introspection.Schema, version string) sourceLinkCatalog {
 	generator.SetSchemaParents(schema)
-	// Name declarations like the generator that wrote them. Rules too new for
-	// this copy only leave their links as they are, so that isn't an error
-	// here.
-	_ = templates.LoadNames(schema, version)
+	// Name declarations like the generator that wrote them, which loaded the
+	// names already when it shares the schema. Rules too new for this copy
+	// only leave their links as they are, so that isn't an error here.
+	if schema.FormattedNames == nil {
+		_ = templates.LoadNames(schema, version, generator.Config{})
+	}
 	generator.SetSchema(schema)
 	funcs := templates.GoTemplateFuncs(schema, schema, version, generator.Config{})
 	name := funcs["FormatName"].(func(string) string)

@@ -272,6 +272,9 @@ func runClient(args []string) error {
 		PackageImport: packageImport,
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
 		UnifiedClient: *unified,
+		// The bound module's declared version: engines before v1.0.0-beta.21
+		// report the schema of every v1.0.0 prerelease as v1.0.0.
+		NamingVersion: meta.EngineVersion,
 	}
 
 	generator.SetSchemaParents(resp.Schema)

@@ -113,24 +113,94 @@ func TestGenerateModuleWithEngineNaming(t *testing.T) {
 }
 
 func TestGenerateModuleWithLegacyNaming(t *testing.T) {
-	root := t.TempDir()
-	module := map[string]string{
-		"go.mod":  acronymModule["go.mod"],
-		"main.go": strings.ReplaceAll(strings.ReplaceAll(acronymModule["main.go"], "*dagger.JSONValue", "*dagger.Directory"), "*dagger.LLMMessage", "*dagger.Container"),
+	for name, schema := range map[string]string{
+		"without formatIdentifiers": moduleContextSchema(t),
+		// Released engines before v1.0.0-beta.21 serve the field at every
+		// v1.0.0 prerelease view, and still name modules by strcase.
+		"with formatIdentifiers before v1.0.0-beta.21": identifierNamingSchema(t),
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			module := map[string]string{
+				"go.mod":  acronymModule["go.mod"],
+				"main.go": strings.ReplaceAll(strings.ReplaceAll(acronymModule["main.go"], "*dagger.JSONValue", "*dagger.Directory"), "*dagger.LLMMessage", "*dagger.Container"),
+			}
+			writeModuleFiles(t, root, module)
+			cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.20", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+			require.NoError(t, Generate(t.Context(), cfg))
+
+			// The names are strcase's, as before.
+			bindings, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "my-llm-mod.gen.go"))
+			require.NoError(t, err)
+			for _, want := range []string{
+				"type MyLLMModHttpclient struct",
+				`q := r.query.Select("getUrl")`,
+				`q = q.Arg("baseUrl", baseUrl)`,
+				`MyLlmModProtocolTcpIp MyLlmModProtocol = "TCP_IP"`,
+			} {
+				require.Contains(t, string(bindings), want)
+			}
+			core, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "dagger.gen.go"))
+			require.NoError(t, err)
+			require.Contains(t, string(core), "NetworkProtocolTcp NetworkProtocol")
+		})
 	}
-	writeModuleFiles(t, root, module)
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.20", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+}
+
+// A unified module aliases core from the published dagger.io/dagger/core,
+// whose names predate the new rules: core keeps its names, the module's own
+// get the new ones.
+func TestGenerateUnifiedModuleWithEngineNaming(t *testing.T) {
+	root := t.TempDir()
+	writeModuleFiles(t, root, map[string]string{
+		"go.mod": acronymModule["go.mod"],
+		"main.go": `package app
+
+import "example.com/app/internal/dagger"
+
+type MyLlmMod struct{}
+
+type HTTPClient struct {
+	BaseURL string
+}
+
+func (m *MyLlmMod) Client(baseURL string) *HTTPClient { return &HTTPClient{BaseURL: baseURL} }
+
+func (m *MyLlmMod) Protocol() dagger.NetworkProtocol { return dagger.NetworkProtocolTcp }
+
+func (m *MyLlmMod) Commit(commit *dagger.GitRef) *dagger.GitRef { return commit }
+`,
+	})
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my-llm-mod", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", DaggerVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26.1-alpine"}
 	require.NoError(t, Generate(t.Context(), cfg))
 
-	// Without Query.formatIdentifiers, the names are strcase's, as before.
 	bindings, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "my-llm-mod.gen.go"))
 	require.NoError(t, err)
-	for _, want := range []string{
-		"type MyLLMModHttpclient struct",
-		`q := r.query.Select("getUrl")`,
-		`q = q.Arg("baseUrl", baseUrl)`,
-		`MyLlmModProtocolTcpIp MyLlmModProtocol = "TCP_IP"`,
-	} {
-		require.Contains(t, string(bindings), want)
-	}
+	require.Contains(t, string(bindings), "type MyLLMModHTTPClient struct")
+	core, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "dagger.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(core), "const NetworkProtocolTcp = core.NetworkProtocolTcp")
+}
+
+// The engine finds a module's main object by its name flattened when the
+// type and the module cut words differently around digits (dagger/dagger
+// core.Namer.SameDeclaredName): My2Go is module my2go's main object.
+func TestGenerateModuleWithFlatMainObject(t *testing.T) {
+	root := t.TempDir()
+	writeModuleFiles(t, root, map[string]string{
+		"go.mod":  "module example.com/my2go\n\ngo 1.26.1\n",
+		"main.go": "package my2go\n\ntype My2Go struct{}\n\nfunc (m *My2Go) Hello() string { return \"hi\" }\n",
+	})
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "my2go", SchemaPath: identifierNamingSchema(t), SchemaVersion: "v1.0.0-beta.21", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	require.NoError(t, Generate(t.Context(), cfg))
+
+	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
+	require.NoError(t, err)
+	require.Contains(t, string(entrypoint), `.withConstructor(function("", typeDef.withObject("My2Go")))`)
+	bindings, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "my-2-go.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(bindings), `XXX_GraphQLType() string {
+	return "My2go"
+}`)
+	require.NotContains(t, string(bindings), "My2goMy2Go")
 }

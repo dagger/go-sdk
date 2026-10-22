@@ -40,7 +40,7 @@ func (g *GoGenerator) GenerateEmbeddedClient(
 		}
 		return &generator.GeneratedState{Overlay: mfs}, nil
 	}
-	if err := templates.LoadNames(schema, schemaVersion); err != nil {
+	if err := templates.LoadNames(schema, schemaVersion, g.Config); err != nil {
 		return nil, err
 	}
 	generator.SetSchema(schema)

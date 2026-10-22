@@ -306,12 +306,22 @@ func TestNamespaceTypeName(t *testing.T) {
 		{"my-type", "my-mod", "MyModMyType", "MyModMyType"},            // kebab inputs camelize like the engine
 		{"HTTPClient", "my-mod", "MyModHttpclient", "MyModHTTPClient"}, // acronyms keep their casing
 		{"MyLlmMod", "my-llm-mod", "MyLlmMod", "MyLLMMod"},             // dictionary spelling wins
+		{"My2Go", "my2go", "My2Go", "My2go"},                           // words cut differently around digits
+		{"K8STools", "k8s-tools", "K8StoolsK8Stools", "K8sTools"},      // and acronyms
+		{"My2GoWorker", "my2go", "My2GoWorker", "My2goWorker"},         // flat prefix on a word boundary
 	} {
 		require.Equal(t, tc.legacy, moduleNamer{}.namespaceTypeName(tc.typeName, tc.moduleName),
 			"legacy namespaceTypeName(%q, %q)", tc.typeName, tc.moduleName)
 		require.Equal(t, tc.latest, latest.namespaceTypeName(tc.typeName, tc.moduleName),
 			"namespaceTypeName(%q, %q)", tc.typeName, tc.moduleName)
 	}
+
+	// The main object, spelled otherwise than its module around digits and
+	// acronyms, is the same declared name, like the engine finds it.
+	for _, tc := range [][2]string{{"My2Go", "my2go"}, {"K8STools", "k8s-tools"}, {"Go1Password", "go-1password"}} {
+		require.True(t, latest.sameDeclaredName(tc[0], tc[1]), "%q, %q", tc[0], tc[1])
+	}
+	require.False(t, latest.sameDeclaredName("Postman", "post"))
 }
 
 // TestModuleNamerVersions verifies the Go SDK names a module's types the way
@@ -342,6 +352,11 @@ func TestModuleNamerVersions(t *testing.T) {
 	}{
 		{"", withFormat, false},
 		{"v1.0.0", withFormat, false},
+		{"v1.0.0-beta.21", withFormat, false},
+		{"v1.0.0-dev-123", withFormat, false},
+		// Released engines before v1.0.0-beta.21 serve the field at every
+		// v1.0.0 prerelease view, and name modules by strcase.
+		{"v1.0.0-beta.20", withFormat, true},
 		{"v1.0.0", withoutFormat, true},
 		{"v0.21.9", withoutFormat, true},
 		{"v1.0.0", nil, true},
