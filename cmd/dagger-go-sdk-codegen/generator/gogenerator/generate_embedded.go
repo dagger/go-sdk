@@ -9,6 +9,7 @@ import (
 	"github.com/psanford/memfs"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
@@ -38,6 +39,9 @@ func (g *GoGenerator) GenerateEmbeddedClient(
 			return nil, err
 		}
 		return &generator.GeneratedState{Overlay: mfs}, nil
+	}
+	if err := templates.LoadNames(schema, schemaVersion); err != nil {
+		return nil, err
 	}
 	generator.SetSchema(schema)
 

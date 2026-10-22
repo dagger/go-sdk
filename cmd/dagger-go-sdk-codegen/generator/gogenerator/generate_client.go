@@ -7,6 +7,7 @@ import (
 	"github.com/psanford/memfs"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
@@ -21,6 +22,9 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 	}
 	if g.Config.UnifiedClient {
 		return g.GenerateUnifiedClient(ctx, schema, schemaVersion)
+	}
+	if err := templates.LoadNames(schema, schemaVersion); err != nil {
+		return nil, err
 	}
 	generator.SetSchema(schema)
 

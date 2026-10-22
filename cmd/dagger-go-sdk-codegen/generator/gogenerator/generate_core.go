@@ -31,6 +31,9 @@ func (g *GoGenerator) GenerateCore(ctx context.Context, schema *introspection.Sc
 	if deps := schema.DependencyNames(); len(deps) > 0 {
 		return nil, fmt.Errorf("schema contains module types from %v: core bindings need the core API only", deps)
 	}
+	if err := templates.LoadNames(schema, schemaVersion); err != nil {
+		return nil, err
+	}
 	generator.SetSchema(schema)
 
 	mfs := memfs.New()

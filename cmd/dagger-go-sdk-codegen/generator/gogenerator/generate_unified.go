@@ -28,6 +28,9 @@ import (
 // The generated root owns no engine lifecycle and exposes only module fields.
 func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	generator.SetSchemaParents(schema)
+	if err := templates.LoadNames(schema, schemaVersion); err != nil {
+		return nil, err
+	}
 	generator.SetSchema(schema)
 	if g.Config.PackageImport == "" {
 		return nil, fmt.Errorf("package import path is required")
