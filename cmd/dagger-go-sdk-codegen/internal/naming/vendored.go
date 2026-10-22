@@ -18,7 +18,7 @@ import (
 
 // VendoredCommit is the github.com/dagger/dagger commit this copy was taken
 // from.
-const VendoredCommit = "198d001192d3179a8215980e97c766026f2dd0c2"
+const VendoredCommit = "3bae26f41fbfd1ceb7f65ea515da3f72939e76a2"
 
 // KnownVersion is the newest engine version whose naming rules this copy is
 // known to have: dictionaries are added by engine version (see releases), and

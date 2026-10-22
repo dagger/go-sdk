@@ -10,8 +10,9 @@ are only known after its Go package has been analyzed, so they can't ask the
 engine's `Query.formatIdentifiers`. The copy must stay identical to the
 engine's.
 
-- Source: github.com/dagger/dagger@198d001192d3179a8215980e97c766026f2dd0c2
-  (`VendoredCommit`).
+- Source: github.com/dagger/dagger@3bae26f41fbfd1ceb7f65ea515da3f72939e76a2
+  (`VendoredCommit`), on the `naming/4-module-naming` branch
+  (dagger/dagger#14669). Re-pin it to the commit that merges.
 - Copied verbatim: `dictionary.go`, `format.go`, `naming.go`, `version.go` and
   `testdata/vectors.json`. `vendored.go` and `vendored_test.go` are go-sdk's.
 - `KnownVersion` is the newest engine version whose rules the copy has.
