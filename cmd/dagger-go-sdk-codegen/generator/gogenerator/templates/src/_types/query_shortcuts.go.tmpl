@@ -24,7 +24,7 @@
 		{{- end -}}
 		{{- range $arg := $field.Args -}}
 		{{- if not (IsArgOptional $arg) -}}
-		{{ $arg.Name | FormatParamName }},
+		{{ $arg.Name | FormatArgName }},
 		{{- end -}}
 		{{- end -}}
 		{{- if HasOptionals $field.Args -}}

@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"github.com/psanford/memfs"
 	"golang.org/x/mod/modfile"
 )
@@ -21,6 +23,9 @@ import (
 // Generate stages the complete operation, including package loading. Only a
 // successfully generated, collision-checked tree is copied back to the author.
 func Generate(ctx context.Context, cfg GenerateConfig) error {
+	if err := introspection.CheckNamingEngine(cfg.SchemaVersion, cfg.EngineVersion); err != nil {
+		return err
+	}
 	root, err := filepath.Abs(cfg.ModuleRoot)
 	if err != nil {
 		return err
@@ -97,6 +102,9 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
+	if err := writeEntrypointConfig(root, cfg.SchemaPath, cfg.SchemaVersion); err != nil {
+		return err
+	}
 	for _, name := range []string{"go.mod", "go.sum"} {
 		data, err := os.ReadFile(filepath.Join(stagedModule, name))
 		if errors.Is(err, os.ErrNotExist) {
@@ -119,6 +127,32 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 		}
 	}
 	return nil
+}
+
+// writeEntrypointConfig writes the dang.toml beside the generated entrypoint
+// (templates.EntrypointConfig), declaring the schema version the module was
+// generated for, unless the module has one governing the entrypoint: the
+// nearest from the entrypoint directory up to the module directory, which is
+// the one the engine reads. An existing one is the module's declared version,
+// which the caller generated for, and the author's to change: it isn't
+// generated code, so generation never rewrites it.
+func writeEntrypointConfig(root, schemaPath, schemaVersion string) error {
+	dir := filepath.Join(root, "internal", "dagger", "entrypoint")
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, templates.EntrypointConfigFile)); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if d == root || filepath.Dir(d) == d {
+			break
+		}
+	}
+	resp, err := readSchema(schemaPath, schemaVersion)
+	if err != nil {
+		return err
+	}
+	return writeFile(filepath.Join(dir, templates.EntrypointConfigFile), templates.EntrypointConfig(resp.SchemaVersion))
 }
 
 func applyGeneratedTree(ctx context.Context, root, stage string, old generator.Ownership, legacyRemovedPath string) ([]string, error) {

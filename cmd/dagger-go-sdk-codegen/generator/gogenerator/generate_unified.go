@@ -28,6 +28,11 @@ import (
 // The generated root owns no engine lifecycle and exposes only module fields.
 func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	generator.SetSchemaParents(schema)
+	// Core declarations are aliases of dagger.io/dagger/core, which names
+	// them itself: LoadNames keeps their legacy names in unified clients.
+	if err := templates.LoadNames(schema, schemaVersion, g.Config); err != nil {
+		return nil, err
+	}
 	generator.SetSchema(schema)
 	if g.Config.PackageImport == "" {
 		return nil, fmt.Errorf("package import path is required")

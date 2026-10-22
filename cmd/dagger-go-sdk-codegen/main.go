@@ -162,12 +162,12 @@ func trimURLScheme(ref string) string {
 // source positions a local workspace generates, so that the client does not
 // change with every commit. Client bindings render those relative to "../..",
 // as moduleRelPath does without a module.
-func localSourceLinks(overlay fs.FS, schema *introspection.Schema, schemaVersion, repo, pin string) (fs.FS, error) {
+func localSourceLinks(overlay fs.FS, schema *introspection.Schema, schemaVersion string, cfg generator.Config, repo, pin string) (fs.FS, error) {
 	anchor, err := workspaceSourceLinkAnchor(repo, pin)
 	if err != nil {
 		return nil, err
 	}
-	catalog := newSourceLinkCatalog(schema, schemaVersion)
+	catalog := newSourceLinkCatalog(schema, schemaVersion, cfg)
 	normalized := memfs.New()
 	err = fs.WalkDir(overlay, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || name == "." {
@@ -213,6 +213,7 @@ func runClient(args []string) error {
 		moduleRoot        = flags.String("module-root", "", "root of the Go module that owns the generated package")
 		unified           = flags.Bool("unified", false, "reuse dagger.io/dagger/core types and a shared session")
 		removedPath       = flags.String("removed-list", "", "append removed generated paths relative to module-root")
+		engineVersion     = flags.String("engine-version", "", "version of the engine that served the schema (Query.version), which decides whether identifiers follow its naming rules")
 	)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -272,6 +273,7 @@ func runClient(args []string) error {
 		PackageImport: packageImport,
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
 		UnifiedClient: *unified,
+		EngineVersion: *engineVersion,
 	}
 
 	generator.SetSchemaParents(resp.Schema)
@@ -284,7 +286,7 @@ func runClient(args []string) error {
 		return fmt.Errorf("generate client: %w", err)
 	}
 	if inWorkspace {
-		if state.Overlay, err = localSourceLinks(state.Overlay, resp.Schema, resp.SchemaVersion, meta.Git.HTMLRepoURL, pin); err != nil {
+		if state.Overlay, err = localSourceLinks(state.Overlay, resp.Schema, resp.SchemaVersion, cfg, meta.Git.HTMLRepoURL, pin); err != nil {
 			return fmt.Errorf("normalize client source links: %w", err)
 		}
 	}
@@ -373,6 +375,7 @@ func runCore(args []string) error {
 		outputDir         = flags.String("output", ".", "directory of the dagger.io/dagger/core package")
 		dagOutputDir      = flags.String("dag-output", "", "directory of the deprecated dagger.io/dagger/dag package (optional; if empty, do not generate it)")
 		introspectionPath = flags.String("introspection-json-path", "", "optional: read the schema from this introspection JSON file, not from the engine.\nThis is an escape hatch for advanced use. Most users do not need it.")
+		engineVersion     = flags.String("engine-version", "", "version of the engine that served the schema (Query.version): from v1.0.0-beta.21, name identifiers by its rules.\nUnset keeps the legacy names, which unified clients alias from dagger.io/dagger/core.")
 	)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -404,6 +407,7 @@ func runCore(args []string) error {
 		OutputDir:     *outputDir,
 		PackageImport: "dagger.io/dagger/core",
 		CoreLibrary:   true,
+		EngineVersion: *engineVersion,
 	}}
 	state, err := gen.GenerateCore(ctx, schema, schemaVersion)
 	if err != nil {

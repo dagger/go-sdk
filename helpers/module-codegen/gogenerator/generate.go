@@ -49,6 +49,10 @@ type GenerateConfig struct {
 	// Generation stages and compiles copies of this tree. Empty means
 	// ModuleRoot.
 	BuildRoot string
+	// EngineVersion is the version of the engine that served the schema
+	// (Query.version): identifiers follow the engine's naming rules only from
+	// v1.0.0-beta.21 (see generator.Config.EngineVersion).
+	EngineVersion string
 }
 
 func generate(ctx context.Context, cfg GenerateConfig) error {
@@ -138,7 +142,11 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		OutputDir:     root,
 		UnifiedClient: cfg.UnifiedClient,
 		GlobalClient:  cfg.GlobalClient,
-		ClientConfig:  &generator.ClientGeneratorConfig{},
+		EngineVersion: cfg.EngineVersion,
+		// The bootstrap of a unified module declares the core names its
+		// final bindings alias from dagger.io/dagger/core.
+		LegacyCoreNames: cfg.UnifiedClient,
+		ClientConfig:    &generator.ClientGeneratorConfig{},
 		ModuleConfig: &generator.ModuleGeneratorConfig{
 			ModuleName: cfg.ModuleName,
 			LibVersion: cfg.DaggerVersion,
@@ -167,7 +175,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return fmt.Errorf("analyze module types: %w", err)
 	}
-	merged, err := mergeSchema(resp, moduleJSON, cfg.ModuleName)
+	merged, err := mergeSchema(resp, moduleJSON, cfg.ModuleName, cfg.EngineVersion)
 	if err != nil {
 		return fmt.Errorf("merge self-call schema: %w", err)
 	}

@@ -35,6 +35,7 @@ func run() error {
 	flag.StringVar(&cfg.ModuleName, "module-name", "", "Dagger module name")
 	flag.StringVar(&cfg.SchemaPath, "introspection-json-path", "", "path to the module-facing introspection JSON")
 	flag.StringVar(&cfg.SchemaVersion, "schema-version", "", "engine schema version")
+	flag.StringVar(&cfg.EngineVersion, "engine-version", "", "version of the engine that served the schema (Query.version), which decides whether identifiers follow its naming rules")
 	flag.StringVar(&cfg.DaggerVersion, "dagger-version", "", "dagger.io/dagger version")
 	flag.StringVar(&cfg.GoImage, "go-image", "golang:1.26-alpine", "Go image used by the generated entrypoint")
 	flag.StringVar(&cfg.RemovedPath, "removed-list", "", "file that receives the paths of removed generated files")

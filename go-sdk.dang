@@ -498,11 +498,15 @@ type GoSdk {
     let scopePath = normalizePath(ws.cwd)
     # A module whose manifest names an entrypoint and no dependencies loads
     # through that entrypoint, which is not generated yet. A fresh runtime
-    # manifest gives the engine a module it can serve a schema for.
-    let staged = sdkHelpers.moduleManifest
-      .withName(name: name)
-      .withLegacyGoRuntime
-      .generate(ws, lock: false, legacyJson: false)
+    # manifest gives the engine a module it can serve a schema for, at the
+    # Dagger version the entrypoint declares.
+    let daggerVersion = entrypointDaggerVersion(ws)
+    let runtimeManifest = if (daggerVersion == "") {
+      sdkHelpers.moduleManifest.withName(name: name).withLegacyGoRuntime
+    } else {
+      sdkHelpers.moduleManifest.withName(name: name).withLegacyGoRuntime(engineVersion: daggerVersion)
+    }
+    let staged = runtimeManifest.generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
 
@@ -535,6 +539,7 @@ type GoSdk {
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
+      "--engine-version", runningEngineVersion,
       "--go-image", goImage,
       "--dagger-version", if (unified) { runtimeVersion(true) } else { schemaVersion },
       "--unified=" + JSON.encode(unified),
@@ -671,6 +676,57 @@ type GoSdk {
   """Directory of the generated Dang entrypoint, relative to the module."""
   let entrypointPath: String! = "internal/dagger/entrypoint"
 
+  """
+  The version of the engine generating, which serves the schemas the
+  generators read. Identifiers follow the engine's naming rules only on
+  engines from v1.0.0-beta.21: older engines serve Query.formatIdentifiers
+  too, but still name by strcase, and their schemas can't tell.
+  """
+  let runningEngineVersion: String! {
+    Dagger.version
+  }
+
+  """
+  The Dagger version the module's entrypoint is generated for, which its
+  dang.toml declares and engines from v1.0.0-beta.21 serve it at. Empty
+  means the running engine's version, as for a new module's engineVersion.
+
+  The engine reads the nearest dang.toml from the entrypoint directory up to
+  the module directory, and so does generation: the module keeps the version
+  it declares, and generation writes one beside the entrypoint only when
+  there is none. A dang.toml without a Dagger version, or with dagger = true,
+  and an entrypoint generated before dang.toml existed, declare nothing:
+  engines serve them v1.0.0-beta.20, the last version before the identifier
+  naming rules changed, so generation keeps that and never renames their API.
+  A new module, or one migrating from the Go runtime, gets the running
+  engine's version.
+  """
+  let entrypointDaggerVersion(ws: Workspace!): String! {
+    let configs = [
+      entrypointPath + "/dang.toml",
+      "internal/dagger/dang.toml",
+      "internal/dang.toml",
+      "dang.toml",
+    ].filter { path => exists(ws, path) }
+    if (configs.length > 0) {
+      return declaredDaggerVersion(ws.file(configs[0] ?? "").contents)
+    }
+    if (hasGeneratedEntrypoint(ws) or exists(ws, entrypointPath + "/main.dang")) {
+      return undeclaredEntrypointVersion
+    }
+    ""
+  }
+
+  """The Dagger version engines serve an entrypoint that declares none."""
+  let undeclaredEntrypointVersion: String! = "v1.0.0-beta.20"
+
+  """The version a dang.toml declares in [imports.Dagger] dagger."""
+  let declaredDaggerVersion(contents: String!): String! {
+    let config = Dagger.json.withContents(JSON.encode(TOML.decode(contents)) :: Dagger.JSON!)
+    let version = (config.field(["imports", "Dagger", "dagger"]).asString) rescue { err: Error => "" }
+    if (version == "") { undeclaredEntrypointVersion } else { version }
+  }
+
   """Path of a module below its Go root, both relative to the workspace root."""
   let moduleSubpath(goRoot: String!, scopePath: String!): String! {
     if (goRoot == scopePath) {
@@ -787,6 +843,7 @@ type GoSdk {
         "--module-root", "/out",
         "--unified=" + JSON.encode(unified),
         "--removed-list", "/removed-clients.txt",
+        "--engine-version", runningEngineVersion,
       ])
   }
 

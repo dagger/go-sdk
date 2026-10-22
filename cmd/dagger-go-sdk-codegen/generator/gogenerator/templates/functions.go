@@ -142,6 +142,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"FormatExperimental":      funcs.formatExperimental,
 		"FormatName":              formatName,
 		"FormatParamName":         formatParamName,
+		"FormatArgName":           formatArgName,
 		"FormatEnum":              funcs.formatEnum,
 		"SortEnumFields":          funcs.sortEnumFields,
 		"GroupEnumByValue":        funcs.groupEnumByValue,
@@ -291,15 +292,6 @@ func (funcs goTemplateFuncs) isPointer(t introspection.InputValue) (bool, error)
 	return strings.Index(representation, "*") == 0, err
 }
 
-// formatName formats a GraphQL name (e.g. object, field, arg) into a Go equivalent
-// Example: `fooId` -> `FooID`
-func formatName(s string) string {
-	if len(s) > 0 {
-		s = strings.ToUpper(string(s[0])) + s[1:]
-	}
-	return lintName(s)
-}
-
 // formatParamName formats a GraphQL argument or field name into a Go
 // identifier: keywords don't parse, and predeclared identifiers
 // (types.Universe) would shadow types referenced in the generated body —
@@ -326,13 +318,17 @@ func formatParamName(s string) string {
 func (funcs goTemplateFuncs) formatEnum(parent string, s string) string {
 	if parent == "" {
 		// legacy path - terrible, removes all the casing :(
-		s = strings.ToLower(s)
+		// Only used for schemas before v0.15.0, which have no
+		// Query.formatIdentifiers.
+		return strcase.ToCamel(strings.ToLower(s))
 	}
-	s = strcase.ToCamel(s)
-	return parent + s
+	return parent + enumValueName(s)
 }
 
 func (funcs goTemplateFuncs) sortEnumFields(s []introspection.EnumValue) []introspection.EnumValue {
+	// This feeds UnmarshalJSON's cases, keyed by wire name: keep the legacy
+	// deduplication even with formatted names, which may give more values
+	// the same Go name, so no wire name loses its case.
 	s = slices.Clone(s)
 	slices.SortStableFunc(s, func(x, y introspection.EnumValue) int {
 		return cmp.Compare(strcase.ToCamel(x.Name), strcase.ToCamel(y.Name))
@@ -352,7 +348,7 @@ func (funcs goTemplateFuncs) groupEnumByValue(s []introspection.EnumValue) [][]i
 	for _, v := range s {
 		value := cmp.Or(v.Directives.EnumValue(), v.Name)
 		if !slices.ContainsFunc(m[value], func(other introspection.EnumValue) bool {
-			return strcase.ToCamel(v.Name) == strcase.ToCamel(other.Name)
+			return enumValueName(v.Name) == enumValueName(other.Name)
 		}) {
 			m[value] = append(m[value], v)
 		}
@@ -467,13 +463,13 @@ func (funcs goTemplateFuncs) fieldFunction(f introspection.Field, topLevel bool,
 			if err != nil {
 				return "", err
 			}
-			args = append(args, fmt.Sprintf("%s %s", formatParamName(arg.Name), outType))
+			args = append(args, fmt.Sprintf("%s %s", formatArgName(arg.Name), outType))
 		} else {
 			inType, err := funcs.FormatInputType(arg, scopes...)
 			if err != nil {
 				return "", err
 			}
-			args = append(args, fmt.Sprintf("%s %s", formatParamName(arg.Name), inType))
+			args = append(args, fmt.Sprintf("%s %s", formatArgName(arg.Name), inType))
 		}
 	}
 
@@ -692,7 +688,7 @@ func (funcs goTemplateFuncs) interfaceMethodSignature(f introspection.Field) (st
 		if err != nil {
 			return "", err
 		}
-		args = append(args, fmt.Sprintf("%s %s", formatParamName(arg.Name), inType))
+		args = append(args, fmt.Sprintf("%s %s", formatArgName(arg.Name), inType))
 	}
 	if funcs.hasOptionals(f.Args) {
 		args = append(args, fmt.Sprintf("opts ...%s", funcs.fieldOptionsStructName(f)))
@@ -760,7 +756,7 @@ func (funcs goTemplateFuncs) interfaceClientMethod(ifaceName string, f introspec
 		if err != nil {
 			return "", err
 		}
-		args = append(args, fmt.Sprintf("%s %s", formatParamName(arg.Name), inType))
+		args = append(args, fmt.Sprintf("%s %s", formatArgName(arg.Name), inType))
 	}
 	if funcs.hasOptionals(f.Args) {
 		args = append(args, fmt.Sprintf("opts ...%s", funcs.fieldOptionsStructName(f)))

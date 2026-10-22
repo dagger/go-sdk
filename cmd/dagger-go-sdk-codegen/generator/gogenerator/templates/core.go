@@ -4,7 +4,6 @@ import (
 	"slices"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
-	"github.com/iancoleman/strcase"
 )
 
 // isCoreLibrary is true when generating the core bindings of dagger.io/dagger
@@ -41,7 +40,7 @@ func (funcs goTemplateFuncs) coreConstructorName(f introspection.Field) string {
 	}
 	source := f.Directives.SourceMap()
 	if funcs.isStandaloneClient() && source != nil && source.Module != "" &&
-		formatName(strcase.ToLowerCamel(source.Module)) == name && f.TypeRef.IsObject() {
+		formatModuleName(source.Module) == name && f.TypeRef.IsObject() {
 		if funcs.unifiedClientSchemaDeclares("New") {
 			return ""
 		}
