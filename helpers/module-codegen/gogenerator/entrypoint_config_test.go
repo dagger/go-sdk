@@ -34,4 +34,11 @@ func TestWriteEntrypointConfig(t *testing.T) {
 	data, err = os.ReadFile(config)
 	require.NoError(t, err)
 	require.Equal(t, custom, string(data))
+
+	// So is one above the entrypoint, up to the module directory: the engine
+	// reads the nearest.
+	require.NoError(t, os.Remove(config))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "dang.toml"), []byte(custom), 0o644))
+	require.NoError(t, writeEntrypointConfig(root, schema, "v1.0.0-beta.21"))
+	require.NoFileExists(t, config)
 }

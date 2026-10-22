@@ -127,21 +127,28 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 
 // writeEntrypointConfig writes the dang.toml beside the generated entrypoint
 // (templates.EntrypointConfig), declaring the schema version the module was
-// generated for, unless the module has one. An existing one is the module's
-// declared version, which the caller generated for, and the author's to
-// change: it isn't generated code, so generation never rewrites it.
+// generated for, unless the module has one governing the entrypoint: the
+// nearest from the entrypoint directory up to the module directory, which is
+// the one the engine reads. An existing one is the module's declared version,
+// which the caller generated for, and the author's to change: it isn't
+// generated code, so generation never rewrites it.
 func writeEntrypointConfig(root, schemaPath, schemaVersion string) error {
-	path := filepath.Join(root, "internal", "dagger", "entrypoint", templates.EntrypointConfigFile)
-	if _, err := os.Lstat(path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+	dir := filepath.Join(root, "internal", "dagger", "entrypoint")
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, templates.EntrypointConfigFile)); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if d == root || filepath.Dir(d) == d {
+			break
+		}
 	}
 	resp, err := readSchema(schemaPath, schemaVersion)
 	if err != nil {
 		return err
 	}
-	return writeFile(path, templates.EntrypointConfig(resp.SchemaVersion))
+	return writeFile(filepath.Join(dir, templates.EntrypointConfigFile), templates.EntrypointConfig(resp.SchemaVersion))
 }
 
 func applyGeneratedTree(ctx context.Context, root, stage string, old generator.Ownership, legacyRemovedPath string) ([]string, error) {
