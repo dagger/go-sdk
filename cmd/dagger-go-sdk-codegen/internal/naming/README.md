@@ -15,9 +15,9 @@ engine's.
   (dagger/dagger#14669). Re-pin it to the commit that merges.
 - Copied verbatim: `dictionary.go`, `format.go`, `naming.go`, `version.go` and
   `testdata/vectors.json`. `vendored.go` and `vendored_test.go` are go-sdk's.
-- `KnownVersion` is the newest engine version whose rules the copy has.
-  Codegen refuses a schema version past it (`CheckKnownVersion`) rather than
-  apply rules that may be stale.
+- `KnownVersion` is the newest engine release whose rules the copy has.
+  Codegen refuses a schema version of a newer minor release
+  (`CheckKnownVersion`) rather than apply rules that may be stale.
 
 ## Updating
 

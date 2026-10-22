@@ -56,12 +56,12 @@ func TestEngineVectors(t *testing.T) {
 }
 
 func TestCheckKnownVersion(t *testing.T) {
-	for _, v := range []string{"", "v0.19.0", "v1.0.0-beta.20", "v1.0.0-beta.21", "1.0.0-beta.21", "v1.0.0-dev-123", "v1.0.0", "v1.0.0+abc", "devel"} {
+	for _, v := range []string{"", "v0.19.0", "v1.0.0-beta.20", "v1.0.0-beta.21", "1.0.0-beta.21", "v1.0.0-dev-123", "v1.0.0", "v1.0.0+abc", "v1.0.1", "devel"} {
 		if err := CheckKnownVersion(v); err != nil {
 			t.Errorf("%q: %v", v, err)
 		}
 	}
-	for _, v := range []string{"v1.0.1", "v1.1.0-beta.1", "v2.0.0"} {
+	for _, v := range []string{"v1.1.0", "v1.1.0-beta.1", "v2.0.0"} {
 		if err := CheckKnownVersion(v); err == nil {
 			t.Errorf("%q: want an error", v)
 		}
