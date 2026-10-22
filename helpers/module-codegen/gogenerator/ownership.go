@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/psanford/memfs"
 	"golang.org/x/mod/modfile"
 )
@@ -97,6 +98,9 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
+	if err := writeEntrypointConfig(root, cfg.SchemaPath, cfg.SchemaVersion); err != nil {
+		return err
+	}
 	for _, name := range []string{"go.mod", "go.sum"} {
 		data, err := os.ReadFile(filepath.Join(stagedModule, name))
 		if errors.Is(err, os.ErrNotExist) {
@@ -119,6 +123,25 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 		}
 	}
 	return nil
+}
+
+// writeEntrypointConfig writes the dang.toml beside the generated entrypoint
+// (templates.EntrypointConfig), declaring the schema version the module was
+// generated for, unless the module has one. An existing one is the module's
+// declared version, which the caller generated for, and the author's to
+// change: it isn't generated code, so generation never rewrites it.
+func writeEntrypointConfig(root, schemaPath, schemaVersion string) error {
+	path := filepath.Join(root, "internal", "dagger", "entrypoint", templates.EntrypointConfigFile)
+	if _, err := os.Lstat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	resp, err := readSchema(schemaPath, schemaVersion)
+	if err != nil {
+		return err
+	}
+	return writeFile(path, templates.EntrypointConfig(resp.SchemaVersion))
 }
 
 func applyGeneratedTree(ctx context.Context, root, stage string, old generator.Ownership, legacyRemovedPath string) ([]string, error) {

@@ -46,6 +46,34 @@ type EntrypointSources struct {
 // sources function and passes no workspace to types and call.
 const sourcesFloor = "v1.0.0-beta.18"
 
+// EntrypointConfigFile is the Dang project file beside the generated
+// entrypoint. It declares the versions the entrypoint is written for: Dagger
+// engines that read it (dagger/dagger#14812) serve the module the API, and
+// name its declarations by the rules, of its Dagger version, and parse the
+// entrypoint as its Dang version. Older engines ignore it.
+const EntrypointConfigFile = "dang.toml"
+
+// EntrypointDangVersion is the Dang language version of the generated
+// entrypoint.
+const EntrypointDangVersion = "2.1"
+
+// EntrypointConfig is the dang.toml of a generated entrypoint whose module
+// targets daggerVersion: the engine version its bindings were generated for.
+// Generation writes it when the module has none and keeps an existing one,
+// so it is the module's declared version, like the engineVersion of a module
+// without an entrypoint.
+func EntrypointConfig(daggerVersion string) []byte {
+	return fmt.Appendf(nil, `# The versions the generated entrypoint of this module is written for. The
+# engine serves the module the Dagger API of the dagger version, and parses the
+# entrypoint as the dang version. dagger generate keeps this file: to move the
+# module to a newer Dagger API, change the dagger version and generate again.
+dang = %q
+
+[imports.Dagger]
+dagger = %q
+`, EntrypointDangVersion, daggerVersion)
+}
+
 // GenerateV2Artifacts analyzes a Go module with the existing parser and emits
 // a manifest-v2 entrypoint around its established static dispatcher. Nil
 // sources mean the build reads nothing outside the module directory.

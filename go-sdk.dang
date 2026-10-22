@@ -498,11 +498,15 @@ type GoSdk {
     let scopePath = normalizePath(ws.cwd)
     # A module whose manifest names an entrypoint and no dependencies loads
     # through that entrypoint, which is not generated yet. A fresh runtime
-    # manifest gives the engine a module it can serve a schema for.
-    let staged = sdkHelpers.moduleManifest
-      .withName(name: name)
-      .withLegacyGoRuntime
-      .generate(ws, lock: false, legacyJson: false)
+    # manifest gives the engine a module it can serve a schema for, at the
+    # Dagger version the entrypoint declares.
+    let daggerVersion = entrypointDaggerVersion(ws)
+    let runtimeManifest = if (daggerVersion == "") {
+      sdkHelpers.moduleManifest.withName(name: name).withLegacyGoRuntime
+    } else {
+      sdkHelpers.moduleManifest.withName(name: name).withLegacyGoRuntime(engineVersion: daggerVersion)
+    }
+    let staged = runtimeManifest.generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
 
@@ -670,6 +674,42 @@ type GoSdk {
 
   """Directory of the generated Dang entrypoint, relative to the module."""
   let entrypointPath: String! = "internal/dagger/entrypoint"
+
+  """
+  The Dagger version the module's entrypoint is generated for, which its
+  dang.toml declares and engines from v1.0.0-beta.21 serve it at. Empty
+  means the running engine's version, as for a new module's engineVersion.
+
+  The module keeps the version its dang.toml declares; generation writes
+  one only when there is none. An entrypoint generated before dang.toml
+  existed declares nothing, and engines serve it v1.0.0-beta.20, the last
+  version before the identifier naming rules changed: it keeps that, so
+  generating again never renames its API. A new module, or one migrating
+  from the Go runtime, gets the running engine's version.
+  """
+  let entrypointDaggerVersion(ws: Workspace!): String! {
+    let config = entrypointPath + "/dang.toml"
+    if (exists(ws, config)) {
+      return declaredDaggerVersion(config, ws.file(config).contents)
+    }
+    if (hasGeneratedEntrypoint(ws) or exists(ws, entrypointPath + "/main.dang")) {
+      return undeclaredEntrypointVersion
+    }
+    ""
+  }
+
+  """The Dagger version engines serve an entrypoint without dang.toml."""
+  let undeclaredEntrypointVersion: String! = "v1.0.0-beta.20"
+
+  """The version a dang.toml declares in [imports.Dagger] dagger."""
+  let declaredDaggerVersion(path: String!, contents: String!): String! {
+    let config = Dagger.json.withContents(JSON.encode(TOML.decode(contents)) :: Dagger.JSON!)
+    let version = (config.field(["imports", "Dagger", "dagger"]).asString) rescue { err: Error => "" }
+    if (version == "") {
+      raise path + " declares no Dagger version; set dagger = \"vX.Y.Z\" in its [imports.Dagger] table, or remove the file to generate one for the running engine"
+    }
+    version
+  }
 
   """Path of a module below its Go root, both relative to the workspace root."""
   let moduleSubpath(goRoot: String!, scopePath: String!): String! {
