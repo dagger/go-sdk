@@ -1,0 +1,20 @@
+func (r *Hello) Build(ctx context.Context) error { // hello (../../main.go:0:0)
+	if r.build != nil {
+		return nil
+	}
+	q := r.query.Select("build")
+
+	return q.Execute(ctx)
+}
+
+func (r *Hello) Lint() *Check { // hello (../../main.go:0:0)
+	q := r.query.Select("lint")
+
+	return new(Check).WithGraphQLQuery(q)
+}
+
+func (r *Hello) Test() *Check { // hello (../../main.go:0:0)
+	q := r.query.Select("test")
+
+	return new(Check).WithGraphQLQuery(q)
+}

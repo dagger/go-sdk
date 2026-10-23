@@ -250,6 +250,9 @@ func introspectMethod(m *funcTypeSpec) *introspection.Field {
 		reason := strings.TrimSpace(*m.deprecated)
 		field.DeprecationReason = &reason
 	}
+	if m.isCheck {
+		field.Directives = append(field.Directives, &introspection.Directive{Name: "check"})
+	}
 
 	return field
 }
