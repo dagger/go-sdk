@@ -138,12 +138,18 @@ func workspaceModule(meta clientMeta) bool {
 	return ok && (workspaceSelector == "" || workspaceSelector == moduleSelector)
 }
 
-// gitSelector returns the version after "@" in a ref of the repository at
-// cloneRef, or false for a ref of another repository.
+// gitSelector returns the version of a ref of the repository at cloneRef, or
+// false for a ref of another repository. The ref is either in the legacy form
+// (repo/subpath@version) or, since dagger v1.0.0-beta.20, in the explicit Git
+// URL form (repo#version:subpath).
 func gitSelector(ref, cloneRef string) (string, bool) {
 	rest, ok := strings.CutPrefix(trimURLScheme(ref), trimURLScheme(cloneRef))
-	if !ok || (rest != "" && rest[0] != '/' && rest[0] != '@') {
+	if !ok || (rest != "" && rest[0] != '/' && rest[0] != '@' && rest[0] != '#') {
 		return "", false
+	}
+	if version, explicit := strings.CutPrefix(rest, "#"); explicit {
+		version, _, _ = strings.Cut(version, ":")
+		return version, true
 	}
 	_, selector, _ := strings.Cut(rest, "@")
 	return selector, true
