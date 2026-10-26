@@ -218,10 +218,15 @@ type GoSdk {
     source != "" and source != "go"
   }
 
-  """Unified generation uses a published runtime independently of engine/schema versions."""
+  """
+  Unified generation pins the library of the SDK floor, whatever engine runs
+  generation: every engine that loads the entrypoint has at least that API.
+  The floor is sourcesFloor in cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/v2.go;
+  a test there keeps this literal equal to it.
+  """
   let runtimeVersion(unified: Boolean!): String! {
     if (clientVersion != "") { clientVersion } else if (unified) {
-      "v1.0.0-beta.17"
+      "v1.0.0-beta.18"
     } else { "" }
   }
 
