@@ -573,7 +573,8 @@ const checkLibraryUsage = `Usage: dagger-go-sdk-codegen check-library [flags]
 
 Check, after go mod tidy, that the Go module at --module-root selects
 dagger.io/dagger at exactly --target, naming the requirement that raised it
-otherwise. A replace directive that applies to the target is a development
+otherwise, and that its generated bindings alias only core names that
+release has. A replace directive that applies to the target is a development
 exception, reported on standard output.
 `
 
@@ -602,5 +603,9 @@ func runCheckLibrary(args []string) error {
 		fmt.Println(library.ReplaceNote(*subject, *target))
 		return nil
 	}
-	return library.CheckSelection(context.Background(), *moduleRoot, *subject, *target)
+	ctx := context.Background()
+	if err := library.CheckSelection(ctx, *moduleRoot, *subject, *target); err != nil {
+		return err
+	}
+	return library.CheckCoreNames(ctx, *moduleRoot, *subject, *target)
 }

@@ -265,6 +265,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		if err := library.CheckSelection(ctx, root, subject, cfg.DaggerVersion); err != nil {
 			return err
 		}
+		if err := library.CheckCoreNames(ctx, root, subject, cfg.DaggerVersion); err != nil {
+			return err
+		}
 	}
 	buildRoot := root
 	if cfg.BuildRoot != "" {

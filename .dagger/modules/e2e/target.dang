@@ -4,6 +4,7 @@ default, or the older release the targetVersion setting pins.
 """
 type TargetChecks {
   let outputRoot: String! = ".dagger/modules/e2e/out"
+  let dependencyPath: String! = ".dagger/modules/e2e/fixtures/target/dep"
   let floor: String! = "v1.0.0-beta.18"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
@@ -66,6 +67,33 @@ type TargetChecks {
     assert("removing the setting did not return to the SDK's release:\n" + unpinned.file("go.mod").contents) {
       pins(unpinned, sdkTarget) and declares(unpinned, sdkTarget)
     }
+    null
+  }
+
+  """
+  A dependency client aliases the core types of the targeted release, read
+  from the running engine's view of the dependency, and compiles against
+  the pinned library; generating again on the same engine changes nothing.
+  """
+  dependencyCheck(ws: Workspace!): Void @check {
+    let name = "target-dependency"
+    let scopePath = outputRoot + "/" + name
+    let input = ws
+      .withNewFile(scopePath + "/go.mod", "module example.com/target-dependency\n\ngo 1.26.1\n")
+      .withNewFile(scopePath + "/main.go", "package target_dependency\n\nimport (\n\t\"context\"\n\n\t\"dagger.io/dagger/core\"\n\tdep \"example.com/target-dependency/internal/dagger/clients/target-dep\"\n)\n\ntype TargetDependency struct{}\n\nfunc (*TargetDependency) Greet(ctx context.Context) (string, error) {\n\treturn dep.New().Greet(ctx, \"target\")\n}\n\nfunc (*TargetDependency) Box() *core.Container {\n\treturn dep.New().Box(\"target\")\n}\n")
+      .withWorkdir(scopePath)
+    let dependency = ws.moduleSource("/" + dependencyPath)
+    let sdk = goSdk(targetVersion: "v1.0.0-beta.20")
+    let generated = sdk.generateScope(ws: input, isModule: true, name: name, clients: [dependency])
+    assert("the library is not pinned to the target:\n" + generated.file("go.mod").contents) {
+      pins(generated, "v1.0.0-beta.20")
+    }
+    let client = generated.file("internal/dagger/clients/target-dep/dagger.gen.go").contents
+    assert("the dependency client does not alias core:\n" + client) {
+      client.contains("type Container = core.Container\n")
+    }
+    let again = sdk.generateScope(ws: generated, isModule: true, name: name, clients: [dependency])
+    assert("generating again changed files") { again.changes(generated).isEmpty }
     null
   }
 
