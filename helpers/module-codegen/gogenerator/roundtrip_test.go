@@ -540,6 +540,9 @@ func TestGenerateUnifiedRefusesLibraryRaisedByRequirement(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace dagger.io/dagger v1.0.0-beta.16 => dagger.io/dagger v1.0.0-beta.15\n")
 	require.EqualError(t, Generate(t.Context(), cfg), refusal)
 
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace dagger.io/dagger v1.0.0-beta.17 => dagger.io/dagger v1.0.0-beta.17\n")
+	require.EqualError(t, Generate(t.Context(), cfg), refusal)
+
 	cfg.DaggerVersion, cfg.TargetVersion = "v1.0.0-beta.18", "v1.0.0-beta.18"
 	require.NoError(t, Generate(t.Context(), cfg))
 	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))

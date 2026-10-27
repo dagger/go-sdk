@@ -2,10 +2,12 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateBoundModuleKind(t *testing.T) {
@@ -28,6 +30,34 @@ func TestValidateBoundModuleKind(t *testing.T) {
 			}
 			if !tt.wantErr && err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckLibraryReplacement(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		replace string
+		wantErr bool
+	}{
+		{"target only", " v1.0.0-beta.20", true},
+		{"selected version", " v1.0.0-beta.21", false},
+		{"all versions", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.21\n\nreplace dagger.io/dagger"+tc.replace+" => dagger.io/dagger v1.0.0-beta.21\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte("package app\n\nimport _ \"dagger.io/dagger\"\n"), 0o600))
+			tidy := exec.Command("go", "mod", "tidy")
+			tidy.Dir = root
+			out, err := tidy.CombinedOutput()
+			require.NoError(t, err, string(out))
+			err = runCheckLibrary([]string{"--module-root", root, "--target", "v1.0.0-beta.20", "--subject", `scope "ci"`})
+			if tc.wantErr {
+				require.ErrorContains(t, err, `scope "ci" targets Dagger v1.0.0-beta.20, and go.mod selects dagger.io/dagger v1.0.0-beta.21`)
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}

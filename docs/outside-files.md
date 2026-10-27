@@ -125,9 +125,9 @@ core types, and checks it after its own `go mod tidy`.
 A client of another module aliases the core types of the targeted release;
 when the dependency exposes a core type that release lacks, generation
 refuses and names the dependency, the type and the release.
-A `replace` directive for `dagger.io/dagger` is a development exception:
-generation keeps it, reports it, and the generated code follows the
-replacement instead of the targeted release.
+A `replace` directive for the selected `dagger.io/dagger` is a development
+exception: generation keeps it, reports it, and the generated code follows
+the replacement instead of the targeted release.
 
 A module with embedded bindings or on the Go runtime targets the running
 engine instead: an engine update can change its generated files, and the

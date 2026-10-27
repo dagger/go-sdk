@@ -6,6 +6,7 @@ package library
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -110,42 +111,52 @@ func Pin(goModPath, version string, exact bool) error {
 	return nil
 }
 
-// CheckSelection refuses a build list that selects another library version
-// than target, naming the requirements that raised it.
-func CheckSelection(ctx context.Context, root, subject, target string) error {
-	selected, err := goOutput(ctx, root, "list", "-m", "-f", "{{.Version}}", Path)
+// Only a replacement in the final build list grants a development exception:
+// tidy can select a version that a target-specific replacement does not cover.
+func CheckSelection(ctx context.Context, root, subject, target string) (bool, error) {
+	data, err := goOutput(ctx, root, "list", "-m", "-json", Path)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if selected == target {
-		return nil
+	var selected struct {
+		Version string
+		Replace *struct{}
+	}
+	if err := json.Unmarshal([]byte(data), &selected); err != nil {
+		return false, err
+	}
+	if selected.Replace != nil {
+		return true, nil
+	}
+	if selected.Version == target {
+		return false, nil
 	}
 	graph, err := goOutput(ctx, root, "mod", "graph")
 	if err != nil {
-		return err
+		return false, err
 	}
 	var raisers, paths []string
 	for _, edge := range strings.Split(graph, "\n") {
 		from, to, ok := strings.Cut(edge, " ")
 		path, version, versioned := strings.Cut(from, "@")
-		if !ok || !versioned || to != Path+"@"+selected {
+		if !ok || !versioned || to != Path+"@"+selected.Version {
 			continue
 		}
 		raisers = append(raisers, path+" "+version)
 		paths = append(paths, path)
 	}
-	cause := "go.mod selects " + Path + " " + selected
+	cause := "go.mod selects " + Path + " " + selected.Version
 	fix := "remove what selects it from go.mod"
 	switch len(raisers) {
 	case 0:
 	case 1:
-		cause = raisers[0] + " requires " + Path + " " + selected
+		cause = raisers[0] + " requires " + Path + " " + selected.Version
 		fix = "require a version of " + paths[0] + " that needs " + Path + " " + target + " or earlier"
 	default:
-		cause = joinAnd(raisers) + " require " + Path + " " + selected
+		cause = joinAnd(raisers) + " require " + Path + " " + selected.Version
 		fix = "require versions of " + joinAnd(paths) + " that need " + Path + " " + target + " or earlier"
 	}
-	return fmt.Errorf("%s targets Dagger %s, and %s: set targetVersion to %s or later in the scope's settings in dagger.toml, or %s", subject, target, cause, selected, fix)
+	return false, fmt.Errorf("%s targets Dagger %s, and %s: set targetVersion to %s or later in the scope's settings in dagger.toml, or %s", subject, target, cause, selected.Version, fix)
 }
 
 func parse(goModPath string) (*modfile.File, []byte, error) {

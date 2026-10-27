@@ -574,8 +574,8 @@ const checkLibraryUsage = `Usage: dagger-go-sdk-codegen check-library [flags]
 Check, after go mod tidy, that the Go module at --module-root selects
 dagger.io/dagger at exactly --target, naming the requirement that raised it
 otherwise, and that its generated bindings alias only core names that
-release has. A replace directive that applies to the target is a development
-exception, reported on standard output.
+release has. A replace directive that applies to the selected version is a
+development exception, reported on standard output.
 `
 
 func runCheckLibrary(args []string) error {
@@ -595,17 +595,14 @@ func runCheckLibrary(args []string) error {
 	if *moduleRoot == "" || *target == "" {
 		return fmt.Errorf("check-library needs --module-root and --target")
 	}
-	replaced, err := library.Replaced(filepath.Join(*moduleRoot, "go.mod"), *target)
+	ctx := context.Background()
+	replaced, err := library.CheckSelection(ctx, *moduleRoot, *subject, *target)
 	if err != nil {
 		return err
 	}
 	if replaced {
 		fmt.Println(library.ReplaceNote(*subject, *target))
 		return nil
-	}
-	ctx := context.Background()
-	if err := library.CheckSelection(ctx, *moduleRoot, *subject, *target); err != nil {
-		return err
 	}
 	return library.CheckCoreNames(ctx, *moduleRoot, *subject, *target)
 }

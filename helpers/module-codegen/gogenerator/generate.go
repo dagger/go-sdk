@@ -115,9 +115,6 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return err
 	}
 	exact := cfg.UnifiedClient && !replaced
-	if cfg.UnifiedClient && replaced && cfg.Notes != nil {
-		fmt.Fprintln(cfg.Notes, library.ReplaceNote(subject, cfg.DaggerVersion))
-	}
 	if exact {
 		if err := library.CheckResolvable(filepath.Dir(goModPath), subject, cfg.DaggerVersion); err != nil {
 			return err
@@ -261,11 +258,16 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := normalizeGoMod(goModPath); err != nil {
 		return fmt.Errorf("normalize generated go.mod: %w", err)
 	}
-	if exact {
-		if err := library.CheckSelection(ctx, root, subject, cfg.DaggerVersion); err != nil {
+	if cfg.UnifiedClient {
+		replaced, err := library.CheckSelection(ctx, root, subject, cfg.DaggerVersion)
+		if err != nil {
 			return err
 		}
-		if err := library.CheckCoreNames(ctx, root, subject, cfg.DaggerVersion); err != nil {
+		if replaced {
+			if cfg.Notes != nil {
+				fmt.Fprintln(cfg.Notes, library.ReplaceNote(subject, cfg.DaggerVersion))
+			}
+		} else if err := library.CheckCoreNames(ctx, root, subject, cfg.DaggerVersion); err != nil {
 			return err
 		}
 	}

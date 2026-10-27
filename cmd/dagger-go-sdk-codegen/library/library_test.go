@@ -97,9 +97,13 @@ func TestCheckSelection(t *testing.T) {
 	replaced, err := Replaced(filepath.Join(app, "go.mod"), "v1.0.0-beta.17")
 	require.NoError(t, err)
 	require.False(t, replaced)
-	require.EqualError(t, CheckSelection(t.Context(), app, `scope "ci"`, "v1.0.0-beta.17"),
+	replaced, err = CheckSelection(t.Context(), app, `scope "ci"`, "v1.0.0-beta.17")
+	require.False(t, replaced)
+	require.EqualError(t, err,
 		`scope "ci" targets Dagger v1.0.0-beta.17, and example.com/lib v0.0.0 requires dagger.io/dagger v1.0.0-beta.18: set targetVersion to v1.0.0-beta.18 or later in the scope's settings in dagger.toml, or require a version of example.com/lib that needs dagger.io/dagger v1.0.0-beta.17 or earlier`)
-	require.NoError(t, CheckSelection(t.Context(), app, `scope "ci"`, "v1.0.0-beta.18"))
+	replaced, err = CheckSelection(t.Context(), app, `scope "ci"`, "v1.0.0-beta.18")
+	require.NoError(t, err)
+	require.False(t, replaced)
 }
 
 func writeFiles(t *testing.T, root string, files map[string]string) {
