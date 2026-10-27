@@ -155,10 +155,10 @@ type GoSdk {
     if (isModule and entrypoint) {
       let remote = remoteEntrypoint(initialized)
       if (remote != "") {
-        print("module " + JSON.encode(name) + " named the entrypoint " + remote + " in its manifest; the generated entrypoint replaces it and needs Dagger " + versions(ws).sourcesFloor + " or later")
+        print("module " + JSON.encode(name) + " named the entrypoint " + remote + " in its manifest; the generated entrypoint replaces it and needs Dagger " + versions.sourcesFloor + " or later")
       }
       # Embedded bindings come from the running engine, so they target it.
-      let target = if (unified) { targetRelease("module " + JSON.encode(name), versions(ws)) } else { engineTarget }
+      let target = if (unified) { targetRelease("module " + JSON.encode(name), versions) } else { engineTarget }
       let withClients = if (unified) {
         generateStandaloneClients(initialized, clients, true, target)
       } else { initialized }
@@ -282,9 +282,9 @@ type GoSdk {
   """
   let versionsFile: String! = "versions.toml"
 
-  versions(ws: Workspace!) Versions! {
-    let contents= ws.file(versionsFile).contents
-    let versions: Versions = TOML.decode(contents)
+  let versions: Versions! {
+    let contents = currentModule.source.file(versionsFile).contents
+    let versions: Versions! = TOML.decode(contents)
     versions
   }
 
@@ -368,7 +368,7 @@ type GoSdk {
       # the running engine.
       let unifiedScope = clients.filter { client => unifiedClient(scoped, client, moduleUnified) }.length > 0
       let pinned = if (target != "") { target } else if (targetVersion != "" or unifiedScope) {
-        targetRelease("scope " + JSON.encode(goScope), versions(ws))
+        targetRelease("scope " + JSON.encode(goScope), versions)
       } else { "" }
       let base = clientCodegenBase(scoped.file("go.mod")).withDirectory(
         "/out",

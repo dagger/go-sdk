@@ -21,6 +21,13 @@ func sdkSource(t *testing.T) string {
 	return string(source)
 }
 
+func sdkVersions(t *testing.T) string {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join("..", "..", "versions.toml"))
+	require.NoError(t, err)
+	return string(contents)
+}
+
 // sdkMember returns a private member of go-sdk.dang's GoSdk type: a block
 // member through its closing brace, or a one-line field.
 func sdkMember(t *testing.T, source, name string) string {
@@ -45,13 +52,26 @@ func resolveSdkTarget(t *testing.T, setting, want string) error {
 	t.Helper()
 	source := sdkSource(t)
 	var program strings.Builder
-	program.WriteString("type Sdk {\n  targetVersion: String!\n\n")
-	for _, name := range []string{"sourcesFloor", "defaultTarget", "releasePattern", "release(", "isRelease(", "releasePrecedes(", "identifiersPrecede(", "targetRelease("} {
+	program.WriteString(`type File { contents: String! }
+type Directory {
+  contents: String!
+  pub file(path: String!): File! {
+    assert("read the SDK's versions.toml") { path == "versions.toml" }
+    File(contents: contents)
+  }
+}
+type CurrentModule { source: Directory! }
+`)
+	versionsType := strings.Index(source, "\ntype Versions {")
+	require.Positive(t, versionsType)
+	program.WriteString(source[versionsType:])
+	program.WriteString("type Sdk {\n  targetVersion: String!\n  currentModule: CurrentModule!\n\n")
+	for _, name := range []string{"versionsFile", "versions:", "releasePattern", "release(", "isRelease(", "releasePrecedes(", "identifiersPrecede(", "targetRelease("} {
 		program.WriteString(sdkMember(t, source, name))
 		program.WriteString("\n")
 	}
-	program.WriteString("  pub resolved: String! { targetRelease(\"module \\\"probe\\\"\") }\n}\n\n")
-	fmt.Fprintf(&program, "let target = Sdk(targetVersion: %q).resolved\n", setting)
+	program.WriteString("  pub resolved: String! { targetRelease(\"module \\\"probe\\\"\", versions) }\n}\n\n")
+	fmt.Fprintf(&program, "let target = Sdk(targetVersion: %q, currentModule: CurrentModule(source: Directory(contents: %q))).resolved\n", setting, sdkVersions(t))
 	fmt.Fprintf(&program, "assert(%q) { target == %q }\n", "resolved "+want, want)
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sdk.dang"), []byte(program.String()), 0o600))
@@ -104,8 +124,8 @@ func TestSdkTargetReleaseRefusals(t *testing.T) {
 // pins by default, and the setting's documentation names the same release.
 func TestSdkDefaultTargetIsPublished(t *testing.T) {
 	source := sdkSource(t)
-	match := regexp.MustCompile(`let defaultTarget: String! = "([^"]*)"`).FindStringSubmatch(source)
-	require.NotNil(t, match, "go-sdk.dang has no defaultTarget")
+	match := regexp.MustCompile(`(?m)^defaultTarget\s*=\s*"([^"]*)"`).FindStringSubmatch(sdkVersions(t))
+	require.NotNil(t, match, "versions.toml has no defaultTarget")
 	release := match[1]
 	require.Regexp(t, `^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`, release)
 	require.Contains(t, source, "the release this Go SDK is built for, "+release+".")

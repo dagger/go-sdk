@@ -321,11 +321,10 @@ func TestExposesModuleContext(t *testing.T) {
 	require.False(t, exposesModuleContext(&introspection.Schema{Types: introspection.Types{{Name: "Query"}}}))
 }
 
-// go-sdk.dang cannot import the constant, so it repeats the floor.
 func TestSdkFloorIsTheSourcesFloor(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "go-sdk.dang"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "versions.toml"))
 	require.NoError(t, err)
-	match := regexp.MustCompile(`let sourcesFloor: String! = "([^"]*)"`).FindSubmatch(data)
-	require.NotNil(t, match, "sourcesFloor not found in go-sdk.dang")
+	match := regexp.MustCompile(`(?m)^sourcesFloor\s*=\s*"([^"]*)"`).FindSubmatch(data)
+	require.NotNil(t, match, "sourcesFloor not found in versions.toml")
 	require.Equal(t, sourcesFloor, string(match[1]))
 }
