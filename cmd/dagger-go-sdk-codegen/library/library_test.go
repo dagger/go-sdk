@@ -1,6 +1,7 @@
 package library
 
 import (
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,11 +69,24 @@ func TestPin(t *testing.T) {
 }
 
 func TestCheckResolvable(t *testing.T) {
+	proxy := t.TempDir()
+	writeFiles(t, proxy, map[string]string{
+		"dagger.io/dagger/@v/v1.0.0-beta.17.info": `{"Version":"v1.0.0-beta.17","Time":"2026-01-01T00:00:00Z"}`,
+		"dagger.io/dagger/@v/v1.0.0-beta.17.mod":  "module dagger.io/dagger\n\ngo 1.26.1\n",
+	})
+	proxyURL := url.URL{Scheme: "file", Path: filepath.ToSlash(proxy)}
+	t.Setenv("GOPROXY", proxyURL.String())
+	t.Setenv("GONOPROXY", "none")
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOMODCACHE", t.TempDir())
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOWORK", "off")
+
 	dir := filepath.Dir(writeGoMod(t, "module example.com/app\n\ngo 1.26.1\n"))
 	require.NoError(t, CheckResolvable(dir, `module "app"`, "v1.0.0-beta.17"))
 	err := CheckResolvable(dir, `module "app"`, "v1.0.0-beta.99")
 	require.ErrorContains(t, err, `module "app" targets Dagger v1.0.0-beta.99, and its Go library dagger.io/dagger v1.0.0-beta.99 cannot be resolved (`)
-	require.ErrorContains(t, err, `unknown revision v1.0.0-beta.99): set targetVersion to a release whose library is published in the scope's settings in dagger.toml, or replace dagger.io/dagger in go.mod for development`)
+	require.ErrorContains(t, err, `): set targetVersion to a release whose library is published in the scope's settings in dagger.toml, or replace dagger.io/dagger in go.mod for development`)
 }
 
 // A requirement of another module raises the selected library above the
