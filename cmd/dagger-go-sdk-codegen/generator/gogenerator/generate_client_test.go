@@ -175,6 +175,19 @@ func TestGenerateClient_ServeBoundModule(t *testing.T) {
 	})
 }
 
+// A standalone client announces the release its bindings are generated for
+// when it starts a session, in its own Connect and in the dag package.
+func TestGenerateClientAnnouncesVersion(t *testing.T) {
+	bound := generator.BoundModule{Kind: generator.ModuleKindDir, Path: ".dagger/modules/hello"}
+	state := generateClient(t, &generator.ClientGeneratorConfig{BoundModule: bound, Version: "v1.0.0-beta.21"}, t.TempDir())
+	require.Contains(t, readOverlay(t, state, "dagger.gen.go"), "\topts = append([]ClientOpt{WithVersionOverride(\"v1.0.0-beta.21\")}, opts...)\n\tdag, err := dagger.Connect(ctx, opts...)\n")
+	require.Contains(t, readOverlay(t, state, "dag/dag.gen.go"), ".WithVersionOverride(\"v1.0.0-beta.21\"),\n\t\t\tdagClient.WithLogOutput(os.Stdout),\n")
+
+	state = generateClient(t, &generator.ClientGeneratorConfig{BoundModule: bound}, t.TempDir())
+	require.NotContains(t, readOverlay(t, state, "dagger.gen.go"), "WithVersionOverride(\"")
+	require.NotContains(t, readOverlay(t, state, "dag/dag.gen.go"), "WithVersionOverride(\"")
+}
+
 func TestGenerateClientPackageFollowsOutputDirectory(t *testing.T) {
 	for _, unified := range []bool{false, true} {
 		t.Run(map[bool]string{false: "embedded types", true: "shared types"}[unified], func(t *testing.T) {

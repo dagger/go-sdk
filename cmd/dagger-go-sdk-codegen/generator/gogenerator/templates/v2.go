@@ -47,8 +47,10 @@ type EntrypointSources struct {
 const sourcesFloor = "v1.0.0-beta.18"
 
 // GenerateV2Artifacts analyzes a Go module with the existing parser and emits
-// a manifest-v2 entrypoint around its established static dispatcher. Nil
-// sources mean the build reads nothing outside the module directory.
+// a manifest-v2 entrypoint around its established static dispatcher. The
+// entrypoint declares targetVersion, the Dagger release the generated code
+// targets, to the module's process; empty declares nothing. Nil sources mean
+// the build reads nothing outside the module directory.
 func GenerateV2Artifacts(
 	ctx context.Context,
 	schema *introspection.Schema,
@@ -59,6 +61,7 @@ func GenerateV2Artifacts(
 	packageImport string,
 	moduleSubpath string,
 	goImage string,
+	targetVersion string,
 	sources *EntrypointSources,
 ) (*V2Artifacts, error) {
 	funcs := goTemplateFuncs{
@@ -73,7 +76,7 @@ func GenerateV2Artifacts(
 		pass:            1,
 	}
 
-	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, sources)
+	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, targetVersion, sources)
 }
 
 type v2Module struct {
@@ -83,9 +86,10 @@ type v2Module struct {
 	functionCases  map[string][]Code
 	implementation *Statement
 	sources        *EntrypointSources
+	targetVersion  string
 }
 
-func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage string, sources *EntrypointSources) (*V2Artifacts, error) {
+func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
 	if !exposesModuleContext(funcs.schema) {
 		return nil, errors.New("the generated Dang entrypoint needs Dagger " + sourcesFloor + " or later")
 	}
@@ -93,6 +97,7 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		functionCases:  map[string][]Code{},
 		implementation: Empty(),
 		sources:        sources,
+		targetVersion:  targetVersion,
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -401,8 +406,11 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
       .withMountedDirectory("/workspace", currentModule.contextDirectory)
 `)
 	fmt.Fprintf(&b, "      .withWorkdir(%s)\n", workdir)
-	b.WriteString(`      .withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")
-      .withExec(
+	b.WriteString("      .withEnvVariable(\"DAGGER_MODULE_CALL_DIGEST\", callDigest ?? \"\")\n")
+	if mod.targetVersion != "" {
+		fmt.Fprintf(&b, "      .withEnvVariable(\"DAGGER_CLIENT_VERSION\", %s)\n", strconv.Quote(mod.targetVersion))
+	}
+	b.WriteString(`      .withExec(
         ["/usr/local/bin/dispatch", "engine-call", "/dagger/result.json"],
         stdin: request,
         experimentalPrivilegedNesting: true,

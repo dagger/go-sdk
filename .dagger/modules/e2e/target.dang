@@ -13,10 +13,17 @@ type TargetChecks {
     ws.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
   }
 
+  """The generated entrypoint declares the release to the module's process."""
+  let declares(ws: Workspace!, release: String!): Boolean! {
+    ws.file("internal/dagger/entrypoint/main.dang").contents.contains(
+      "\n      .withEnvVariable(\"DAGGER_MODULE_CALL_DIGEST\", callDigest ?? \"\")\n      .withEnvVariable(\"DAGGER_CLIENT_VERSION\", " + JSON.encode(release) + ")\n      .withExec(\n")
+  }
+
   """
   A first generation targets the SDK's release whatever engine runs it,
-  pins the library to that release, writes no version into the manifest,
-  and changes nothing when run again. The generated module loads.
+  pins the library to that release, declares it to the module's process,
+  writes no version into the manifest, and changes nothing when run again.
+  The generated module loads.
   """
   defaultCheck(ws: Workspace!): Void @check {
     let name = "target-default"
@@ -25,6 +32,9 @@ type TargetChecks {
     let first = goSdk.generateScope(ws: input, isModule: true, name: name, clients: [])
     assert("the library is not pinned to the SDK's release:\n" + first.file("go.mod").contents) {
       pins(first, sdkTarget)
+    }
+    assert("the entrypoint does not declare the SDK's release:\n" + first.file("internal/dagger/entrypoint/main.dang").contents) {
+      declares(first, sdkTarget)
     }
     assert("the target reached the manifest") {
       first.file("dagger-module.toml").contents.contains("engineVersion") == false
@@ -48,13 +58,13 @@ type TargetChecks {
     let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
     let pinned = goSdk(targetVersion: "1.0.0-beta.20+0123abcd").generateScope(ws: input, isModule: true, name: name, clients: [])
     assert("the library is not pinned to the setting:\n" + pinned.file("go.mod").contents) {
-      pins(pinned, "v1.0.0-beta.20")
+      pins(pinned, "v1.0.0-beta.20") and declares(pinned, "v1.0.0-beta.20")
     }
     let kept = goSdk(targetVersion: "v1.0.0-beta.20").generateScope(ws: pinned, isModule: true, name: name, clients: [])
     assert("generating again with the same pin changed files") { kept.changes(pinned).isEmpty }
     let unpinned = goSdk.generateScope(ws: kept, isModule: true, name: name, clients: [])
     assert("removing the setting did not return to the SDK's release:\n" + unpinned.file("go.mod").contents) {
-      pins(unpinned, sdkTarget)
+      pins(unpinned, sdkTarget) and declares(unpinned, sdkTarget)
     }
     null
   }

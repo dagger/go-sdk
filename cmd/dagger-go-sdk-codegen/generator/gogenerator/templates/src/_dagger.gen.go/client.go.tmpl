@@ -45,6 +45,9 @@ var WithEnvironmentVariable = dagger.WithEnvironmentVariable
 
 
 func Connect(ctx context.Context, opts ...ClientOpt) (*Client, error) {
+{{- if ClientVersion }}
+	opts = append([]ClientOpt{WithVersionOverride({{ printf "%q" ClientVersion }})}, opts...)
+{{- end }}
 	dag, err := dagger.Connect(ctx, opts...)
 	if err != nil {
 		return nil, err

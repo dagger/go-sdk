@@ -11,6 +11,13 @@ import (
 // local module (LOCAL_SOURCE/DIR_SOURCE) the path is normalized to a leading
 // "/" so the generated bootstrap resolves it from the workspace root
 // (cwd-independent), not the client process's cwd.
+func (funcs goTemplateFuncs) clientVersion() string {
+	if funcs.cfg.ClientConfig == nil {
+		return ""
+	}
+	return funcs.cfg.ClientConfig.Version
+}
+
 func (funcs goTemplateFuncs) boundModule() generator.BoundModule {
 	m := funcs.cfg.ClientConfig.BoundModule
 	if m.Kind != generator.ModuleKindGit && m.Path != "" && !strings.HasPrefix(m.Path, "/") {

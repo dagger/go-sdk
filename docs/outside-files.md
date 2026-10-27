@@ -96,6 +96,13 @@ Generation refuses on v1.0.0-beta.16 and older.
 Each go-sdk release targets one Dagger release, v1.0.0-beta.21 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to that release.
+Its generated entrypoint declares the release to the engine, in the
+`DAGGER_CLIENT_VERSION` variable of the process that runs the module; a
+generated standalone client with a target announces it when it starts a
+session.
+The engine ignores `DAGGER_CLIENT_VERSION` today and serves the module at
+its own version; a later engine release reads it and serves the declared
+release instead.
 Its generated code then depends on the SDK release, the module's sources
 and its dependencies, and not on the running engine.
 An engine update changes nothing in the module's own bindings; a client of

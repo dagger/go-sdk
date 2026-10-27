@@ -105,6 +105,20 @@ func TestEntrypointShapeIsUniform(t *testing.T) {
 	require.NotContains(t, plainRest, "workspace:")
 }
 
+// The entrypoint declares the targeted release to the module's process, next
+// to the call digest, and declares nothing without one.
+func TestEntrypointDeclaresClientVersion(t *testing.T) {
+	source, err := (&v2Module{targetVersion: "v1.0.0-beta.21"}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.Contains(t, string(source), "      .withEnvVariable(\"DAGGER_MODULE_CALL_DIGEST\", callDigest ?? \"\")\n      .withEnvVariable(\"DAGGER_CLIENT_VERSION\", \"v1.0.0-beta.21\")\n      .withExec(\n")
+	require.NotContains(t, string(source), "targetVersion")
+
+	source, err = (&v2Module{}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.Contains(t, string(source), "      .withEnvVariable(\"DAGGER_MODULE_CALL_DIGEST\", callDigest ?? \"\")\n      .withExec(\n")
+	require.NotContains(t, string(source), "DAGGER_CLIENT_VERSION")
+}
+
 func TestDispatchSourceDecodesArgumentObject(t *testing.T) {
 	source, err := (&v2Module{}).renderDispatchSource("hello", "example.com/hello")
 	require.NoError(t, err)
@@ -227,6 +241,7 @@ func entrypointFixture() *v2Module {
 		}
 	}
 	return &v2Module{
+		targetVersion: "v1.0.0-beta.20",
 		objects: []*parsedObjectType{
 			{
 				name:      "HelloWorld",

@@ -278,7 +278,7 @@ func runClient(args []string) error {
 	cfg := generator.Config{
 		OutputDir:     *outputDir,
 		PackageImport: packageImport,
-		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
+		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module, Version: meta.TargetVersion},
 		UnifiedClient: *unified,
 	}
 

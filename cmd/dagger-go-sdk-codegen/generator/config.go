@@ -90,6 +90,11 @@ type ClientGeneratorConfig struct {
 	// the generated serveBoundModule bootstrap.
 	BoundModule BoundModule
 
+	// Version is the Dagger release the client announces when it starts a
+	// session, the one its bindings are generated for. Empty announces the
+	// CLI's own version.
+	Version string
+
 	// ModuleDependencies is retained for module-client template compatibility.
 	// Standalone clients use BoundModule instead.
 	ModuleDependencies []ModuleSourceDependency

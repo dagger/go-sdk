@@ -491,3 +491,24 @@ func writeModuleFiles(t *testing.T, root string, files map[string]string) {
 		require.NoError(t, os.WriteFile(p, []byte(text), 0644))
 	}
 }
+
+// The entrypoint declares the release the generated code targets to the
+// module's process, and declares nothing without one.
+func TestGenerateEntrypointDeclaresClientVersion(t *testing.T) {
+	root := t.TempDir()
+	writeModuleFiles(t, root, map[string]string{
+		"go.mod":  "module example.com/app\n\ngo 1.26.1\n",
+		"main.go": "package app\n\ntype App struct{}\n\nfunc (*App) Hello() string { return \"hello\" }\n",
+	})
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", TargetVersion: "v1.0.0-beta.20", GoImage: "golang:1.26.1-alpine"}
+	require.NoError(t, Generate(t.Context(), cfg))
+	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
+	require.NoError(t, err)
+	require.Contains(t, string(entrypoint), "\n      .withEnvVariable(\"DAGGER_MODULE_CALL_DIGEST\", callDigest ?? \"\")\n      .withEnvVariable(\"DAGGER_CLIENT_VERSION\", \"v1.0.0-beta.20\")\n      .withExec(\n")
+
+	cfg.TargetVersion = ""
+	require.NoError(t, Generate(t.Context(), cfg))
+	entrypoint, err = os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
+	require.NoError(t, err)
+	require.NotContains(t, string(entrypoint), "DAGGER_CLIENT_VERSION")
+}
