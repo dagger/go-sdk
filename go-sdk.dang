@@ -478,16 +478,16 @@ type GoSdk {
     if (entrypoint) {
       let enclosingRoot = findClientRoot(ws)
       if (enclosingRoot != null and enclosingRoot != normalizePath(ws.cwd)) {
-        raise "Dang entrypoints need a go.mod in the module directory; keep dangEntrypoint = false for modules using a parent go.mod"
+        raise "Dang entrypoints need a go.mod in the module directory; create a go.mod there before generating"
       }
       if (clients.length > 0 and !unified) {
-        raise "a Dang entrypoint cannot use other modules yet: a manifest with an entrypoint has no dependencies; set dangEntrypoint = false"
+        raise "a Dang entrypoint with embedded bindings cannot use other modules; set unifiedClients = true in the scope's settings in dagger.toml"
       }
       if (!hadManifest and template == "legacy") {
         raise "the legacy template is not available with a Dang entrypoint; choose another template or set dangEntrypoint = false"
       }
       if (fat) {
-        raise "a fat module is not available with a Dang entrypoint: dagger.json would point older engines at the Go runtime, which cannot load an importable package; set fat = false or dangEntrypoint = false"
+        raise "a fat module is not available with a Dang entrypoint: dagger.json would point older engines at the Go runtime, which cannot load an importable package; set fat = false"
       }
       let clientNames = clients.map { client => client.moduleOriginalName }
       let clientSources = clients.map { client => client.asString }
@@ -514,11 +514,11 @@ type GoSdk {
     }
     let objections = manifestObjections(manifest, runtimeKey)
     if (objections.length > 0) {
-      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them or set dangEntrypoint = false"
+      raise fileName + " has settings a Dang entrypoint cannot carry (" + objections.join(", ") + "); remove them before generating"
     }
     let uncovered = uncoveredDependencies(fileName, manifest, clientNames, clientSources)
     if (uncovered.length > 0) {
-      raise fileName + " depends on " + uncovered.join(", ") + ", which the scope's clients do not list; a Dang entrypoint reaches its dependencies through them: add them to the scope's clients in dagger.toml or set dangEntrypoint = false"
+      raise fileName + " depends on " + uncovered.join(", ") + ", which the scope's clients do not list; a Dang entrypoint reaches its dependencies through them: add them to the scope's clients in dagger.toml"
     }
     null
   }
@@ -534,7 +534,7 @@ type GoSdk {
       return [] :: [String!]!
     }
     let entries = manifest.field(["dependencies"]).contents :: String!
-    let missing = fileName + " has a dependency without name or source; remove it or set dangEntrypoint = false"
+    let missing = fileName + " has a dependency without name or source; give it a name or source, or remove it"
     # dagger.json also accepts a dependency as a bare source string. The form
     # is told apart before decoding, so a refusal is not rescued.
     let strings = ((JSON.decode(entries) :: [String!]!).length >= 0) rescue { err: Error => false }
@@ -546,7 +546,7 @@ type GoSdk {
     }
     let objects = ((JSON.decode(entries) :: [{{name: String, source: String}}!]!).length >= 0) rescue { err: Error => false }
     if (objects == false) {
-      raise fileName + " mixes dependency strings and objects; write each dependency as an object with its name, or set dangEntrypoint = false"
+      raise fileName + " mixes dependency strings and objects; write each dependency as an object with a name or source"
     }
     (JSON.decode(entries) :: [{{name: String, source: String}}!]!).map { dependency =>
       let name = dependency.name ?? ""

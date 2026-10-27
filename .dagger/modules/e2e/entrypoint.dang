@@ -500,9 +500,11 @@ type EntrypointChecks {
   """
   refusalsCheck(ws: Workspace!): Void @check {
     let app = ws.withWorkdir(appPath)
+    let remoteManifest = "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = 'github.com/example/sdk/entrypoint@v1'\n"
+    let remote = app.withNewFile("dagger-module.toml", remoteManifest)
 
-    let withClient = goSdk(dangEntrypoint: true, unifiedClients: false).generateScope(
-      ws: app,
+    let withClient = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
+      ws: remote,
       isModule: true,
       name: "generate-app",
       clients: [ws.moduleSource("/" + clientTargetPath)],
@@ -510,7 +512,7 @@ type EntrypointChecks {
       err: Error => err.message
     }
     assert("a client was accepted: " + firstLine(withClient)) {
-      withClient.contains("set dangEntrypoint = false")
+      withClient.contains("set unifiedClients = true in the scope's settings in dagger.toml")
     }
 
     let legacyPath = outputRoot + "/entrypoint-legacy"
@@ -526,8 +528,8 @@ type EntrypointChecks {
       legacy.contains("legacy template")
     }
 
-    let fat = goSdk(dangEntrypoint: true, fat: true).generateScope(
-      ws: app,
+    let fat = goSdk(dangEntrypoint: false, fat: true).generateScope(
+      ws: remote,
       isModule: true,
       name: "generate-app",
       clients: [],
@@ -558,8 +560,9 @@ type EntrypointChecks {
     let droppedTOML = "name = \"generate-app\"\ninclude = [\"extra\"]\ndisableDefaultFunctionCaching = true\nsource = \"src\"\n\n" +
       "[runtime]\n  source = \"python\"\n\n[codegen]\n  automaticGitignore = false\n\n" +
       "[[clients]]\n  generator = \"go\"\n  directory = \"client\"\n\n" +
-      "[[dependencies]]\n  name = \"dep\"\n  source = \"../dep\"\n"
-    let dropped = goSdk(dangEntrypoint: true).generateScope(
+      "[[dependencies]]\n  name = \"dep\"\n  source = \"../dep\"\n\n" +
+      "[entrypoint]\n  kind = 'dang'\n  source = 'github.com/example/sdk/entrypoint@v1'\n"
+    let dropped = goSdk(dangEntrypoint: false).generateScope(
       ws: app.withNewFile("dagger-module.toml", droppedTOML),
       isModule: true,
       name: "generate-app",
@@ -568,12 +571,12 @@ type EntrypointChecks {
       err: Error => err.message
     }
     assert("dropped manifest settings were accepted: " + firstLine(dropped)) {
-      dropped.contains("dagger-module.toml has settings a Dang entrypoint cannot carry (disableDefaultFunctionCaching, source, clients, runtime); remove them or set dangEntrypoint = false")
+      dropped.contains("dagger-module.toml has settings a Dang entrypoint cannot carry (disableDefaultFunctionCaching, source, clients, runtime); remove them before generating")
     }
 
     let droppedJSON = "{\"name\": \"generate-app\", \"sdk\": \"go\", \"dependencies\": [{\"name\": \"dep\", \"source\": \"../dep\"}]}\n"
-    let droppedLegacy = goSdk(dangEntrypoint: true).generateScope(
-      ws: app.withNewFile("dagger.json", droppedJSON),
+    let droppedLegacy = goSdk(dangEntrypoint: false).generateScope(
+      ws: remote.withNewFile("dagger.json", droppedJSON),
       isModule: true,
       name: "generate-app",
       clients: [],
@@ -582,6 +585,31 @@ type EntrypointChecks {
     }
     assert("dropped dagger.json settings were accepted: " + firstLine(droppedLegacy)) {
       droppedLegacy.contains("dagger.json depends on dep, which the scope's clients do not list")
+    }
+
+    let nestedPath = goScopePath + "/remote-entrypoint"
+    let nested = ws
+      .withNewFile(nestedPath + "/dagger-module.toml", remoteManifest)
+      .withNewFile(nestedPath + "/main.go", "package generate_app\n\ntype GenerateApp struct{}\n")
+      .withWorkdir(nestedPath)
+    let parentGoMod = goSdk(dangEntrypoint: false).generateScope(
+      ws: nested, isModule: true, name: "generate-app", clients: [],
+    ).file("dagger.gen.go").contents rescue { err: Error => err.message }
+    assert("parent go.mod refusal lacks a usable remedy: " + firstLine(parentGoMod)) {
+      parentGoMod.contains("create a go.mod there before generating")
+    }
+    let independent = goSdk(dangEntrypoint: false).generateScope(
+      ws: nested.withNewFile("go.mod", "module example.com/remote-entrypoint\n\ngo 1.26.1\n"),
+      isModule: true, name: "generate-app", clients: [],
+    )
+    assert("creating a module-local go.mod did not allow remote entrypoint migration") {
+      independent.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
+        independent.file("internal/dagger/entrypoint/main.dang").contents.contains("type Entrypoint implements ModuleEntrypoint")
+    }
+    [withClient, fat, dropped, droppedLegacy, parentGoMod].map { refusal =>
+      assert("a remote entrypoint refusal recommends an ineffective opt-out: " + firstLine(refusal)) {
+        refusal.contains("dangEntrypoint = false") == false
+      }
     }
 
     # Any local Dang entrypoint keeps the module off the Go runtime, however
