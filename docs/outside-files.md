@@ -169,15 +169,16 @@ the module directory: run dagger generate`.
 ## Migration
 
 A module that uses the Go runtime keeps it after an SDK update.
-With `dangEntrypoint` unset, only new modules get the entrypoint, and
-`dagger generate` reports no change for an existing module.
+With `dangEntrypoint` unset, generation keeps existing runtimes and local
+entrypoints.
 A module whose manifest names a remote `[entrypoint]` source, a module or
 git reference, gets the generated entrypoint at its next `dagger generate`,
-which reports the replacement; the module then needs Dagger
-v1.0.0-beta.18 or later.
+which reports the replacement.
+This replacement also applies when `dangEntrypoint = false`.
+The module then needs Dagger v1.0.0-beta.18 or later.
+Before generating again, remove `dangEntrypoint = false` or set it to `true`;
+the Go runtime cannot load a module with a generated entrypoint.
 A local `[entrypoint]` path and a custom `[runtime]` stay the author's.
-With `dangEntrypoint = false`, a remote `[entrypoint]` stays as well: the
-explicit opt-out wins over the replacement.
 To switch one module, set these settings on its scope in `dagger.toml`, then
 run `dagger generate`:
 

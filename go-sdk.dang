@@ -71,10 +71,11 @@ type GoSdk {
   importable packages with a go.mod in the module directory. The entrypoint
   needs Dagger v1.0.0-beta.18 or later; older engines refuse it at load with
   `field "types": missing argument "workspace" required by interface`.
-  Unset enables entrypoints for new modules and keeps the runner of existing
-  modules. Explicit true migrates a supported existing module; false keeps the
-  Go runtime. A migrated module whose code uses the global `dag` also needs
-  globalClient = true.
+  Unset enables entrypoints for new modules and keeps existing runtimes and
+  local entrypoints. A remote entrypoint is replaced with the generated one,
+  even when this setting is false. Explicit true migrates a supported existing
+  module; false keeps the Go runtime. A migrated module whose code uses the
+  global `dag` also needs globalClient = true.
 
   The entrypoint's sources function returns what the build reads: the module
   directory and the files outside it that reach the build through the local
@@ -185,10 +186,12 @@ type GoSdk {
   replace a remote entrypoint with the generated one.
   """
   let usesEntrypoint(ws: Workspace!, hadManifest: Boolean!): Boolean! {
-    if (dangEntrypoint != null) {
+    if (remoteEntrypoint(ws) != "") {
+      true
+    } else if (dangEntrypoint != null) {
       dangEntrypoint ?? false
     } else if (hadManifest) {
-      hasGeneratedEntrypoint(ws) or remoteEntrypoint(ws) != ""
+      hasGeneratedEntrypoint(ws)
     } else {
       !fat and template != "legacy"
     }
@@ -263,7 +266,7 @@ type GoSdk {
     if (optionalManifest == null) { return false }
     let manifest = optionalManifest :: Dagger.JSONValue!
     let fields = manifest.fields
-    if (fields.contains("entrypoint") and !hasGeneratedEntrypoint(ws) and (dangEntrypoint == false or remoteEntrypoint(ws) == "")) { return true }
+    if (fields.contains("entrypoint") and !hasGeneratedEntrypoint(ws) and remoteEntrypoint(ws) == "") { return true }
     let key = if (fields.contains("runtime")) { "runtime" } else if (fields.contains("sdk")) { "sdk" } else { "" }
     if (key == "") { return false }
     let source = runtimeSource(manifest.field([key]))

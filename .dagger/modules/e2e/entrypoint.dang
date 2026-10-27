@@ -374,9 +374,12 @@ type EntrypointChecks {
         replaced.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
           replaced.file("internal/dagger/entrypoint/main.dang").contents.contains("type Entrypoint implements ModuleEntrypoint")
       }
-      let kept = goSdk(dangEntrypoint: false).generateScope(ws: remote, isModule: true, name: "generate-app", clients: [])
-      assert("dangEntrypoint = false did not keep a remote entrypoint") {
-        kept.changes(remote).isEmpty
+      let explicitFalse = goSdk(dangEntrypoint: false, globalClient: true).generateScope(ws: remote, isModule: true, name: "generate-app", clients: [])
+      assert("dangEntrypoint = false changed remote entrypoint replacement") {
+        explicitFalse.changes(replaced).isEmpty
+      }
+      assert("replacing the remote entrypoint changed the module source") {
+        explicitFalse.file("main.go").contents == remote.file("main.go").contents
       }
     }
     null
