@@ -155,10 +155,10 @@ type GoSdk {
     if (isModule and entrypoint) {
       let remote = remoteEntrypoint(initialized)
       if (remote != "") {
-        print("module " + JSON.encode(name) + " named the entrypoint " + remote + " in its manifest; the generated entrypoint replaces it and needs Dagger " + sourcesFloor + " or later")
+        print("module " + JSON.encode(name) + " named the entrypoint " + remote + " in its manifest; the generated entrypoint replaces it and needs Dagger " + versions(ws).sourcesFloor + " or later")
       }
       # Embedded bindings come from the running engine, so they target it.
-      let target = if (unified) { targetRelease("module " + JSON.encode(name)) } else { engineTarget }
+      let target = if (unified) { targetRelease("module " + JSON.encode(name), versions(ws)) } else { engineTarget }
       let withClients = if (unified) {
         generateStandaloneClients(initialized, clients, true, target)
       } else { initialized }
@@ -278,18 +278,15 @@ type GoSdk {
   }
 
   """
-  The oldest engine the generated entrypoint loads on: sourcesFloor in
-  cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/v2.go; a test
-  there keeps this literal equal to it.
+  The toml file containing versions to set.
   """
-  let sourcesFloor: String! = "v1.0.0-beta.18"
+  let versionsFile: String! = "versions.toml"
 
-  """
-  The release this Go SDK is built for: the newest published dagger.io/dagger,
-  whose API its generated code uses by default. Bump it with each SDK
-  release; a test checks that the library release exists.
-  """
-  let defaultTarget: String! = "v1.0.0-beta.21"
+  versions(ws: Workspace!) Versions! {
+    let contents= ws.file(versionsFile).contents
+    let versions: Versions = TOML.decode(contents)
+    versions
+  }
 
   """The running engine's release, which embedded bindings follow; empty when its version is not a release."""
   let engineTarget: String! {
@@ -302,18 +299,18 @@ type GoSdk {
   cannot generate for is refused, with how to fix it; subject names the
   module or scope, so a refusal among several generated at once says which.
   """
-  let targetRelease(subject: String!): String! {
-    if (targetVersion == "") { return defaultTarget }
-    let fix = "Set targetVersion between " + sourcesFloor + " and " + defaultTarget + " in the scope's settings in dagger.toml, or remove it"
+  let targetRelease(subject: String!, versions: Versions!): String! {
+    if (targetVersion == "") { return versions.defaultTarget }
+    let fix = "Set targetVersion between " + versions.sourcesFloor + " and " + versions.defaultTarget + " in the scope's settings in dagger.toml, or remove it"
     if (isRelease(targetVersion) == false) {
-      raise subject + " pins targetVersion " + JSON.encode(targetVersion) + ", which is not a Dagger release such as " + defaultTarget + ". " + fix
+      raise subject + " pins targetVersion " + JSON.encode(targetVersion) + ", which is not a Dagger release such as " + versions.defaultTarget + ". " + fix
     }
     let target = release(targetVersion)
-    if (releasePrecedes(target, sourcesFloor)) {
-      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it is below " + sourcesFloor + ", the oldest engine the generated entrypoint loads on. " + fix
+    if (releasePrecedes(target, versions.sourcesFloor)) {
+      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it is below " + versions.sourcesFloor + ", the oldest engine the generated entrypoint loads on. " + fix
     }
-    if (releasePrecedes(defaultTarget, target)) {
-      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it targets " + defaultTarget + " at most. " + fix + ", or install the SDK release built for " + target
+    if (releasePrecedes(versions.defaultTarget, target)) {
+      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it targets " + versions.defaultTarget + " at most. " + fix + ", or install the SDK release built for " + target
     }
     target
   }
@@ -371,7 +368,7 @@ type GoSdk {
       # the running engine.
       let unifiedScope = clients.filter { client => unifiedClient(scoped, client, moduleUnified) }.length > 0
       let pinned = if (target != "") { target } else if (targetVersion != "" or unifiedScope) {
-        targetRelease("scope " + JSON.encode(goScope))
+        targetRelease("scope " + JSON.encode(goScope), versions(ws))
       } else { "" }
       let base = clientCodegenBase(scoped.file("go.mod")).withDirectory(
         "/out",
@@ -1016,4 +1013,19 @@ type GoSdk {
       xNumber or (yNumber == false and x < y)
     }
   }
+}
+
+type Versions {
+  """
+  The oldest engine the generated entrypoint loads on: sourcesFloor in
+  cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/v2.go; a test
+  there keeps this literal equal to it.
+  """
+  pub sourcesFloor: String!
+  """
+  The release this Go SDK is built for: the newest published dagger.io/dagger,
+  whose API its generated code uses by default. Bump it with each SDK
+  release; a test checks that the library release exists.
+  """
+  pub defaultTarget: String!
 }
