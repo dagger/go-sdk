@@ -9,6 +9,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -27,6 +28,7 @@ import (
 	clientgen "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/library"
 
 	"module-codegen/discovery"
 )
@@ -50,6 +52,8 @@ type GenerateConfig struct {
 	// Generation stages and compiles copies of this tree. Empty means
 	// ModuleRoot.
 	BuildRoot string
+	// Notes receives what generation reports without refusing the module.
+	Notes io.Writer
 }
 
 func generate(ctx context.Context, cfg GenerateConfig) error {
@@ -102,23 +106,42 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("resolve module path relative to go.mod: %w", err)
 	}
 	moduleSubpath = filepath.ToSlash(moduleSubpath)
-	if err := pinDagger(goModPath, cfg.DaggerVersion); err != nil {
+	// Unified bindings take core from the library, so it is pinned to exactly
+	// the targeted release; embedded bindings take core from the engine and
+	// only need a library at least as new as the engine.
+	subject := fmt.Sprintf("module %q", cfg.ModuleName)
+	replaced, err := library.Replaced(goModPath, cfg.DaggerVersion)
+	if err != nil {
+		return err
+	}
+	exact := cfg.UnifiedClient && !replaced
+	if cfg.UnifiedClient && replaced && cfg.Notes != nil {
+		fmt.Fprintln(cfg.Notes, library.ReplaceNote(subject, cfg.DaggerVersion))
+	}
+	if exact {
+		if err := library.CheckResolvable(filepath.Dir(goModPath), subject, cfg.DaggerVersion); err != nil {
+			return err
+		}
+	}
+	if err := library.Pin(goModPath, cfg.DaggerVersion, exact); err != nil {
 		return err
 	}
 	runtimeVersion := cfg.DaggerVersion
-	// Bootstrap bindings do not import the runtime. Remember an existing
-	// higher requirement before tidy can remove it as temporarily unused.
-	modData, err := os.ReadFile(goModPath)
-	if err != nil {
-		return err
-	}
-	mod, err := modfile.Parse(goModPath, modData, nil)
-	if err != nil {
-		return err
-	}
-	for _, required := range mod.Require {
-		if required.Mod.Path == "dagger.io/dagger" && semver.Compare(required.Mod.Version, runtimeVersion) > 0 {
-			runtimeVersion = required.Mod.Version
+	if !exact {
+		// Bootstrap bindings do not import the runtime. Remember an existing
+		// higher requirement before tidy can remove it as temporarily unused.
+		modData, err := os.ReadFile(goModPath)
+		if err != nil {
+			return err
+		}
+		mod, err := modfile.Parse(goModPath, modData, nil)
+		if err != nil {
+			return err
+		}
+		for _, required := range mod.Require {
+			if required.Mod.Path == library.Path && semver.Compare(required.Mod.Version, runtimeVersion) > 0 {
+				runtimeVersion = required.Mod.Version
+			}
 		}
 	}
 	if err := pinGeneratedTelemetry(goModPath); err != nil {
@@ -180,7 +203,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	// The bootstrap has no runtime SDK import, so its tidy may remove the
 	// requirement. Restore the caller's pin before unified bindings import core.
-	if err := pinDagger(goModPath, runtimeVersion); err != nil {
+	if err := library.Pin(goModPath, runtimeVersion, exact); err != nil {
 		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {
@@ -237,6 +260,11 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	if err := normalizeGoMod(goModPath); err != nil {
 		return fmt.Errorf("normalize generated go.mod: %w", err)
+	}
+	if exact {
+		if err := library.CheckSelection(ctx, root, subject, cfg.DaggerVersion); err != nil {
+			return err
+		}
 	}
 	buildRoot := root
 	if cfg.BuildRoot != "" {
@@ -408,43 +436,6 @@ func ensureGoModule(root, moduleName string) (packageImport, goModPath string, _
 	return "dagger/" + strcase.ToKebab(moduleName), path, nil
 }
 
-func pinDagger(path, version string) error {
-	if version == "" {
-		return nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	mod, err := modfile.Parse(path, data, nil)
-	if err != nil {
-		return err
-	}
-	for _, replace := range mod.Replace {
-		if replace.Old.Path == "dagger.io/dagger" {
-			return nil
-		}
-	}
-	for _, require := range mod.Require {
-		if require.Mod.Path == "dagger.io/dagger" && semver.Compare(require.Mod.Version, version) >= 0 {
-			return nil
-		}
-	}
-	// A development engine reports an unreleased version. Pinning it would
-	// leave a requirement that go mod tidy cannot resolve.
-	if !moduleVersionExists(filepath.Dir(path), "dagger.io/dagger", version) {
-		return nil
-	}
-	if err := mod.AddRequire("dagger.io/dagger", version); err != nil {
-		return err
-	}
-	body, err := mod.Format()
-	if err != nil {
-		return err
-	}
-	return writeFile(path, body)
-}
-
 // The embedded transport needs only propagation from otel-go, but that package
 // also imports the experimental log SDK. Seed its known dependency graph before
 // tidy discovers direct OTel imports: resolving those imports independently at
@@ -499,18 +490,6 @@ func pinGeneratedTelemetry(path string) error {
 		return err
 	}
 	return writeFile(path, body)
-}
-
-// moduleVersionExists reports whether the module proxy can resolve a version.
-// A failure to reach the proxy reads as "cannot pin", like the client helper.
-func moduleVersionExists(dir, modulePath, version string) bool {
-	cmd := exec.Command("go", "list", "-m", "-e", "-f", "{{if .Error}}unresolved{{end}}", modulePath+"@"+version)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(out)) == ""
 }
 
 // generatedMarker matches the header of a file that a generator owns: Go's

@@ -95,7 +95,16 @@ Generation refuses on v1.0.0-beta.16 and older.
 
 Each go-sdk release targets one Dagger release, v1.0.0-beta.21 today.
 A module with the Dang entrypoint and unified clients pins
-`dagger.io/dagger` in `go.mod` to that release.
+`dagger.io/dagger` in `go.mod` to exactly that release.
+When another requirement of `go.mod` needs a later `dagger.io/dagger`,
+generation refuses and names that requirement: raise `targetVersion`, or
+require a version that needs no later library.
+A scope without a module pins the library of its clients the same way, to
+`targetVersion` when set and to the SDK's release when a client uses shared
+core types, and checks it after its own `go mod tidy`.
+A `replace` directive for `dagger.io/dagger` is a development exception:
+generation keeps it, reports it, and the generated code follows the
+replacement instead of the targeted release.
 Its generated entrypoint declares the release to the engine, in the
 `DAGGER_CLIENT_VERSION` variable of the process that runs the module; a
 generated standalone client with a target announces it when it starts a

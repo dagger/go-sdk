@@ -6,10 +6,13 @@ type GoSdk {
   The Dagger release the module's generated code targets, such as
   v1.0.0-beta.20; the v prefix and build metadata are optional. Empty means
   the release this Go SDK is built for, v1.0.0-beta.21. A module with a
-  Dang entrypoint and unified clients pins dagger.io/dagger to the targeted
-  release and declares it to the engine when the module runs, so an engine
-  update changes none of its generated files and an SDK update changes
-  them. The setting pins an older release, from
+  Dang entrypoint and unified clients pins dagger.io/dagger to exactly the
+  targeted release and declares it to the engine when the module runs, so
+  an engine update changes none of its generated files and an SDK update
+  changes them. A go.mod requirement that needs a later release is refused
+  until the target is raised; a replace directive for dagger.io/dagger is a
+  development exception that generation reports. The setting pins an older
+  release, from
   v1.0.0-beta.18, the oldest engine the entrypoint loads on, up to the
   SDK's; outside that range, generation refuses it. Embedded bindings and
   the Go runtime follow the running engine instead and refuse this setting.
@@ -344,8 +347,9 @@ type GoSdk {
       ).withNewFile("/removed-clients.txt", "")
       # Keep prior client outputs and go.mod updates in the same container.
       # Only the completed batch needs to be merged into the workspace.
+      let subject = "scope " + JSON.encode(goScope)
       let generated = clients.reduce(base) { current, client =>
-        generateStandaloneClient(current, client, unifiedClient(scoped, client, moduleUnified), ws, pinned)
+        generateStandaloneClient(current, client, unifiedClient(scoped, client, moduleUnified), ws, pinned, subject)
       }
       let pruned = generated.withExec([
         "dagger-go-sdk-codegen", "prune-clients",
@@ -358,7 +362,13 @@ type GoSdk {
       # which the next step has not generated yet. Its bootstrap and final
       # tidies run after that package exists; keep pruning here for empty batches.
       let completed = if (moduleUnified) { pruned } else {
-        pruned.withWorkdir("/out").withExec(["go", "mod", "tidy"])
+        let tidied = pruned.withWorkdir("/out").withExec(["go", "mod", "tidy"])
+        if (pinned == "") { tidied } else {
+          let checked = runTool(tidied, ["dagger-go-sdk-codegen", "check-library", "--module-root", "/out", "--target", pinned, "--subject", subject])
+          let notes = checked.stdout.trimSpace
+          if (notes != "") { print(notes) }
+          checked
+        }
       }
       let merged = scoped.withDirectory(".", completed.directory("/out"))
       let removed = pruned.file("/removed-clients.txt").contents.split("\n").filter { p => p != "" }
@@ -631,6 +641,9 @@ type GoSdk {
       "--global-client=" + JSON.encode(globalClient ?? false),
       "--removed-list", "/removed.txt",
     ])
+    # The generator reports a development exception on its standard output.
+    let notes = codegen.stdout.trimSpace
+    if (notes != "") { print(notes) }
     let generated = runTool(codegen, [
       "entrypoint-contract",
       "--entrypoint-dir", buildRoot + "/" + prefix + entrypointPath,
@@ -858,11 +871,12 @@ type GoSdk {
   }
 
   """Generate one target client in the batch's Go module at /out; pinned is the library the scope pins, or empty."""
-  let generateStandaloneClient(ctr: Container!, client: ModuleSource!, unified: Boolean!, ws: Workspace!, pinned: String!): Container! {
+  let generateStandaloneClient(ctr: Container!, client: ModuleSource!, unified: Boolean!, ws: Workspace!, pinned: String!, subject: String!): Container! {
     let targetName = client.moduleOriginalName
     let outputPath = "internal/dagger/clients/" + targetName
     let metaJSON = "{\"engineVersion\":" + JSON.encode(client.engineVersion) +
       ",\"targetVersion\":" + JSON.encode(pinned) +
+      ",\"subject\":" + JSON.encode(subject) +
       ",\"module\":" + boundModuleJSON(
         JSON.encode(client.kind),
         client.sourceRootSubpath,

@@ -70,6 +70,40 @@ type TargetChecks {
   }
 
   """
+  The library is pinned to exactly the target: a go.mod requirement that
+  needs a later library is refused with that requirement named, until the
+  target is raised to what it needs.
+  """
+  mismatchCheck(ws: Workspace!): Void @check {
+    let name = "target-mismatch"
+    let root = outputRoot + "/" + name
+    let scopePath = root + "/app"
+    let input = ws
+      .withNewFile(scopePath + "/go.mod", "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n")
+      .withNewFile(scopePath + "/main.go", "package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\nfunc (*App) Greeting() string { return greet.Greeting() }\n")
+      .withNewFile(root + "/lib/go.mod", "module example.com/lib\n\ngo 1.26.1\n\nrequire dagger.io/dagger " + sdkTarget + "\n")
+      .withNewFile(root + "/lib/greet/greet.go", "package greet\n\nfunc Greeting() string { return \"hello\" }\n")
+      .withWorkdir(scopePath)
+    let mismatch = " targets Dagger v1.0.0-beta.20, and example.com/lib v0.0.0 requires dagger.io/dagger " + sdkTarget +
+      ": set targetVersion to " + sdkTarget + " or later in the scope's settings in dagger.toml, or require a version of example.com/lib that needs dagger.io/dagger v1.0.0-beta.20 or earlier"
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.20"), input, name, "module " + JSON.encode(name) + mismatch)
+    let raised = goSdk.generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the library is not pinned to the raised target:\n" + raised.file("go.mod").contents) {
+      pins(raised, sdkTarget)
+    }
+
+    # A scope without a module pins its clients' library the same way, and
+    # checks it after its own tidy.
+    let scope = goSdk(targetVersion: "v1.0.0-beta.20", dangEntrypoint: false, unifiedClients: false).generateScope(
+      ws: input, isModule: false, name: name, clients: [ws.moduleSource("/" + dependencyPath)],
+    ).file("go.mod").contents rescue { err: Error => err.message }
+    assert("a scope without a module did not refuse the raised library:\n" + scope) {
+      scope.contains("scope " + JSON.encode(scopePath) + mismatch)
+    }
+    null
+  }
+
+  """
   Generation refuses a target the SDK cannot generate for and says how to
   fix it: a setting below the floor, above the SDK's release, or not a
   release; a setting on a module whose bindings follow the running engine;

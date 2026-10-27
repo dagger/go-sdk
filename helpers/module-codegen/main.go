@@ -42,6 +42,7 @@ func run() error {
 	flag.BoolVar(&cfg.UnifiedClient, "unified", false, "reuse core bindings and shared sessions")
 	flag.BoolVar(&cfg.GlobalClient, "global-client", false, "generate the compatibility unqualified dag API")
 	flag.Parse()
+	cfg.Notes = os.Stdout
 
 	if cfg.ModuleRoot == "" {
 		return fmt.Errorf("--module-root is required")

@@ -219,29 +219,6 @@ func TestEnsureGoModuleUsesEnclosingModule(t *testing.T) {
 	}
 }
 
-func TestPinDaggerKeepsReplaceAndNewerVersion(t *testing.T) {
-	for name, goMod := range map[string]string{
-		"replace":        "module example.com/app\n\ngo 1.25\n\nreplace dagger.io/dagger => ../sdk\n",
-		"newer required": "module example.com/app\n\ngo 1.25\n\nrequire dagger.io/dagger v1.0.0-beta.20\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "go.mod")
-			writeTestFile(t, path, goMod)
-
-			if err := pinDagger(path, "v1.0.0-beta.14"); err != nil {
-				t.Fatal(err)
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(data) != goMod {
-				t.Errorf("go.mod changed:\n%s", data)
-			}
-		})
-	}
-}
-
 func TestPinGeneratedTelemetryPreservesUserChoices(t *testing.T) {
 	for name, goMod := range map[string]string{
 		"replace": "module example.com/app\n\ngo 1.26\n\nreplace github.com/dagger/otel-go => ../telemetry\n",
