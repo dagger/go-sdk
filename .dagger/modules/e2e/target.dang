@@ -107,10 +107,10 @@ type TargetChecks {
     let root = outputRoot + "/" + name
     let scopePath = root + "/app"
     let input = ws
-      .withNewFile(scopePath + "/go.mod", "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace dagger.io/dagger v1.0.0-beta.20 => dagger.io/dagger v1.0.0-beta.20\n")
+      .withNewFile(scopePath + "/go.mod", "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ./lib\n\nreplace dagger.io/dagger v1.0.0-beta.20 => dagger.io/dagger v1.0.0-beta.20\n")
       .withNewFile(scopePath + "/main.go", "package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\nfunc (*App) Greeting() string { return greet.Greeting() }\n")
-      .withNewFile(root + "/lib/go.mod", "module example.com/lib\n\ngo 1.26.1\n\nrequire dagger.io/dagger " + sdkTarget + "\n")
-      .withNewFile(root + "/lib/greet/greet.go", "package greet\n\nfunc Greeting() string { return \"hello\" }\n")
+      .withNewFile(scopePath + "/lib/go.mod", "module example.com/lib\n\ngo 1.26.1\n\nrequire dagger.io/dagger " + sdkTarget + "\n")
+      .withNewFile(scopePath + "/lib/greet/greet.go", "package greet\n\nfunc Greeting() string { return \"hello\" }\n")
       .withWorkdir(scopePath)
     let mismatch = " targets Dagger v1.0.0-beta.20, and example.com/lib v0.0.0 requires dagger.io/dagger " + sdkTarget +
       ": set targetVersion to " + sdkTarget + " or later in the scope's settings in dagger.toml, or require a version of example.com/lib that needs dagger.io/dagger v1.0.0-beta.20 or earlier"
