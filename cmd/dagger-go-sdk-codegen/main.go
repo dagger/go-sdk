@@ -104,7 +104,9 @@ func run(args []string) error {
 type clientMeta struct {
 	EngineVersion string                `json:"engineVersion"`
 	Module        generator.BoundModule `json:"module"`
-	ClientVersion string                `json:"clientVersion"`
+	// TargetVersion is the dagger.io/dagger release the client pins: the
+	// targeted release of the module that generates it, or the SDK's choice.
+	TargetVersion string `json:"targetVersion"`
 	// Workspace and Git are set for a GIT_SOURCE module, to recognize a module
 	// of the Git workspace that generates the client.
 	Workspace workspaceMeta `json:"workspace"`
@@ -298,7 +300,7 @@ func runClient(args []string) error {
 	if err := generator.ValidateOwnedOverlay(ctx, state.Overlay, cfg.OutputDir); err != nil {
 		return err
 	}
-	clientVersion := meta.ClientVersion
+	clientVersion := meta.TargetVersion
 	if clientVersion == "" {
 		if *unified {
 			data, err := os.ReadFile(filepath.Join(*moduleRoot, "go.mod"))
@@ -316,7 +318,7 @@ func runClient(args []string) error {
 				}
 			}
 			if !replaced {
-				return fmt.Errorf("unified clients require clientVersion: use a published SDK containing dagger.io/dagger/core and ModuleGraphQLClient, or a local SDK replacement")
+				return fmt.Errorf("unified clients require targetVersion: use a published SDK containing dagger.io/dagger/core and ModuleGraphQLClient, or a local SDK replacement")
 			}
 		}
 		clientVersion = meta.EngineVersion // Compatibility with older SDK metadata.

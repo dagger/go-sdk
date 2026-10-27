@@ -91,6 +91,30 @@ The error prints the line above the entrypoint type, which reads
 `# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing "workspace" argument.`
 Generation refuses on v1.0.0-beta.16 and older.
 
+## The release the generated code targets
+
+Each go-sdk release targets one Dagger release, v1.0.0-beta.21 today.
+A module with the Dang entrypoint and unified clients pins
+`dagger.io/dagger` in `go.mod` to that release.
+Its generated code then depends on the SDK release, the module's sources
+and its dependencies, and not on the running engine.
+An engine update changes nothing in the module's own bindings; a client of
+another module is still read from the running engine's view of that module,
+so a change in that module's API changes the client.
+An SDK update changes the targeted release and the generated code.
+The `targetVersion` setting pins an older release, between v1.0.0-beta.18
+and the SDK's release; generation refuses a setting outside that range.
+An engine older than the targeted release is not refused: a call to a
+function that engine lacks fails when the module runs.
+`targetVersion` replaces the `clientVersion` setting; generation refuses a
+scope that still sets `clientVersion`.
+
+A module with embedded bindings or on the Go runtime targets the running
+engine instead: an engine update can change its generated files, and the
+`targetVersion` setting is refused there.
+Stable targeting needs the Dang entrypoint with unified clients; see
+Migration.
+
 ## When to generate again
 
 Run `dagger generate` again after one of these changes:
@@ -127,15 +151,18 @@ the module directory: run dagger generate`.
 A module that uses the Go runtime keeps it after an SDK update.
 With `dangEntrypoint` unset, only new modules get the entrypoint, and
 `dagger generate` reports no change for an existing module.
-To switch one module, set both settings on its scope in `dagger.toml`, then
+To switch one module, set these settings on its scope in `dagger.toml`, then
 run `dagger generate`:
 
 ```toml
 [sdks.go.scopes."path/to/module".settings]
 dangEntrypoint = true
+unifiedClients = true
 globalClient = true
 ```
 
+`unifiedClients = true` moves the bindings to the shared core library, so
+the module targets one release instead of the running engine.
 `globalClient = true` keeps the global `dag` that the module's code may use;
 without it, generation fails with `undefined: dag`.
 The same settings under `[modules.go-sdk.settings]` apply to every Go module

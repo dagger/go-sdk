@@ -1,0 +1,98 @@
+"""
+The release a module's generated code targets: the SDK's own release by
+default, or the older release the targetVersion setting pins.
+"""
+type TargetChecks {
+  let outputRoot: String! = ".dagger/modules/e2e/out"
+  let floor: String! = "v1.0.0-beta.18"
+
+  """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
+  let sdkTarget: String! = "v1.0.0-beta.21"
+
+  let pins(ws: Workspace!, release: String!): Boolean! {
+    ws.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
+  }
+
+  """
+  A first generation targets the SDK's release whatever engine runs it,
+  pins the library to that release, writes no version into the manifest,
+  and changes nothing when run again. The generated module loads.
+  """
+  defaultCheck(ws: Workspace!): Void @check {
+    let name = "target-default"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+    let first = goSdk.generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the library is not pinned to the SDK's release:\n" + first.file("go.mod").contents) {
+      pins(first, sdkTarget)
+    }
+    assert("the target reached the manifest") {
+      first.file("dagger-module.toml").contents.contains("engineVersion") == false
+    }
+    let again = goSdk.generateScope(ws: first, isModule: true, name: name, clients: [])
+    assert("generating again changed files") { again.changes(first).isEmpty }
+    let loaded = first.withWorkdir(".").moduleSource("/" + scopePath).introspectionSchemaJSON.contents
+    assert("the generated module did not load") { loaded.contains("\"__schema\"") }
+    null
+  }
+
+  """
+  The setting pins an older release, in the v form without build metadata,
+  and the running engine plays no part: generating again with the same
+  setting changes nothing. Without the setting, the module returns to the
+  SDK's release; nothing of the pin is read back from the generated code.
+  """
+  pinCheck(ws: Workspace!): Void @check {
+    let name = "target-pin"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+    let pinned = goSdk(targetVersion: "1.0.0-beta.20+0123abcd").generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the library is not pinned to the setting:\n" + pinned.file("go.mod").contents) {
+      pins(pinned, "v1.0.0-beta.20")
+    }
+    let kept = goSdk(targetVersion: "v1.0.0-beta.20").generateScope(ws: pinned, isModule: true, name: name, clients: [])
+    assert("generating again with the same pin changed files") { kept.changes(pinned).isEmpty }
+    let unpinned = goSdk.generateScope(ws: kept, isModule: true, name: name, clients: [])
+    assert("removing the setting did not return to the SDK's release:\n" + unpinned.file("go.mod").contents) {
+      pins(unpinned, sdkTarget)
+    }
+    null
+  }
+
+  """
+  Generation refuses a target the SDK cannot generate for and says how to
+  fix it: a setting below the floor, above the SDK's release, or not a
+  release; a setting on a module whose bindings follow the running engine;
+  and the clientVersion setting the target replaced.
+  """
+  refusalsCheck(ws: Workspace!): Void @check {
+    let name = "target-refusals"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+    let subject = "module " + JSON.encode(name) + " pins targetVersion "
+    let fix = "Set targetVersion between " + floor + " and " + sdkTarget + " in the scope's settings in dagger.toml, or remove it"
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.17"), input, name,
+      subject + "v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below " + floor + ", the oldest engine the generated entrypoint loads on. " + fix)
+    let above = ", which this release of the Go SDK cannot generate for: it targets " + sdkTarget + " at most. " + fix + ", or install the SDK release built for "
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.22"), input, name, subject + "v1.0.0-beta.22" + above + "v1.0.0-beta.22")
+    expectRefusal(goSdk(targetVersion: "99.0.0"), input, name, subject + "v99.0.0" + above + "v99.0.0")
+    let malformed = ", which is not a Dagger release such as " + sdkTarget + ". " + fix
+    expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta..1"), input, name, subject + "\"v1.0.0-beta..1\"" + malformed)
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.21+???"), input, name, subject + "\"v1.0.0-beta.21+???\"" + malformed)
+    let embedded = "targetVersion applies to a module with a Dang entrypoint and unified clients; this module's generated code follows the running engine: set dangEntrypoint = true and unifiedClients = true in the module's dagger.toml settings to migrate, or remove targetVersion"
+    expectRefusal(goSdk(targetVersion: sdkTarget, unifiedClients: false), input, name, embedded)
+    expectRefusal(goSdk(targetVersion: sdkTarget, dangEntrypoint: false), input, name, embedded)
+    expectRefusal(goSdk(clientVersion: "v1.0.0-beta.20"), input, name,
+      "clientVersion was renamed to targetVersion: replace clientVersion = \"v1.0.0-beta.20\" with targetVersion = \"v1.0.0-beta.20\" in the dagger.toml settings and run dagger generate")
+    null
+  }
+
+  let expectRefusal(sdk: GoSdk!, input: Workspace!, name: String!, want: String!): Void {
+    let got = sdk.generateScope(ws: input, isModule: true, name: name, clients: []).file("dagger-module.toml").contents rescue {
+      err: Error => err.message
+    }
+    assert("generation did not refuse with " + want + ":\n" + got) { got.contains(want) }
+    null
+  }
+}
