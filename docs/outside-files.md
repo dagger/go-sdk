@@ -103,12 +103,13 @@ session.
 The engine ignores `DAGGER_CLIENT_VERSION` today and serves the module at
 its own version; a later engine release reads it and serves the declared
 release instead.
-Its generated code then depends on the SDK release, the module's sources
-and its dependencies, and not on the running engine.
-An engine update changes nothing in the module's own bindings; a client of
-another module is still read from the running engine's view of that module,
-so a change in that module's API changes the client.
-An SDK update changes the targeted release and the generated code.
+The fixed core library and the module's own bindings depend on the SDK
+release, the target setting and the module's sources.
+An engine update leaves them unchanged.
+Dependency clients still read the running engine's schema.
+An engine update can change a dependency client if the engine's view of
+that dependency changes.
+An SDK update changes the targeted release unless `targetVersion` pins it.
 The `targetVersion` setting pins an older release, between v1.0.0-beta.18
 and the SDK's release; generation refuses a setting outside that range.
 An engine older than the targeted release is not refused: a call to a

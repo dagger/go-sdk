@@ -7,10 +7,14 @@ type GoSdk {
   v1.0.0-beta.20; the v prefix and build metadata are optional. Empty means
   the release this Go SDK is built for, v1.0.0-beta.21. A module with a
   Dang entrypoint and unified clients pins dagger.io/dagger to exactly the
-  targeted release and declares it to the engine when the module runs, so
-  an engine update changes none of its generated files and an SDK update
-  changes them. A go.mod requirement that needs a later release is refused
-  until the target is raised; a replace directive for dagger.io/dagger is a
+  targeted release. An engine update leaves that core library and the
+  module's own bindings unchanged. Dependency clients read the running
+  engine's schema and can change when its view of a dependency changes.
+  An SDK update changes the targeted release unless this setting pins it.
+  The entrypoint sets DAGGER_CLIENT_VERSION for the module process.
+  The engine ignores this declaration until a future engine change.
+  A go.mod requirement that needs a later release is refused until the
+  target is raised; a replace directive for dagger.io/dagger is a
   development exception that generation reports. The setting pins an older
   release, from v1.0.0-beta.18, the oldest engine the entrypoint loads on,
   up to the SDK's; outside that range, generation refuses it. Embedded
