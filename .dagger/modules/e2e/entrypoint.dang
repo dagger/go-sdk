@@ -320,7 +320,10 @@ type EntrypointChecks {
     null
   }
 
-  """Automatic runner selection preserves existing legacy and custom runners."""
+  """
+  Automatic runner selection preserves existing legacy and custom runners,
+  and replaces a remote entrypoint with the generated one.
+  """
   defaultCompatibilityCheck(ws: Workspace!): Void @check {
     let legacyManifest = "name = 'generate-app'\n[runtime]\nsource = 'go'\n"
     let input = ws.withWorkdir(appPath).withNewFile("dagger-module.toml", legacyManifest)
@@ -358,6 +361,22 @@ type EntrypointChecks {
       let retained = goSdk.generateScope(ws: custom, isModule: true, name: "generate-app", clients: [])
       assert("automatic generation replaced a custom runner") {
         retained.changes(custom).isEmpty
+      }
+    }
+    let remotes = [
+      "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = 'github.com/example/sdk/entrypoint@v1'\n",
+      "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = 'https://example.com/sdk.git#main:entrypoint'\n",
+    ]
+    remotes.map { manifest =>
+      let remote = input.withNewFile("dagger-module.toml", manifest)
+      let replaced = goSdk(globalClient: true).generateScope(ws: remote, isModule: true, name: "generate-app", clients: [])
+      assert("automatic generation kept a remote entrypoint:\n" + replaced.file("dagger-module.toml").contents) {
+        replaced.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
+          replaced.file("internal/dagger/entrypoint/main.dang").contents.contains("type Entrypoint implements ModuleEntrypoint")
+      }
+      let kept = goSdk(dangEntrypoint: false).generateScope(ws: remote, isModule: true, name: "generate-app", clients: [])
+      assert("dangEntrypoint = false did not keep a remote entrypoint") {
+        kept.changes(remote).isEmpty
       }
     }
     null

@@ -12,12 +12,11 @@ type GoSdk {
   changes them. A go.mod requirement that needs a later release is refused
   until the target is raised; a replace directive for dagger.io/dagger is a
   development exception that generation reports. The setting pins an older
-  release, from
-  v1.0.0-beta.18, the oldest engine the entrypoint loads on, up to the
-  SDK's; outside that range, generation refuses it. Embedded bindings and
-  the Go runtime follow the running engine instead and refuse this setting.
-  In a scope without a module, it pins the library of the standalone
-  clients the same way, by default for unified clients only.
+  release, from v1.0.0-beta.18, the oldest engine the entrypoint loads on,
+  up to the SDK's; outside that range, generation refuses it. Embedded
+  bindings and the Go runtime follow the running engine instead and refuse
+  this setting. In a scope without a module, it pins the library of the
+  standalone clients the same way, by default for unified clients only.
   """
   targetVersion: String! = ""
 
@@ -149,6 +148,10 @@ type GoSdk {
     }
 
     if (isModule and entrypoint) {
+      let remote = remoteEntrypoint(initialized)
+      if (remote != "") {
+        print("module " + JSON.encode(name) + " named the entrypoint " + remote + " in its manifest; the generated entrypoint replaces it and needs Dagger " + sourcesFloor + " or later")
+      }
       # Embedded bindings come from the running engine, so they target it.
       let target = if (unified) { targetRelease("module " + JSON.encode(name)) } else { engineTarget }
       let withClients = if (unified) {
@@ -177,12 +180,15 @@ type GoSdk {
     }
   }
 
-  """Choose the new layout for fresh modules and retain existing runners."""
+  """
+  Choose the new layout for fresh modules, retain existing runners, and
+  replace a remote entrypoint with the generated one.
+  """
   let usesEntrypoint(ws: Workspace!, hadManifest: Boolean!): Boolean! {
     if (dangEntrypoint != null) {
       dangEntrypoint ?? false
     } else if (hadManifest) {
-      hasGeneratedEntrypoint(ws)
+      hasGeneratedEntrypoint(ws) or remoteEntrypoint(ws) != ""
     } else {
       !fat and template != "legacy"
     }
@@ -228,7 +234,26 @@ type GoSdk {
     ownership.fields.contains("files") and ownership.field(["files"]).fields.contains(path)
   }
 
-  """A custom runtime or entrypoint remains unchanged by automatic selection."""
+  """
+  The source of the manifest's entrypoint when it is a module reference,
+  classified as the engine does; empty for a local path, which stays the
+  author's runner. The generated entrypoint replaces a remote one.
+  """
+  let remoteEntrypoint(ws: Workspace!): String! {
+    let optionalManifest = decodedManifest(ws)
+    if (optionalManifest == null) { return "" }
+    let manifest = optionalManifest :: Dagger.JSONValue!
+    if (manifest.fields.contains("entrypoint") == false) { return "" }
+    let source = stringField(manifest.field(["entrypoint"]), "source")
+    if (source == "" or source.hasPrefix(".") or source.hasPrefix("/")) { return "" }
+    if (source.contains(":")) { return source }
+    # A dot-free value is a local path; a host-like one is local only when
+    # the path exists in the module directory.
+    if (source.contains(".") == false or exists(ws, source)) { return "" }
+    source
+  }
+
+  """A custom runtime or local entrypoint remains unchanged by automatic selection."""
   let hasCustomRunner(ws: Workspace!): Boolean! {
     let optionalManifest = if (exists(ws, "dagger-module.toml")) {
       decodedManifest(ws)
@@ -238,7 +263,7 @@ type GoSdk {
     if (optionalManifest == null) { return false }
     let manifest = optionalManifest :: Dagger.JSONValue!
     let fields = manifest.fields
-    if (fields.contains("entrypoint") and !hasGeneratedEntrypoint(ws)) { return true }
+    if (fields.contains("entrypoint") and !hasGeneratedEntrypoint(ws) and (dangEntrypoint == false or remoteEntrypoint(ws) == "")) { return true }
     let key = if (fields.contains("runtime")) { "runtime" } else if (fields.contains("sdk")) { "sdk" } else { "" }
     if (key == "") { return false }
     let source = runtimeSource(manifest.field([key]))

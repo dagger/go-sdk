@@ -96,18 +96,6 @@ Generation refuses on v1.0.0-beta.16 and older.
 Each go-sdk release targets one Dagger release, v1.0.0-beta.21 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to exactly that release.
-When another requirement of `go.mod` needs a later `dagger.io/dagger`,
-generation refuses and names that requirement: raise `targetVersion`, or
-require a version that needs no later library.
-A scope without a module pins the library of its clients the same way, to
-`targetVersion` when set and to the SDK's release when a client uses shared
-core types, and checks it after its own `go mod tidy`.
-A client of another module aliases the core types of the targeted release;
-when the dependency exposes a core type that release lacks, generation
-refuses and names the dependency, the type and the release.
-A `replace` directive for `dagger.io/dagger` is a development exception:
-generation keeps it, reports it, and the generated code follows the
-replacement instead of the targeted release.
 Its generated entrypoint declares the release to the engine, in the
 `DAGGER_CLIENT_VERSION` variable of the process that runs the module; a
 generated standalone client with a target announces it when it starts a
@@ -127,6 +115,19 @@ An engine older than the targeted release is not refused: a call to a
 function that engine lacks fails when the module runs.
 `targetVersion` replaces the `clientVersion` setting; generation refuses a
 scope that still sets `clientVersion`.
+
+When another requirement of `go.mod` needs a later `dagger.io/dagger`,
+generation refuses and names that requirement: raise `targetVersion`, or
+require a version that needs no later library.
+A scope without a module pins the library of its clients the same way, to
+`targetVersion` when set and to the SDK's release when a client uses shared
+core types, and checks it after its own `go mod tidy`.
+A client of another module aliases the core types of the targeted release;
+when the dependency exposes a core type that release lacks, generation
+refuses and names the dependency, the type and the release.
+A `replace` directive for `dagger.io/dagger` is a development exception:
+generation keeps it, reports it, and the generated code follows the
+replacement instead of the targeted release.
 
 A module with embedded bindings or on the Go runtime targets the running
 engine instead: an engine update can change its generated files, and the
@@ -170,6 +171,13 @@ the module directory: run dagger generate`.
 A module that uses the Go runtime keeps it after an SDK update.
 With `dangEntrypoint` unset, only new modules get the entrypoint, and
 `dagger generate` reports no change for an existing module.
+A module whose manifest names a remote `[entrypoint]` source, a module or
+git reference, gets the generated entrypoint at its next `dagger generate`,
+which reports the replacement; the module then needs Dagger
+v1.0.0-beta.18 or later.
+A local `[entrypoint]` path and a custom `[runtime]` stay the author's.
+With `dangEntrypoint = false`, a remote `[entrypoint]` stays as well: the
+explicit opt-out wins over the replacement.
 To switch one module, set these settings on its scope in `dagger.toml`, then
 run `dagger generate`:
 
