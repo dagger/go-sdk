@@ -288,18 +288,42 @@ const idHandleSchemaJSON = `
       {
         "args": [],
         "description": "",
+        "name": "id",
+        "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}
+      },
+      {
+        "args": [],
+        "description": "",
         "name": "sync",
         "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}},
         "directives": [{"name": "expectedType", "args": [{"name": "name", "value": "\"Syncer\""}]}]
       }
     ]
   },
-  {"kind": "OBJECT", "name": "Agent", "description": "", "fields": []},
+  {
+    "kind": "OBJECT",
+    "name": "Agent",
+    "description": "",
+    "fields": [
+      {
+        "args": [],
+        "description": "",
+        "name": "id",
+        "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}
+      }
+    ]
+  },
   {
     "kind": "OBJECT",
     "name": "LLM",
     "description": "",
     "fields": [
+      {
+        "args": [],
+        "description": "",
+        "name": "id",
+        "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}
+      },
       {
         "args": [],
         "description": "",
@@ -373,11 +397,13 @@ func TestIDHandlesKeepTheirLoadedID(t *testing.T) {
 		typeName      string
 		schemaVersion string
 		want          []string
+		structName    string
+		idType        string
 	}{
-		{"_types/object.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}},
-		{"_types/object_fields.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}},
-		{"_types/interface.go.tmpl", "Syncer", "v1.0.0", []string{"SyncerClient"}},
-		{"_types/legacy_interface.go.tmpl", "Syncer", "v0.20.0", []string{"Syncer"}},
+		{"_types/object.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}, "LLM", "ID"},
+		{"_types/object_fields.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}, "", ""},
+		{"_types/interface.go.tmpl", "Syncer", "v1.0.0", []string{"SyncerClient"}, "SyncerClient", "ID"},
+		{"_types/legacy_interface.go.tmpl", "Syncer", "v0.20.0", []string{"Syncer"}, "Syncer", "SyncerID"},
 	} {
 		t.Run(tc.template, func(t *testing.T) {
 			var types introspection.Types
@@ -392,6 +418,9 @@ func TestIDHandlesKeepTheirLoadedID(t *testing.T) {
 			got := renderTemplate(t, tree.Lookup(tc.template), schema.Types.Get(tc.typeName))
 			for _, handle := range tc.want {
 				require.Regexp(t, `return &`+handle+`\{\s+query: selectNode\(q\.Root\(\), id, "\w+"\),\s+id:\s+&id,\s+\}, nil`, got)
+			}
+			if tc.structName != "" {
+				require.Regexp(t, `type `+tc.structName+` struct \{[^}]*\n\s+id\s+\*`+tc.idType+`\n`, got)
 			}
 		})
 	}
