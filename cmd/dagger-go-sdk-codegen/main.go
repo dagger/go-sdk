@@ -20,7 +20,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,7 +27,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -37,15 +35,16 @@ import (
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	gogenerator "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/library"
 	"github.com/psanford/memfs"
 	"golang.org/x/mod/modfile"
-	"golang.org/x/mod/semver"
 )
 
 const usage = `Usage: dagger-go-sdk-codegen <command> [flags]
 
 Commands:
   client  Generate a standalone client package for one module
+  check-library  Check the dagger.io/dagger a Go module selects against the targeted release
   core    Generate the core bindings of dagger.io/dagger
   normalize-source-links  Restore local source positions in workspace module bindings
 
@@ -67,6 +66,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "client":
 		return runClient(args[1:])
+	case "check-library":
+		return runCheckLibrary(args[1:])
 	case "core":
 		return runCore(args[1:])
 	case "normalize-source-links":
@@ -104,7 +105,12 @@ func run(args []string) error {
 type clientMeta struct {
 	EngineVersion string                `json:"engineVersion"`
 	Module        generator.BoundModule `json:"module"`
-	ClientVersion string                `json:"clientVersion"`
+	// TargetVersion is the dagger.io/dagger release the client pins: the
+	// targeted release of the module that generates it, or the SDK's choice.
+	TargetVersion string `json:"targetVersion"`
+	// Subject names the module or scope the client is generated for, in
+	// messages about its library.
+	Subject string `json:"subject"`
 	// Workspace and Git are set for a GIT_SOURCE module, to recognize a module
 	// of the Git workspace that generates the client.
 	Workspace workspaceMeta `json:"workspace"`
@@ -276,7 +282,7 @@ func runClient(args []string) error {
 	cfg := generator.Config{
 		OutputDir:     *outputDir,
 		PackageImport: packageImport,
-		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module},
+		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module, Version: meta.TargetVersion},
 		UnifiedClient: *unified,
 	}
 
@@ -298,8 +304,8 @@ func runClient(args []string) error {
 	if err := generator.ValidateOwnedOverlay(ctx, state.Overlay, cfg.OutputDir); err != nil {
 		return err
 	}
-	clientVersion := meta.ClientVersion
-	if clientVersion == "" {
+	clientVersion, explicit := meta.TargetVersion, meta.TargetVersion != ""
+	if !explicit {
 		if *unified {
 			data, err := os.ReadFile(filepath.Join(*moduleRoot, "go.mod"))
 			if err != nil {
@@ -316,13 +322,28 @@ func runClient(args []string) error {
 				}
 			}
 			if !replaced {
-				return fmt.Errorf("unified clients require clientVersion: use a published SDK containing dagger.io/dagger/core and ModuleGraphQLClient, or a local SDK replacement")
+				return fmt.Errorf("unified clients require targetVersion: use a published SDK containing dagger.io/dagger/core and ModuleGraphQLClient, or a local SDK replacement")
 			}
 		}
 		clientVersion = meta.EngineVersion // Compatibility with older SDK metadata.
 	}
-	if err := updateModuleGoMod(*moduleRoot, clientVersion); err != nil {
-		return err
+	goModPath := filepath.Join(*moduleRoot, "go.mod")
+	if explicit {
+		replaced, err := library.Replaced(goModPath, clientVersion)
+		if err != nil {
+			return err
+		}
+		if !replaced {
+			if err := library.CheckResolvable(*moduleRoot, subject(meta), clientVersion); err != nil {
+				return err
+			}
+		}
+	}
+	// An engine version is pinned only when it is published: a development
+	// engine reports the next, unreleased version, and a requirement nothing
+	// can resolve fails every later go command in the module.
+	if err := library.Pin(goModPath, clientVersion, explicit); err != nil {
+		return fmt.Errorf("update %s requirement: %w", library.Path, err)
 	}
 	removed, err := generator.WriteOwnedOverlay(ctx, state.Overlay, cfg.OutputDir)
 	if err != nil {
@@ -541,64 +562,45 @@ func packageImportPath(moduleRoot, outputDir string) (string, error) {
 	return path.Join(file.Module.Mod.Path, filepath.ToSlash(rel)), nil
 }
 
-// moduleVersionExists reports whether the module proxy can resolve the given
-// version. Resolution needs the network, so a failure to reach it reads as
-// "cannot pin" rather than as an error: skipping the pin leaves a module the
-// toolchain can still resolve on its own.
-func moduleVersionExists(dir, modulePath, version string) bool {
-	cmd := exec.Command("go", "list", "-m", "-e", "-f", "{{if .Error}}unresolved{{end}}", modulePath+"@"+version)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return false
+func subject(meta clientMeta) string {
+	if meta.Subject != "" {
+		return meta.Subject
 	}
-	return strings.TrimSpace(string(out)) == ""
+	return "the scope"
 }
 
-func updateModuleGoMod(moduleRoot, engineVersion string) error {
-	if engineVersion == "" {
-		return nil
-	}
-	goModPath := filepath.Join(moduleRoot, "go.mod")
-	data, err := os.ReadFile(goModPath)
-	if err != nil {
-		return fmt.Errorf("read module go.mod: %w", err)
-	}
-	file, err := modfile.Parse("go.mod", data, nil)
-	if err != nil {
-		return fmt.Errorf("parse module go.mod: %w", err)
-	}
-	for _, replace := range file.Replace {
-		if replace.Old.Path == "dagger.io/dagger" {
+const checkLibraryUsage = `Usage: dagger-go-sdk-codegen check-library [flags]
+
+Check, after go mod tidy, that the Go module at --module-root selects
+dagger.io/dagger at exactly --target, naming the requirement that raised it
+otherwise. A replace directive that applies to the selected version is a
+development exception, reported on standard output.
+`
+
+func runCheckLibrary(args []string) error {
+	flags := flag.NewFlagSet("check-library", flag.ContinueOnError)
+	var (
+		moduleRoot = flags.String("module-root", "", "root of the Go module")
+		target     = flags.String("target", "", "the Dagger release the generated code targets")
+		subject    = flags.String("subject", "the scope", "what the messages name, such as `module \"app\"`")
+	)
+	flags.Usage = func() { fmt.Fprint(flags.Output(), checkLibraryUsage) }
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
+		return err
 	}
-	for _, require := range file.Require {
-		if require.Mod.Path == "dagger.io/dagger" && semver.Compare(require.Mod.Version, engineVersion) >= 0 {
-			return nil
-		}
+	if *moduleRoot == "" || *target == "" {
+		return fmt.Errorf("check-library needs --module-root and --target")
 	}
-	// An engine release does not imply a published dagger.io/dagger of the same
-	// version: a development engine reports the next, unreleased version. Pinning
-	// that leaves a requirement nothing can resolve, and every later go command
-	// in the module fails on it — including the `go get dagger.io/dagger@<commit>`
-	// the engine's own module codegen runs, which is what would have supplied a
-	// usable version.
-	if !moduleVersionExists(moduleRoot, "dagger.io/dagger", engineVersion) {
-		return nil
-	}
-	if err := file.AddRequire("dagger.io/dagger", engineVersion); err != nil {
-		return fmt.Errorf("update dagger.io/dagger requirement: %w", err)
-	}
-	updated, err := file.Format()
+	ctx := context.Background()
+	replaced, err := library.CheckSelection(ctx, *moduleRoot, *subject, *target)
 	if err != nil {
-		return fmt.Errorf("format module go.mod: %w", err)
+		return err
 	}
-	if bytes.Equal(data, updated) {
-		return nil
-	}
-	if err := os.WriteFile(goModPath, updated, 0o600); err != nil {
-		return fmt.Errorf("write module go.mod: %w", err)
+	if replaced {
+		fmt.Println(library.ReplaceNote(*subject, *target))
 	}
 	return nil
 }

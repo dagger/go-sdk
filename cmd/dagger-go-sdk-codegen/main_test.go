@@ -2,11 +2,12 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateBoundModuleKind(t *testing.T) {
@@ -34,6 +35,34 @@ func TestValidateBoundModuleKind(t *testing.T) {
 	}
 }
 
+func TestCheckLibraryReplacement(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		replace string
+		wantErr bool
+	}{
+		{"target only", " v1.0.0-beta.20", true},
+		{"selected version", " v1.0.0-beta.21", false},
+		{"all versions", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.21\n\nreplace dagger.io/dagger"+tc.replace+" => dagger.io/dagger v1.0.0-beta.21\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte("package app\n\nimport _ \"dagger.io/dagger\"\n"), 0o600))
+			tidy := exec.Command("go", "mod", "tidy")
+			tidy.Dir = root
+			out, err := tidy.CombinedOutput()
+			require.NoError(t, err, string(out))
+			err = runCheckLibrary([]string{"--module-root", root, "--target", "v1.0.0-beta.20", "--subject", `scope "ci"`})
+			if tc.wantErr {
+				require.ErrorContains(t, err, `scope "ci" targets Dagger v1.0.0-beta.20, and go.mod selects dagger.io/dagger v1.0.0-beta.21`)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestPackageImportPath(t *testing.T) {
 	root := t.TempDir()
 	clientDir := filepath.Join(root, "internal", "dagger", "clients", "hello")
@@ -50,88 +79,5 @@ func TestPackageImportPath(t *testing.T) {
 	}
 	if want := "example.com/app/internal/dagger/clients/hello"; got != want {
 		t.Fatalf("package import = %q, want %q", got, want)
-	}
-}
-
-func TestUpdateModuleGoMod(t *testing.T) {
-	t.Run("adds the requirement", func(t *testing.T) {
-		root := t.TempDir()
-		goModPath := filepath.Join(root, "go.mod")
-		if err := os.WriteFile(goModPath, []byte("module example.com/app\n\ngo 1.25\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := updateModuleGoMod(root, "v1.0.0-beta.11"); err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(goModPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(data), "dagger.io/dagger v1.0.0-beta.11") {
-			t.Fatalf("updated go.mod does not contain Dagger requirement:\n%s", data)
-		}
-	})
-
-	t.Run("does not lower the requirement", func(t *testing.T) {
-		root := t.TempDir()
-		goModPath := filepath.Join(root, "go.mod")
-		goMod := "module example.com/app\n\ngo 1.25\n\nrequire dagger.io/dagger v1.1.0\n"
-		if err := os.WriteFile(goModPath, []byte(goMod), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := updateModuleGoMod(root, "v1.0.0"); err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(goModPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(data) != goMod {
-			t.Fatalf("go.mod changed:\n%s", data)
-		}
-	})
-
-	t.Run("preserves a custom replace", func(t *testing.T) {
-		root := t.TempDir()
-		goModPath := filepath.Join(root, "go.mod")
-		goMod := "module example.com/app\n\ngo 1.25\n\nrequire dagger.io/dagger v0.18.0\n\nreplace dagger.io/dagger => ../dagger\n"
-		if err := os.WriteFile(goModPath, []byte(goMod), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := updateModuleGoMod(root, "v1.0.0"); err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(goModPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(data) != goMod {
-			t.Fatalf("go.mod changed:\n%s", data)
-		}
-	})
-}
-
-// A development engine reports the next, unreleased version, which has no
-// published dagger.io/dagger counterpart. Pinning it would leave the module
-// with a requirement nothing can resolve.
-func TestUpdateModuleGoModSkipsUnpublishedEngineVersion(t *testing.T) {
-	root := t.TempDir()
-	goModPath := filepath.Join(root, "go.mod")
-	goMod := "module example.com/app\n\ngo 1.25\n"
-	if err := os.WriteFile(goModPath, []byte(goMod), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := updateModuleGoMod(root, "v99.0.0-does-not-exist"); err != nil {
-		t.Fatalf("updateModuleGoMod: %v", err)
-	}
-	data, err := os.ReadFile(goModPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != goMod {
-		t.Fatalf("go.mod changed:\n%s", data)
 	}
 }

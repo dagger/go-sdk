@@ -91,6 +91,49 @@ The error prints the line above the entrypoint type, which reads
 `# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing "workspace" argument.`
 Generation refuses on v1.0.0-beta.16 and older.
 
+## The release the generated code targets
+
+Each go-sdk release targets one Dagger release, v1.0.0-beta.21 today.
+A module with the Dang entrypoint and unified clients pins
+`dagger.io/dagger` in `go.mod` to exactly that release.
+Its generated entrypoint declares the release to the engine, in the
+`DAGGER_CLIENT_VERSION` variable of the process that runs the module; a
+generated standalone client with a target announces it when it starts a
+session.
+The engine ignores `DAGGER_CLIENT_VERSION` today and serves the module at
+its own version; a later engine release reads it and serves the declared
+release instead.
+The fixed core library and the module's own bindings depend on the SDK
+release, the target setting and the module's sources.
+An engine update leaves them unchanged.
+Dependency clients still read the running engine's schema.
+An engine update can change a dependency client if the engine's view of
+that dependency changes.
+An SDK update changes the targeted release unless `targetVersion` pins it.
+The `targetVersion` setting pins an older release, between v1.0.0-beta.18
+and the SDK's release; generation refuses a setting outside that range.
+An engine older than the targeted release is not refused: a call to a
+function that engine lacks fails when the module runs.
+`targetVersion` replaces the `clientVersion` setting; generation refuses a
+scope that still sets `clientVersion`.
+
+When another requirement of `go.mod` needs a later `dagger.io/dagger`,
+generation refuses and names that requirement: raise `targetVersion`, or
+require a version that needs no later library.
+A scope without a module pins the library of its clients the same way, to
+`targetVersion` when set and to the SDK's release when a client uses shared
+core types, and checks it after its own `go mod tidy`.
+A client of another module aliases the core types of the targeted release.
+A `replace` directive for the selected `dagger.io/dagger` is a development
+exception: generation keeps it, reports it, and the generated code follows
+the replacement instead of the targeted release.
+
+A module with embedded bindings or on the Go runtime targets the running
+engine instead: an engine update can change its generated files, and the
+`targetVersion` setting is refused there.
+Stable targeting needs the Dang entrypoint with unified clients; see
+Migration.
+
 ## When to generate again
 
 Run `dagger generate` again after one of these changes:
@@ -125,17 +168,28 @@ the module directory: run dagger generate`.
 ## Migration
 
 A module that uses the Go runtime keeps it after an SDK update.
-With `dangEntrypoint` unset, only new modules get the entrypoint, and
-`dagger generate` reports no change for an existing module.
-To switch one module, set both settings on its scope in `dagger.toml`, then
+With `dangEntrypoint` unset, generation keeps existing runtimes and local
+entrypoints.
+A module whose manifest names a remote `[entrypoint]` source, a module or
+git reference, gets the generated entrypoint at its next `dagger generate`,
+which reports the replacement.
+This replacement also applies when `dangEntrypoint = false`.
+The module then needs Dagger v1.0.0-beta.18 or later.
+Before generating again, remove `dangEntrypoint = false` or set it to `true`;
+the Go runtime cannot load a module with a generated entrypoint.
+A local `[entrypoint]` path and a custom `[runtime]` stay the author's.
+To switch one module, set these settings on its scope in `dagger.toml`, then
 run `dagger generate`:
 
 ```toml
 [sdks.go.scopes."path/to/module".settings]
 dangEntrypoint = true
+unifiedClients = true
 globalClient = true
 ```
 
+`unifiedClients = true` moves the bindings to the shared core library, so
+the module targets one release instead of the running engine.
 `globalClient = true` keeps the global `dag` that the module's code may use;
 without it, generation fails with `undefined: dag`.
 The same settings under `[modules.go-sdk.settings]` apply to every Go module

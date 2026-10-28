@@ -1,0 +1,31 @@
+type GoSdkDev {
+  """
+  The toml file containing versions to set.
+  """
+  let versionsFile: String! = "versions.toml"
+
+  """
+  Bump the oldest engine the generated entrypoint load on.
+  """
+  pub bumpSourcesFloor(ws: Workspace!, version: String!): Changeset! {
+    let contents= ws.file(versionsFile).contents
+    let versions: Versions = TOML.decode(contents)
+    versions.sourcesFloor = version
+    ws.withNewFile(versionsFile, TOML.encode(versions)).changes(ws)
+  }
+
+  """
+  Bump the default targeted engine version.
+  """
+  pub bumpTargetVersion(ws: Workspace!, version: String!): Changeset! {
+    let contents= ws.file(versionsFile).contents
+    let versions: Versions = TOML.decode(contents)
+    versions.defaultTarget = version
+    ws.withNewFile(versionsFile, TOML.encode(versions)).changes(ws)
+  }
+}
+
+type Versions {
+  pub sourcesFloor: String!
+  pub defaultTarget: String!
+}

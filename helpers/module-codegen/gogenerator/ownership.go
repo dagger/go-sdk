@@ -38,7 +38,7 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 	if cfg.UnifiedClient && cfg.DaggerVersion == "" {
 		data, err := os.ReadFile(filepath.Join(root, "go.mod"))
 		if err != nil {
-			return fmt.Errorf("unified module generation needs a clientVersion containing the core split, or a local SDK replacement")
+			return fmt.Errorf("unified module generation needs a targetVersion containing the core split, or a local SDK replacement")
 		}
 		mod, err := modfile.Parse("go.mod", data, nil)
 		if err != nil {
@@ -51,7 +51,7 @@ func Generate(ctx context.Context, cfg GenerateConfig) error {
 			}
 		}
 		if !replaced {
-			return fmt.Errorf("unified module generation needs a clientVersion containing the core split, or a local SDK replacement")
+			return fmt.Errorf("unified module generation needs a targetVersion containing the core split, or a local SDK replacement")
 		}
 	}
 	old, err := generator.ReadOwnership(root)

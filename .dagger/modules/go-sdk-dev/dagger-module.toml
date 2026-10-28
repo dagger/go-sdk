@@ -1,0 +1,5 @@
+name = "go-sdk-dev"
+engineVersion = "v1.0.0-beta.21"
+
+[runtime]
+  source = "dang"

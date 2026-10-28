@@ -168,6 +168,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"ModuleMainSrc":           funcs.moduleMainSrc,
 		"ModuleRelPath":           funcs.moduleRelPath,
 		"BoundModule":             funcs.boundModule,
+		"ClientVersion":           funcs.clientVersion,
 		"Dependencies":            funcs.Dependencies,
 		"HasLocalDependencies":    funcs.HasLocalDependencies,
 		"LegacyModulePath":        funcs.legacyModulePath,

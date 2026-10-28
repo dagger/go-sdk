@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -102,6 +103,20 @@ func TestEntrypointShapeIsUniform(t *testing.T) {
 	require.Equal(t, plainRest, outsideRest)
 	require.NotEqual(t, plainSources, outsideSources)
 	require.NotContains(t, plainRest, "workspace:")
+}
+
+// The entrypoint declares the targeted release to the module's process, next
+// to the call digest, and declares nothing without one.
+func TestEntrypointDeclaresClientVersion(t *testing.T) {
+	source, err := (&v2Module{targetVersion: "v1.0.0-beta.21"}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.Contains(t, string(source), "      .withEnvVariable(\"DAGGER_MODULE_CALL_DIGEST\", callDigest ?? \"\")\n      .withEnvVariable(\"DAGGER_CLIENT_VERSION\", \"v1.0.0-beta.21\")\n      .withExec(\n")
+	require.NotContains(t, string(source), "targetVersion")
+
+	source, err = (&v2Module{}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.Contains(t, string(source), "      .withEnvVariable(\"DAGGER_MODULE_CALL_DIGEST\", callDigest ?? \"\")\n      .withExec(\n")
+	require.NotContains(t, string(source), "DAGGER_CLIENT_VERSION")
 }
 
 func TestDispatchSourceDecodesArgumentObject(t *testing.T) {
@@ -226,6 +241,7 @@ func entrypointFixture() *v2Module {
 		}
 	}
 	return &v2Module{
+		targetVersion: "v1.0.0-beta.20",
 		objects: []*parsedObjectType{
 			{
 				name:      "HelloWorld",
@@ -303,4 +319,12 @@ func TestExposesModuleContext(t *testing.T) {
 	require.False(t, exposesModuleContext(schema("source", "contextDirectory")))
 	require.False(t, exposesModuleContext(schema("source", "sourceSubpath")))
 	require.False(t, exposesModuleContext(&introspection.Schema{Types: introspection.Types{{Name: "Query"}}}))
+}
+
+func TestSdkFloorIsTheSourcesFloor(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "versions.toml"))
+	require.NoError(t, err)
+	match := regexp.MustCompile(`(?m)^sourcesFloor\s*=\s*"([^"]*)"`).FindSubmatch(data)
+	require.NotNil(t, match, "sourcesFloor not found in versions.toml")
+	require.Equal(t, sourcesFloor, string(match[1]))
 }

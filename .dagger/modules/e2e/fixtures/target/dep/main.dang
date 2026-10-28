@@ -1,0 +1,8 @@
+"""A dependency whose API exposes a core type."""
+type TargetDep {
+  greet(name: String!): String! { "hello " + name }
+
+  box(value: String!): Container! {
+    container.from("alpine:3.22").withNewFile("/value", value)
+  }
+}

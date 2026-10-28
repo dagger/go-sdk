@@ -2,3 +2,16 @@
 
 [modules.engine-e2e]
 source = ".dagger/modules/engine-e2e"
+
+[modules.dang-sdk]
+source = "dagger.io/sdk/dang"
+
+[sdks.dang]
+module = "dang-sdk"
+
+[modules.go-sdk-dev]
+main = true
+source = ".dagger/modules/go-sdk-dev"
+
+[sdks.dang.scopes.".dagger/modules/go-sdk-dev"]
+is-module = true

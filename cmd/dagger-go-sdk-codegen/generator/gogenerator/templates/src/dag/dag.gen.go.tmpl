@@ -94,6 +94,9 @@ func initClient() *dagger.Client {
 
 	if client == nil {
 		opts := []{{ $daggerClientImportPkg }}.ClientOpt{
+{{- if ClientVersion }}
+		  {{ $daggerClientImportPkg }}.WithVersionOverride({{ printf "%q" ClientVersion }}),
+{{- end }}
 		  {{ $daggerClientImportPkg }}.WithLogOutput(os.Stdout),
 		}
 
