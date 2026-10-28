@@ -267,8 +267,6 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 			if cfg.Notes != nil {
 				fmt.Fprintln(cfg.Notes, library.ReplaceNote(subject, cfg.DaggerVersion))
 			}
-		} else if err := library.CheckCoreNames(ctx, root, subject, cfg.DaggerVersion); err != nil {
-			return err
 		}
 	}
 	buildRoot := root

@@ -123,9 +123,7 @@ require a version that needs no later library.
 A scope without a module pins the library of its clients the same way, to
 `targetVersion` when set and to the SDK's release when a client uses shared
 core types, and checks it after its own `go mod tidy`.
-A client of another module aliases the core types of the targeted release;
-when the dependency exposes a core type that release lacks, generation
-refuses and names the dependency, the type and the release.
+A client of another module aliases the core types of the targeted release.
 A `replace` directive for the selected `dagger.io/dagger` is a development
 exception: generation keeps it, reports it, and the generated code follows
 the replacement instead of the targeted release.
