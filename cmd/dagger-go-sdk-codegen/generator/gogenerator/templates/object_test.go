@@ -280,6 +280,7 @@ func TestInterfaceMethodOptionalArgDeprecated(t *testing.T) {
 const idHandleSchemaJSON = `
 [
   {"kind": "SCALAR", "name": "ID"},
+  {"kind": "SCALAR", "name": "SyncerID"},
   {
     "kind": "INTERFACE",
     "name": "Syncer",
@@ -399,11 +400,12 @@ func TestIDHandlesKeepTheirLoadedID(t *testing.T) {
 		want          []string
 		structName    string
 		idType        string
+		idAlias       string
 	}{
-		{"_types/object.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}, "LLM", "ID"},
-		{"_types/object_fields.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}, "", ""},
-		{"_types/interface.go.tmpl", "Syncer", "v1.0.0", []string{"SyncerClient"}, "SyncerClient", "ID"},
-		{"_types/legacy_interface.go.tmpl", "Syncer", "v0.20.0", []string{"Syncer"}, "Syncer", "SyncerID"},
+		{"_types/object.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}, "LLM", "ID", ""},
+		{"_types/object_fields.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}, "", "", ""},
+		{"_types/interface.go.tmpl", "Syncer", "v1.0.0", []string{"SyncerClient"}, "SyncerClient", "ID", ""},
+		{"_types/legacy_interface.go.tmpl", "Syncer", "v0.20.0", []string{"Syncer"}, "Syncer", "SyncerID", "SyncerID"},
 	} {
 		t.Run(tc.template, func(t *testing.T) {
 			var types introspection.Types
@@ -421,6 +423,10 @@ func TestIDHandlesKeepTheirLoadedID(t *testing.T) {
 			}
 			if tc.structName != "" {
 				require.Regexp(t, `type `+tc.structName+` struct \{[^}]*\n\s+id\s+\*`+tc.idType+`\n`, got)
+			}
+			if tc.idAlias != "" {
+				alias := renderTemplate(t, tree.Lookup("_types/scalar.go.tmpl"), schema.Types.Get(tc.idAlias))
+				require.Regexp(t, `(?m)^type `+tc.idAlias+` = ID$`, alias)
 			}
 		})
 	}
