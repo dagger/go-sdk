@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -551,6 +552,14 @@ func TestGenerateUnifiedRefusesLibraryRaisedByRequirement(t *testing.T) {
 }
 
 func TestGenerateUnifiedRefusesUnpublishedTarget(t *testing.T) {
+	proxyURL := url.URL{Scheme: "file", Path: filepath.ToSlash(t.TempDir())}
+	t.Setenv("GOPROXY", proxyURL.String())
+	t.Setenv("GONOPROXY", "none")
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOMODCACHE", t.TempDir())
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOWORK", "off")
+
 	root := t.TempDir()
 	writeModuleFiles(t, root, map[string]string{
 		"go.mod":  "module example.com/app\n\ngo 1.26.1\n",
@@ -559,7 +568,7 @@ func TestGenerateUnifiedRefusesUnpublishedTarget(t *testing.T) {
 	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", DaggerVersion: "v1.0.0-beta.99", TargetVersion: "v1.0.0-beta.99", UnifiedClient: true, GoImage: "golang:1.26.1-alpine"}
 	err := Generate(t.Context(), cfg)
 	require.ErrorContains(t, err, `module "app" targets Dagger v1.0.0-beta.99, and its Go library dagger.io/dagger v1.0.0-beta.99 cannot be resolved (`)
-	require.ErrorContains(t, err, `unknown revision v1.0.0-beta.99): set targetVersion to a release whose library is published in the scope's settings in dagger.toml, or replace dagger.io/dagger in go.mod for development`)
+	require.ErrorContains(t, err, `): set targetVersion to a release whose library is published in the scope's settings in dagger.toml, or replace dagger.io/dagger in go.mod for development`)
 	require.NoFileExists(t, filepath.Join(root, "dagger.gen.go"), "a refused module changed")
 }
 
