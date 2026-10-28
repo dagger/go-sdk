@@ -145,6 +145,8 @@ return new({{ $field | IDHandleClient }}).WithGraphQLQuery(selectNode(q.Root(), 
 {{- else }}
 return &{{ $field | IDHandleClient }}{
 		query: selectNode(q.Root(), id, "{{ $field | IDHandleType }}"),
+		{{- /* The ID is already known: keep it, so that passing this object as an argument doesn't ask the engine for it again. */}}
+		id: &id,
 	}
 {{- end }}, nil
 
