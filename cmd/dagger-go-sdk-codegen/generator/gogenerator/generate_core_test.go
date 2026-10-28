@@ -17,20 +17,30 @@ import (
 // ones that dagger/dagger generates.
 //
 // Each fixture directory holds an engine's introspection, schema.json, and
-// golden files that are the output of "cmd/codegen generate-library" in
-// dagger/dagger at commit 5155ae01f8, for that schema:
-//   - testdata/core: a v1.0.0-beta.14 engine.
-//   - testdata/core/candidate: a dev engine built from dagger/dagger 5155ae01f8
-//     with Go SDK release tooling changes that do not touch the engine.
+// the golden files that dagger/dagger's cmd/codegen at commit 5155ae01f8
+// writes for that schema:
 //
-// Update them the same way. Do not update them from the output of this
-// generator: then the test does not check parity.
+//	codegen generate-library --output ./sdk/go --introspection-json-path schema.json
+//
+// The beta.14 fixture is the introspection of a v1.0.0-beta.14 engine. The
+// candidate fixture is "cmd/codegen introspect -o schema.json" run against a
+// dev engine whose engine sources are those of 5155ae01f8; its SHA-256 is
+// 0c1e4c41ff5e51ba8d3b8256885f4e39122137ae0f26c17700a752559ed7de8a. A new
+// capture is not guaranteed to be byte-identical, so regenerate the golden
+// files from the schema.json that you commit.
+//
+// Do not update the golden files from the output of this generator: then the
+// test does not check parity.
 func TestGenerateCore_Parity(t *testing.T) {
-	for _, dir := range []string{
-		filepath.Join("testdata", "core"),
-		filepath.Join("testdata", "core", "candidate"),
+	for _, fixture := range []struct {
+		name string
+		dir  string
+	}{
+		{"beta.14", filepath.Join("testdata", "core")},
+		{"candidate", filepath.Join("testdata", "core", "candidate")},
 	} {
-		t.Run(dir, func(t *testing.T) {
+		t.Run(fixture.name, func(t *testing.T) {
+			dir := fixture.dir
 			data, err := os.ReadFile(filepath.Join(dir, "schema.json"))
 			require.NoError(t, err)
 			var resp introspection.Response
