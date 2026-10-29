@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,9 +15,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"text/template"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
@@ -48,7 +51,18 @@ func runNormalizeSourceLinks(args []string) error {
 	if response.Schema == nil {
 		return fmt.Errorf("introspection JSON has no __schema")
 	}
-	catalog := newSourceLinkCatalog(response.Schema, response.SchemaVersion)
+	ctx := context.Background()
+	// The engine's built-in Go runtime codegen generated the bindings, and
+	// it formats Go identifiers like this generator does for the schema's
+	// version.
+	names, err := sessionConnector().Names(ctx, response.SchemaVersion)
+	if err != nil {
+		return err
+	}
+	catalog, err := newSourceLinkCatalog(ctx, response.Schema, response.SchemaVersion, names)
+	if err != nil {
+		return err
+	}
 	anchor, err := workspaceSourceLinkAnchor(*repo, *pin)
 	if err != nil {
 		return err
@@ -117,9 +131,21 @@ type sourceLinkCatalog struct {
 	values  map[string]*introspection.SourceMap
 }
 
-func newSourceLinkCatalog(schema *introspection.Schema, version string) sourceLinkCatalog {
+// newSourceLinkCatalog indexes the source maps of schema's declarations by
+// the Go identifiers the bindings declare them as, formatted through names
+// (nil for the legacy rules).
+func newSourceLinkCatalog(ctx context.Context, schema *introspection.Schema, version string, names *identifiers.Names) (sourceLinkCatalog, error) {
 	generator.SetSchemaParents(schema)
-	funcs := templates.GoTemplateFuncs(schema, schema, version, generator.Config{})
+	funcs := templates.GoTemplateFuncs(schema, schema, version, generator.Config{Names: names})
+	var catalog sourceLinkCatalog
+	err := names.Run(ctx, func() error {
+		catalog = buildSourceLinkCatalog(schema, funcs)
+		return nil
+	})
+	return catalog, err
+}
+
+func buildSourceLinkCatalog(schema *introspection.Schema, funcs template.FuncMap) sourceLinkCatalog {
 	name := funcs["FormatName"].(func(string) string)
 	enum := funcs["FormatEnum"].(func(string, string) string)
 	opts := funcs["FieldOptionsStructName"].(func(introspection.Field, ...string) string)
