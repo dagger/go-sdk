@@ -119,6 +119,41 @@ func (h *Hello) Platform(arch Arch) string { return string(arch) }
 	}
 }
 
+// Unified bindings alias the core of the published runtime, whose Go
+// identifiers follow its own version, not the schema's: before the cut, the
+// option struct of Query.sshfsVolume is SshfsVolumeOpts, however the schema
+// past the cut would spell it. The module's schema names still follow the
+// version the engine names it by.
+func TestGenerateUnifiedFollowsRuntimeNames(t *testing.T) {
+	const runtimeVersion = "v1.0.0-beta.17"
+	root := t.TempDir()
+	source := `package hello
+import "example.com/hello/internal/dagger"
+type Hello struct{}
+func (h *Hello) E2ETest() string { _ = dagger.SshfsVolumeOpts{}; return "e2e" }
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26.1\n"), 0644))
+	engine := approximateEngine(map[string]identifierstest.Table{
+		"v1.0.0-beta.22": {
+			identifierstest.Key(identifiers.FieldName): {"E2ETest": "e2eTest"},
+			identifierstest.Key(identifiers.GoName):    {"id": "ID", "sshfsVolume": "SSHFSVolume"},
+		},
+	})
+	cfg := GenerateConfig{
+		ModuleRoot: root, ModuleName: "hello", SchemaPath: moduleContextSchema(t),
+		SchemaVersion: "v1.0.0-beta.22", Connector: engine.Connector(),
+		DaggerVersion: runtimeVersion, UnifiedClient: true, GoImage: "golang:1.26-alpine",
+	}
+	require.NoError(t, Generate(t.Context(), cfg))
+	bindings, err := os.ReadFile(filepath.Join(root, "internal/dagger/dagger.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(bindings), "type SshfsVolumeOpts = core.SshfsVolumeOpts")
+	self, err := os.ReadFile(filepath.Join(root, "internal/dagger/hello.gen.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(self), `Select("e2eTest")`)
+}
+
 // Which Names each side gets, and what an unreadable module version means:
 // nothing on an engine that names every module by strcase, an error on one
 // that names modules by their version.
@@ -148,7 +183,7 @@ func TestIdentifierNames(t *testing.T) {
 			engine := &identifierstest.Engine{Release: test.release}
 			names, moduleNames, err := identifierNames(t.Context(), GenerateConfig{
 				SchemaVersion: test.schema, ModuleVersion: test.module, ModuleVersionErr: test.moduleErr, Connector: engine.Connector(),
-			})
+			}, test.schema)
 			if test.wantErr != "" {
 				require.EqualError(t, err, test.wantErr)
 				return
