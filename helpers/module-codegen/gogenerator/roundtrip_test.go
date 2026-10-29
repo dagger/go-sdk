@@ -82,7 +82,7 @@ func main() { _ = dagger.ContainerWithEnvVariableOpts{} }
 	require.NoError(t, os.WriteFile(filepath.Join(root, "ignored.go"), []byte("//go:build ignore\n\npackage hello\nfunc deliberately invalid syntax"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26.1\n"), 0644))
 	schema := moduleContextSchema(t)
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: schema, SchemaVersion: "v1.0.0", DaggerVersion: runtimeVersion, UnifiedClient: true, GoImage: "golang:1.26-alpine"}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: schema, SchemaVersion: "v1.0.0", Connector: preCutEngine(), DaggerVersion: runtimeVersion, UnifiedClient: true, GoImage: "golang:1.26-alpine"}
 	require.NoError(t, Generate(t.Context(), cfg))
 	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
@@ -366,7 +366,7 @@ func TestGenerateUnifiedCollectionModule(t *testing.T) {
 			"// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
 			"type Item struct{ Name string }\n",
 	})
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", DaggerVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26-alpine"}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", Connector: preCutEngine(), DaggerVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26-alpine"}
 	require.NoError(t, Generate(t.Context(), cfg))
 	dispatcher, err := os.ReadFile(filepath.Join(root, "dagger.dispatch.gen.go"))
 	require.NoError(t, err)

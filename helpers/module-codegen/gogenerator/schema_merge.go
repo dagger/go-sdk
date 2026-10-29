@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iancoleman/strcase"
-
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 // mergeSchema is the userland form of core.Schema.Merge. It is kept as a
-// direct port so module self-call bindings use the same schema shape.
-func mergeSchema(base *introspection.Response, moduleJSON []byte, moduleName string) (*introspection.Response, error) {
+// direct port so module self-call bindings use the same schema shape. namer
+// gives the module's names as the engine does.
+func mergeSchema(base *introspection.Response, moduleJSON []byte, moduleName string, namer templates.ModuleNamer) (*introspection.Response, error) {
 	if moduleName == "" {
 		return nil, fmt.Errorf("module name is required")
 	}
@@ -41,7 +41,7 @@ func mergeSchema(base *introspection.Response, moduleJSON []byte, moduleName str
 		typ.Directives = append(typ.Directives, sourceMapDirective(moduleName))
 		target.Types = append(target.Types, typ)
 	}
-	if err := mergeQueryConstructor(target, module.Schema, moduleName); err != nil {
+	if err := mergeQueryConstructor(target, module.Schema, moduleName, namer); err != nil {
 		return nil, err
 	}
 	return merged, nil
@@ -63,12 +63,15 @@ func isModuleDefinedType(typ *introspection.Type) bool {
 	return true
 }
 
-func mergeQueryConstructor(target, module *introspection.Schema, moduleName string) error {
+// mergeQueryConstructor adds the module's constructor to Query: the field
+// named after the module, returning its main object, which keeps the
+// module's name.
+func mergeQueryConstructor(target, module *introspection.Schema, moduleName string, namer templates.ModuleNamer) error {
 	query := target.Query()
 	if query == nil {
 		return fmt.Errorf("schema has no Query type")
 	}
-	fieldName := strcase.ToLowerCamel(moduleName)
+	fieldName := namer.FieldName(moduleName)
 	if findField(query, fieldName) != nil {
 		return nil
 	}
@@ -79,7 +82,7 @@ func mergeQueryConstructor(target, module *introspection.Schema, moduleName stri
 			return nil
 		}
 	}
-	mainObject := target.Types.Get(strcase.ToCamel(moduleName))
+	mainObject := target.Types.Get(namer.ObjectName(moduleName))
 	if mainObject == nil {
 		return nil
 	}

@@ -322,7 +322,7 @@ type GoSdk {
           "--scope", scopePath,
           "--workspace-repo-url", source.htmlRepoURL,
           "--workspace-pin", source.pin,
-        ])
+        ], experimentalPrivilegedNesting: true)
         .directory("/out")
     } else {
       generated
@@ -505,6 +505,7 @@ type GoSdk {
       .generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
+    let moduleVersion = entrypointModuleVersion(ws, name, scopePath)
 
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
@@ -535,6 +536,7 @@ type GoSdk {
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
+      "--module-version", moduleVersion,
       "--go-image", goImage,
       "--dagger-version", if (unified) { runtimeVersion(true) } else { schemaVersion },
       "--unified=" + JSON.encode(unified),
@@ -571,6 +573,29 @@ type GoSdk {
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
       .generate(pruned, lock: false, legacyJson: false)
+  }
+
+  """
+  The engine version the engine names the module's own declarations by: that
+  of the module with the generated entrypoint, which the dang.toml governing
+  the entrypoint declares (v1.0.0-beta.20 without one). It isn't the staged
+  schema's version, which the staged runtime manifest declares: the bindings'
+  Go identifiers follow the schema, but their predictions of the module's
+  schema names must follow this. Reading it needs no generated entrypoint.
+
+  An engine before v1.0.0-beta.22 can fail to read it, and doesn't need it:
+  it names every module by strcase. So a failure is passed on as
+  "error: <reason>", for module-codegen to fail with only on an engine that
+  names modules by the version.
+  """
+  let entrypointModuleVersion(ws: Workspace!, name: String!, scopePath: String!): String! {
+    sdkHelpers.moduleManifest
+      .withName(name: name)
+      .withDangEntrypoint(source: "./" + entrypointPath)
+      .generate(ws, lock: false, legacyJson: false)
+      .withWorkdir(".")
+      .moduleSource(rootedPath(scopePath))
+      .engineVersion rescue { err: Error => "error: " + err.message }
   }
 
   """
@@ -657,9 +682,13 @@ type GoSdk {
   Run one generator tool. A failure raises the tool's own message: an exec
   error reports only the exit code, and the message is what tells the user
   how to fix the module.
+
+  The tool runs as a nested client of the session: the generators ask the
+  engine to name identifiers (Query.formatIdentifiers). The v1 API nests by
+  default; older engines need the argument.
   """
   let runTool(ctr: Container!, args: [String!]!): Container! {
-    let ran = ctr.withExec(args, expect: ReturnType.ANY)
+    let ran = ctr.withExec(args, expect: ReturnType.ANY, experimentalPrivilegedNesting: true)
     if (ran.exitCode != 0) {
       # Each tool prints its error last, after its name.
       let prefix = (args[0] ?? "") + ": "
@@ -787,7 +816,7 @@ type GoSdk {
         "--module-root", "/out",
         "--unified=" + JSON.encode(unified),
         "--removed-list", "/removed-clients.txt",
-      ])
+      ], experimentalPrivilegedNesting: true)
   }
 
   """
