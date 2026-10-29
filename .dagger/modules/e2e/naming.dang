@@ -1,0 +1,87 @@
+"""
+Generate and call a module whose schema names differ between the engine's
+identifier naming rules and the legacy strcase rules: wire-name predictions
+follow the version the engine names the module by, and Go identifier style
+follows the schema the bindings are generated from.
+
+It needs an engine at v1.0.0-beta.22 or later, so no check runs it yet. cli
+is that engine's dagger CLI, which runs nested in this session:
+
+  dagger -m .dagger/modules/e2e call naming --cli "$(command -v dagger)" calls-check --ws .
+"""
+type NamingChecks {
+  cli: File
+
+  let fixture: String! = ".dagger/modules/e2e/fixtures/naming"
+
+  """
+  The fixture generated as an embedded entrypoint module. With pinned, the
+  entrypoint's dang.toml declares v1.0.0-beta.22; without one, the engine
+  names the module by v1.0.0-beta.20.
+  """
+  generated(ws: Workspace!, pinned: Boolean! = false): Directory! {
+    generatedScope(ws, pinned).directory(".")
+  }
+
+  """
+  The module is generated in a workspace of its own: this repository's
+  .gitignore ignores dang.toml, which would hide the pin from the engine.
+  """
+  let generatedScope(ws: Workspace!, pinned: Boolean!): Workspace! {
+    let module = ws.directory("/" + fixture)
+    let source = if (pinned) {
+      module.withNewFile("internal/dagger/entrypoint/dang.toml", "[imports.Dagger]\ndagger = \"v1.0.0-beta.22\"\n")
+    } else { module }
+    goSdk(dangEntrypoint: true, unifiedClients: false, globalClient: true).generateScope(
+      ws: directory.withDirectory("naming-app", source).asWorkspace.withWorkdir("naming-app"),
+      isModule: true, name: "naming-app", clients: [],
+    )
+  }
+
+  """Call a function of the generated module with the nested CLI."""
+  let call(module: Directory!, function: String!): String! {
+    if (cli == null) {
+      raise "calls need --cli, the dagger CLI of the engine under test"
+    }
+    let called = container.from("alpine:3.22").withoutEntrypoint
+      .withFile("/usr/local/bin/dagger", cli, permissions: 755)
+      .withDirectory("/work", module)
+      .withWorkdir("/work")
+      .withExec(["dagger", "-m", ".", "call", function],
+        experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    if (called.exitCode != 0) {
+      raise "dagger call " + function + " failed:\n" + called.stdout + called.stderr
+    }
+    called.stdout.trimSpace
+  }
+
+  """
+  The bindings predict the module's schema names by the version the engine
+  names it by, and its self-calls reach its enum members and namespaced
+  interface by them, with and without a pinned version. The schema the
+  bindings are generated from is at the engine's version either way, so
+  their Go identifiers follow its rules in both (GitCommit.ShortSHA).
+  """
+  callsCheck(ws: Workspace!): Void {
+    [
+      {{pinned: false, names: ["Select(\"e2Etest\")", "= \"ARM_64\"", "InlineFragment(\"NamingAppHttpFetcher\")"]}},
+      {{pinned: true, names: ["Select(\"e2eTest\")", "= \"ARM64\"", "InlineFragment(\"NamingAppHTTPFetcher\")"]}},
+    ].each { want =>
+      let module = generated(ws, want.pinned)
+      let label = if (want.pinned) { "the pinned module" } else { "the module without a version" }
+      # The self-call client and the module's interface bindings.
+      let bindings = module.file("internal/dagger/naming-app.gen.go").contents + module.file("dagger.gen.go").contents
+      want.names.each { name =>
+        assert(label + "'s bindings lack " + name) { bindings.contains(name) }
+      }
+      assert(label + "'s core bindings do not follow the schema's rules") {
+        module.file("internal/dagger/dagger.gen.go").contents.contains("func (r *GitCommit) ShortSHA(")
+      }
+      let out = call(module, "self-call")
+      assert(label + "'s self-call returned " + out) {
+        out == "arm64 https://example.com/x"
+      }
+    }
+    null
+  }
+}
