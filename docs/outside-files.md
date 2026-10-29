@@ -136,8 +136,9 @@ engine update can still change them.
 
 A module on the Go runtime refuses `targetVersion`.
 A new manifest declares the SDK's release as its `engineVersion`; an
-existing manifest keeps the `engineVersion` it declares, and the engine
-generates the module's code for that version.
+existing manifest keeps the `engineVersion` it declares, or gets the running
+engine's when it declares none, and the engine generates the module's code
+for that version.
 Fully pinned targeting needs the Dang entrypoint with unified clients; see
 Migration.
 

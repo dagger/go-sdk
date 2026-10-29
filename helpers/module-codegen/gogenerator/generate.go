@@ -107,8 +107,8 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	moduleSubpath = filepath.ToSlash(moduleSubpath)
 	// Unified bindings take core from the library, so it is pinned to exactly
-	// the targeted release; embedded bindings take core from the engine and
-	// only need a library at least as new as the engine.
+	// the targeted release; embedded bindings take core from the engine's
+	// view of the targeted release and only need a library at least as new.
 	subject := fmt.Sprintf("module %q", cfg.ModuleName)
 	replaced, err := library.Replaced(goModPath, cfg.DaggerVersion)
 	if err != nil {
