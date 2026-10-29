@@ -14,6 +14,10 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+// legacyNamer names a module by strcase, as engines do before
+// identifiers.CasingVersion.
+var legacyNamer moduleNamer
+
 // buildTestFuncs builds a minimal goTemplateFuncs from in-memory Go source.
 func buildTestFuncs(t *testing.T, moduleName string, sources map[string]string) goTemplateFuncs {
 	t.Helper()
@@ -51,7 +55,7 @@ func buildTestFuncs(t *testing.T, moduleName string, sources map[string]string) 
 
 func TestIntrospectTypeRef_Primitive(t *testing.T) {
 	// non-pointer string -> NON_NULL{SCALAR String}
-	ref := introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.String], isPtr: false})
+	ref := legacyNamer.introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.String], isPtr: false})
 	require.Equal(t, introspection.TypeKindNonNull, ref.Kind)
 	require.Equal(t, introspection.TypeKindScalar, ref.OfType.Kind)
 	require.Equal(t, "String", ref.OfType.Name)
@@ -59,26 +63,26 @@ func TestIntrospectTypeRef_Primitive(t *testing.T) {
 
 func TestIntrospectTypeRef_PrimitivePointer(t *testing.T) {
 	// pointer string -> nullable SCALAR String (no NON_NULL)
-	ref := introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.String], isPtr: true})
+	ref := legacyNamer.introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.String], isPtr: true})
 	require.Equal(t, introspection.TypeKindScalar, ref.Kind)
 	require.Equal(t, "String", ref.Name)
 	require.Nil(t, ref.OfType)
 }
 
 func TestIntrospectTypeRef_PrimitiveInt(t *testing.T) {
-	ref := introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.Int], isPtr: false})
+	ref := legacyNamer.introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.Int], isPtr: false})
 	require.Equal(t, introspection.TypeKindNonNull, ref.Kind)
 	require.Equal(t, "Int", ref.OfType.Name)
 }
 
 func TestIntrospectTypeRef_PrimitiveBool(t *testing.T) {
-	ref := introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.Bool], isPtr: false})
+	ref := legacyNamer.introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.Bool], isPtr: false})
 	require.Equal(t, introspection.TypeKindNonNull, ref.Kind)
 	require.Equal(t, "Boolean", ref.OfType.Name)
 }
 
 func TestIntrospectTypeRef_PrimitiveFloat(t *testing.T) {
-	ref := introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.Float64], isPtr: false})
+	ref := legacyNamer.introspectTypeRef(&parsedPrimitiveType{goType: types.Typ[types.Float64], isPtr: false})
 	require.Equal(t, introspection.TypeKindNonNull, ref.Kind)
 	require.Equal(t, "Float", ref.OfType.Name)
 }
@@ -86,7 +90,7 @@ func TestIntrospectTypeRef_PrimitiveFloat(t *testing.T) {
 func TestIntrospectTypeRef_Slice(t *testing.T) {
 	// []string -> NON_NULL{LIST{NON_NULL{SCALAR String}}}
 	elem := &parsedPrimitiveType{goType: types.Typ[types.String], isPtr: false}
-	ref := introspectTypeRef(&parsedSliceType{
+	ref := legacyNamer.introspectTypeRef(&parsedSliceType{
 		goType:     types.NewSlice(types.Typ[types.String]),
 		underlying: elem,
 	})
@@ -98,7 +102,7 @@ func TestIntrospectTypeRef_Slice(t *testing.T) {
 
 func TestIntrospectTypeRef_ObjectRef(t *testing.T) {
 	// non-pointer object ref -> NON_NULL{OBJECT Foo}
-	ref := introspectTypeRef(&parsedObjectTypeReference{name: "Foo", isPtr: false})
+	ref := legacyNamer.introspectTypeRef(&parsedObjectTypeReference{name: "Foo", isPtr: false})
 	require.Equal(t, introspection.TypeKindNonNull, ref.Kind)
 	require.Equal(t, introspection.TypeKindObject, ref.OfType.Kind)
 	require.Equal(t, "Foo", ref.OfType.Name)
@@ -107,7 +111,7 @@ func TestIntrospectTypeRef_ObjectRef(t *testing.T) {
 func TestIntrospectTypeRef_ObjectRefPointer(t *testing.T) {
 	// pointer object ref -> NON_NULL{OBJECT Foo}: a pointer only changes the Go
 	// type, not schema nullability (object TypeDefCode never sets WithOptional).
-	ref := introspectTypeRef(&parsedObjectTypeReference{name: "Foo", isPtr: true})
+	ref := legacyNamer.introspectTypeRef(&parsedObjectTypeReference{name: "Foo", isPtr: true})
 	require.Equal(t, introspection.TypeKindNonNull, ref.Kind)
 	require.Equal(t, introspection.TypeKindObject, ref.OfType.Kind)
 	require.Equal(t, "Foo", ref.OfType.Name)
@@ -115,7 +119,7 @@ func TestIntrospectTypeRef_ObjectRefPointer(t *testing.T) {
 
 func TestIntrospectTypeRef_IfaceRef(t *testing.T) {
 	// interface ref -> NON_NULL{INTERFACE MyIface}
-	ref := introspectTypeRef(&parsedIfaceTypeReference{name: "MyIface"})
+	ref := legacyNamer.introspectTypeRef(&parsedIfaceTypeReference{name: "MyIface"})
 	require.Equal(t, introspection.TypeKindNonNull, ref.Kind)
 	require.Equal(t, introspection.TypeKindInterface, ref.OfType.Kind)
 	require.Equal(t, "MyIface", ref.OfType.Name)
@@ -123,7 +127,7 @@ func TestIntrospectTypeRef_IfaceRef(t *testing.T) {
 
 func TestIntrospectTypeRef_EnumRef(t *testing.T) {
 	// enum ref -> NON_NULL{ENUM Status}
-	ref := introspectTypeRef(&parsedEnumTypeReference{name: "Status", isPtr: false})
+	ref := legacyNamer.introspectTypeRef(&parsedEnumTypeReference{name: "Status", isPtr: false})
 	require.Equal(t, introspection.TypeKindNonNull, ref.Kind)
 	require.Equal(t, introspection.TypeKindEnum, ref.OfType.Kind)
 	require.Equal(t, "Status", ref.OfType.Name)
@@ -147,7 +151,7 @@ func TestIntrospectObject_Basic(t *testing.T) {
 		},
 	}
 
-	it := introspectObject(obj)
+	it := legacyNamer.introspectObject(obj)
 	require.Equal(t, introspection.TypeKindObject, it.Kind)
 	require.Equal(t, "Test", it.Name)
 	require.Equal(t, "A test object.", it.Description)
@@ -176,7 +180,7 @@ func TestIntrospectObject_VoidReturn(t *testing.T) {
 		},
 	}
 
-	it := introspectObject(obj)
+	it := legacyNamer.introspectObject(obj)
 	require.Len(t, it.Fields, 2) // declared field + engine-added id
 	f := it.Fields[0]
 	require.Equal(t, "doNothing", f.Name)
@@ -198,7 +202,7 @@ func TestIntrospectObject_WithField(t *testing.T) {
 		},
 	}
 
-	it := introspectObject(obj)
+	it := legacyNamer.introspectObject(obj)
 	require.Len(t, it.Fields, 2) // declared field + engine-added id
 	f := it.Fields[0]
 	require.Equal(t, "value", f.Name)
@@ -220,7 +224,7 @@ func TestIntrospectObject_SkipContextArg(t *testing.T) {
 		},
 	}
 
-	it := introspectObject(obj)
+	it := legacyNamer.introspectObject(obj)
 	f := it.Fields[0]
 	// ctx must be skipped
 	require.Len(t, f.Args, 1)
@@ -239,7 +243,7 @@ func TestIntrospectInterface_Basic(t *testing.T) {
 		},
 	}
 
-	it := introspectInterface(iface)
+	it := legacyNamer.introspectInterface(iface)
 	require.Equal(t, introspection.TypeKindInterface, it.Kind)
 	require.Equal(t, "Greeter", it.Name)
 	require.Len(t, it.Fields, 2) // declared field + engine-added id
@@ -255,7 +259,7 @@ func TestIntrospectEnum_Basic(t *testing.T) {
 		},
 	}
 
-	it := introspectEnum(enum)
+	it := legacyNamer.introspectEnum(enum)
 	require.Equal(t, introspection.TypeKindEnum, it.Kind)
 	require.Equal(t, "Status", it.Name)
 	require.Len(t, it.EnumValues, 2)
@@ -280,7 +284,7 @@ func TestIntrospectObject_SkipsReservedID(t *testing.T) {
 		},
 	}
 
-	it := introspectObject(obj)
+	it := legacyNamer.introspectObject(obj)
 	require.Len(t, it.Fields, 2, "user id field and Id method skipped; echo + synthetic id remain")
 	require.Equal(t, "echo", it.Fields[0].Name)
 	require.Equal(t, "id", it.Fields[1].Name)
@@ -303,8 +307,8 @@ func TestNamespaceTypeName(t *testing.T) {
 		{"Postman", "post", "PostPostman"},     // prefix without word boundary still namespaces
 		{"my-type", "my-mod", "MyModMyType"},   // kebab inputs camelize like the engine
 	} {
-		require.Equal(t, tc.want, namespaceTypeName(tc.typeName, tc.moduleName),
-			"namespaceTypeName(%q, %q)", tc.typeName, tc.moduleName)
+		require.Equal(t, tc.want, legacyNamespaceObject(tc.typeName, tc.moduleName),
+			"legacyNamespaceObject(%q, %q)", tc.typeName, tc.moduleName)
 	}
 }
 
@@ -312,18 +316,18 @@ func TestNamespaceTypeName(t *testing.T) {
 // namespaced: refs to core/dependency types (moduleName == "") already carry
 // their final schema name.
 func TestIntrospectTypeName_LocalVsForeign(t *testing.T) {
-	localRef := introspectTypeRef(&parsedObjectTypeReference{name: "Container", moduleName: "test"})
+	localRef := legacyNamer.introspectTypeRef(&parsedObjectTypeReference{name: "Container", moduleName: "test"})
 	require.Equal(t, "TestContainer", localRef.OfType.Name,
 		"module-local ref must be namespaced")
 
-	coreRef := introspectTypeRef(&parsedObjectTypeReference{name: "Container"})
+	coreRef := legacyNamer.introspectTypeRef(&parsedObjectTypeReference{name: "Container"})
 	require.Equal(t, "Container", coreRef.OfType.Name,
 		"core ref must be untouched")
 
-	localEnum := introspectEnum(&parsedEnumType{name: "Color", moduleName: "test"})
+	localEnum := legacyNamer.introspectEnum(&parsedEnumType{name: "Color", moduleName: "test"})
 	require.Equal(t, "TestColor", localEnum.Name)
 
-	localObj := introspectObject(&parsedObjectType{name: "Worker", moduleName: "test"})
+	localObj := legacyNamer.introspectObject(&parsedObjectType{name: "Worker", moduleName: "test"})
 	require.Equal(t, "TestWorker", localObj.Name)
 }
 
@@ -341,7 +345,7 @@ func TestIntrospectEnum_ConventionalMemberNames(t *testing.T) {
 		},
 	}
 
-	it := introspectEnum(enum)
+	it := legacyNamer.introspectEnum(enum)
 	require.Len(t, it.EnumValues, 3)
 	require.Equal(t, "HTTP2", it.EnumValues[0].Name,
 		"conventional names must be kept as-is, like the engine does")
@@ -419,7 +423,7 @@ func TestIntrospectArg_OptionalNonNullStripping(t *testing.T) {
 		typeSpec: &parsedPrimitiveType{goType: types.Typ[types.String], isPtr: false},
 		optional: false,
 	}
-	reqIV := introspectArg(required)
+	reqIV := legacyNamer.introspectArg(required)
 	require.Equal(t, introspection.TypeKindNonNull, reqIV.TypeRef.Kind,
 		"required arg must be NON_NULL")
 	require.Equal(t, introspection.TypeKindScalar, reqIV.TypeRef.OfType.Kind)
@@ -431,7 +435,7 @@ func TestIntrospectArg_OptionalNonNullStripping(t *testing.T) {
 		typeSpec: &parsedPrimitiveType{goType: types.Typ[types.String], isPtr: false},
 		optional: true,
 	}
-	optFlagIV := introspectArg(optByFlag)
+	optFlagIV := legacyNamer.introspectArg(optByFlag)
 	require.Equal(t, introspection.TypeKindScalar, optFlagIV.TypeRef.Kind,
 		"optional-by-flag arg must NOT be NON_NULL at the top level")
 	require.Equal(t, "String", optFlagIV.TypeRef.Name)
@@ -444,7 +448,7 @@ func TestIntrospectArg_OptionalNonNullStripping(t *testing.T) {
 		typeSpec: &parsedPrimitiveType{goType: types.Typ[types.String], isPtr: true},
 		optional: false,
 	}
-	optPtrIV := introspectArg(optByPtr)
+	optPtrIV := legacyNamer.introspectArg(optByPtr)
 	// isPtr=true on parsedPrimitiveType already produces SCALAR (no NON_NULL wrapper),
 	// so the top-level kind must not be NON_NULL.
 	require.NotEqual(t, introspection.TypeKindNonNull, optPtrIV.TypeRef.Kind,
@@ -456,7 +460,7 @@ func TestIntrospectArg_OptionalNonNullStripping(t *testing.T) {
 // engine's TypeDefCode (which only marks pointer *scalars* optional). A pointer
 // alone must not make an object/enum arg optional.
 func TestIntrospectArg_PointerObjectEnumRequired(t *testing.T) {
-	objArg := introspectArg(paramSpec{
+	objArg := legacyNamer.introspectArg(paramSpec{
 		name:     "dir",
 		typeSpec: &parsedObjectTypeReference{name: "Directory", isPtr: true},
 		optional: false,
@@ -464,7 +468,7 @@ func TestIntrospectArg_PointerObjectEnumRequired(t *testing.T) {
 	require.Equal(t, introspection.TypeKindNonNull, objArg.TypeRef.Kind,
 		"required pointer object arg must be NON_NULL")
 
-	enumArg := introspectArg(paramSpec{
+	enumArg := legacyNamer.introspectArg(paramSpec{
 		name:     "color",
 		typeSpec: &parsedEnumTypeReference{name: "Color", isPtr: true},
 		optional: false,
@@ -474,7 +478,7 @@ func TestIntrospectArg_PointerObjectEnumRequired(t *testing.T) {
 	require.Equal(t, "Color", enumArg.TypeRef.OfType.Name)
 
 	// With explicit +optional the same arg becomes nullable.
-	optObjArg := introspectArg(paramSpec{
+	optObjArg := legacyNamer.introspectArg(paramSpec{
 		name:     "dir",
 		typeSpec: &parsedObjectTypeReference{name: "Directory", isPtr: true},
 		optional: true,
@@ -488,7 +492,7 @@ func TestIntrospectArg_PointerObjectEnumRequired(t *testing.T) {
 // @expectedType directive naming the target type, which the binding generator
 // uses to recover the concrete parameter type.
 func TestIntrospectArg_ObjectsPassByID(t *testing.T) {
-	coreArg := introspectArg(paramSpec{
+	coreArg := legacyNamer.introspectArg(paramSpec{
 		name:     "dir",
 		typeSpec: &parsedObjectTypeReference{name: "Directory", isPtr: true},
 	})
@@ -498,7 +502,7 @@ func TestIntrospectArg_ObjectsPassByID(t *testing.T) {
 	require.Equal(t, "Directory", coreArg.Directives.ExpectedType())
 
 	// A module-local object arg carries the namespaced expected type.
-	localArg := introspectArg(paramSpec{
+	localArg := legacyNamer.introspectArg(paramSpec{
 		name:     "box",
 		typeSpec: &parsedObjectTypeReference{name: "Box", moduleName: "test", isPtr: true},
 	})
@@ -507,7 +511,7 @@ func TestIntrospectArg_ObjectsPassByID(t *testing.T) {
 
 	// A list of objects keeps the list shape with ID elements; the directive
 	// names the element type (the engine walks list wrappers the same way).
-	listArg := introspectArg(paramSpec{
+	listArg := legacyNamer.introspectArg(paramSpec{
 		name: "boxes",
 		typeSpec: &parsedSliceType{
 			goType:     types.NewSlice(types.Typ[types.String]),
@@ -519,7 +523,7 @@ func TestIntrospectArg_ObjectsPassByID(t *testing.T) {
 	require.Equal(t, "TestBox", listArg.Directives.ExpectedType())
 
 	// Enums pass by value, not by ID.
-	enumArg := introspectArg(paramSpec{
+	enumArg := legacyNamer.introspectArg(paramSpec{
 		name:     "color",
 		typeSpec: &parsedEnumTypeReference{name: "Color", moduleName: "test"},
 	})
@@ -532,7 +536,7 @@ func TestIntrospectArg_ObjectsPassByID(t *testing.T) {
 // args with only a +default (no +optional) — the engine carries the default in
 // DefaultValue, not in nullability.
 func TestIntrospectArg_VariadicAndDefaultStayRequired(t *testing.T) {
-	variadic := introspectArg(paramSpec{
+	variadic := legacyNamer.introspectArg(paramSpec{
 		name: "msgs",
 		typeSpec: &parsedSliceType{
 			goType:     types.NewSlice(types.Typ[types.String]),
@@ -543,7 +547,7 @@ func TestIntrospectArg_VariadicAndDefaultStayRequired(t *testing.T) {
 	require.Equal(t, introspection.TypeKindNonNull, variadic.TypeRef.Kind,
 		"variadic args are registered required by the engine")
 
-	withDefault := introspectArg(paramSpec{
+	withDefault := legacyNamer.introspectArg(paramSpec{
 		name:            "greeting",
 		typeSpec:        &parsedPrimitiveType{goType: types.Typ[types.String]},
 		hasDefaultValue: true,
@@ -561,7 +565,7 @@ func TestIntrospectArg_VariadicAndDefaultStayRequired(t *testing.T) {
 func TestIntrospectTypeRef_SliceOfObjects(t *testing.T) {
 	// Build a slice whose element is a pointer-to-object reference.
 	elemRef := &parsedObjectTypeReference{name: "SomeObject", isPtr: true}
-	ref := introspectTypeRef(&parsedSliceType{
+	ref := legacyNamer.introspectTypeRef(&parsedSliceType{
 		goType:     types.NewSlice(types.Typ[types.String]), // goType placeholder
 		underlying: elemRef,
 	})
@@ -584,7 +588,7 @@ func TestIntrospectTypeRef_SliceOfObjects(t *testing.T) {
 // is emitted as NON_NULL{ LIST{ NON_NULL{ OBJECT SomeObject } } }.
 func TestIntrospectTypeRef_SliceOfNonNullObjects(t *testing.T) {
 	elemRef := &parsedObjectTypeReference{name: "SomeObject", isPtr: false}
-	ref := introspectTypeRef(&parsedSliceType{
+	ref := legacyNamer.introspectTypeRef(&parsedSliceType{
 		goType:     types.NewSlice(types.Typ[types.String]),
 		underlying: elemRef,
 	})
@@ -619,7 +623,7 @@ func TestIntrospectArg_EnumDefault(t *testing.T) {
 		hasDefaultValue: true,
 		defaultValue:    "ACTIVE", // raw pragma value
 	}
-	iv := introspectArg(argByValue)
+	iv := legacyNamer.introspectArg(argByValue)
 	require.NotNil(t, iv.DefaultValue, "DefaultValue must be set for enum arg with default")
 	// Expected: strconv.Quote("Active") == `"Active"`
 	require.Equal(t, `"Active"`, *iv.DefaultValue,
@@ -633,7 +637,7 @@ func TestIntrospectArg_EnumDefault(t *testing.T) {
 		hasDefaultValue: true,
 		defaultValue:    "Active", // raw pragma value == member name
 	}
-	iv2 := introspectArg(argByName)
+	iv2 := legacyNamer.introspectArg(argByName)
 	require.NotNil(t, iv2.DefaultValue)
 	require.Equal(t, `"Active"`, *iv2.DefaultValue,
 		"enum default by name must also resolve to the member name, JSON-quoted")
