@@ -151,12 +151,35 @@ func TestRunBatchesLookups(t *testing.T) {
 	require.Equal(t, []string{"CommitSHA", "ShortSHA", "CommitSHA", "JSONValue", "httpClient", "getUrl", "fallback:naïve"}, rendered)
 	require.Equal(t, 1, engine.FormatQueries())
 	query := engine.Queries()[0]
-	require.Contains(t, query, "f0: formatIdentifiers(names: $n0, casing: CAMEL, acronyms: CAPITALIZED, version: $version)")
-	require.Contains(t, query, "f1: formatIdentifiers(names: $n1, casing: PASCAL, acronyms: UPPERCASE, version: $version)")
+	require.Contains(t, query, "query FormatIdentifiers($v0: String!, $n0: [String!]!, $n1: [String!]!)")
+	require.Contains(t, query, "f0: formatIdentifiers(names: $n0, casing: CAMEL, acronyms: CAPITALIZED, version: $v0)")
+	require.Contains(t, query, "f1: formatIdentifiers(names: $n1, casing: PASCAL, acronyms: UPPERCASE, version: $v0)")
 
 	// Everything is formatted now: another run needs no query.
 	require.NoError(t, names.Run(t.Context(), render))
 	require.Equal(t, 1, engine.FormatQueries())
+}
+
+// A render looking names up in Names of several versions formats them all in
+// one query, each request at its own version; nil Names are skipped.
+func TestRunSeveralNames(t *testing.T) {
+	engine := &identifierstest.Engine{Release: "v1.0.0-beta.23", Table: table}
+	c := engine.Connector()
+	schemaNames, err := c.Names(t.Context(), "v1.0.0-beta.23")
+	require.NoError(t, err)
+	moduleNames, err := c.Names(t.Context(), "v1.0.0-beta.22")
+	require.NoError(t, err)
+	var got []string
+	require.NoError(t, identifiers.Run(t.Context(), func() error {
+		goName, _ := schemaNames.Lookup(identifiers.GoName, "commitSha")
+		field, _ := moduleNames.Lookup(identifiers.FieldName, "HTTPClient")
+		got = []string{goName, field}
+		return nil
+	}, schemaNames, nil, moduleNames, schemaNames))
+	require.Equal(t, []string{"CommitSHA", "httpClient"}, got)
+	require.Equal(t, 1, engine.FormatQueries())
+	query := engine.Queries()[1]
+	require.Contains(t, query, "query FormatIdentifiers($v0: String!, $n0: [String!]!, $v1: String!, $n1: [String!]!)")
 }
 
 // Prefetched names are formatted before the first render, so a render that

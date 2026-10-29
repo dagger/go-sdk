@@ -86,15 +86,33 @@ const maxRounds = 4
 //
 // With a nil *Names, Run calls render once.
 func (n *Names) Run(ctx context.Context, render func() error) error {
-	if n == nil {
+	return Run(ctx, render, n)
+}
+
+// Run is Names.Run for a render that looks names up in several Names, such as
+// a module's bindings, whose Go identifiers follow one version and whose
+// schema names another. Each round formats the names missing from all of
+// them in a single round trip. Nil Names are the legacy rules and are
+// skipped; with no others, render runs once.
+func Run(ctx context.Context, render func() error, names ...*Names) error {
+	var all []*Names
+	for _, n := range names {
+		if n != nil && !slices.Contains(all, n) {
+			all = append(all, n)
+		}
+	}
+	if len(all) == 0 {
 		return render()
 	}
 	for round := 1; ; round++ {
-		if err := n.format(ctx); err != nil {
+		if err := format(ctx, all); err != nil {
 			return err
 		}
 		err := render()
-		missing := n.missing()
+		var missing []string
+		for _, n := range all {
+			missing = append(missing, n.missing()...)
+		}
 		switch {
 		case len(missing) == 0:
 			return err
@@ -114,45 +132,64 @@ func (n *Names) missing() []string {
 	var missing []string
 	for f, names := range n.pending {
 		for name := range names {
-			missing = append(missing, fmt.Sprintf("%q (%s)", name, f.Casing))
+			missing = append(missing, fmt.Sprintf("%q (%s, %s)", name, f.Casing, n.version))
 		}
 	}
 	slices.Sort(missing)
 	return missing
 }
 
-// format formats the pending names in a single query: one aliased
-// formatIdentifiers field per format, every one at n.version.
-func (n *Names) format(ctx context.Context) error {
+// format formats the pending names of every Names in a single query: one
+// aliased formatIdentifiers field per Names and format, each at its Names'
+// version. Every Names comes from the same engine.
+func format(ctx context.Context, all []*Names) error {
+	var requests []request
+	var owners []*Names
+	for _, n := range all {
+		for _, r := range n.requests() {
+			requests = append(requests, r)
+			owners = append(owners, n)
+		}
+	}
+	if len(requests) == 0 {
+		return nil
+	}
+	formatted, err := formatIdentifiers(ctx, all[0].engine, requests)
+	if err != nil {
+		return err
+	}
+	for i, r := range requests {
+		owners[i].store(r, formatted[i])
+	}
+	return nil
+}
+
+// requests returns the pending names as requests, one per format, sorted.
+func (n *Names) requests() []request {
 	n.mu.Lock()
+	defer n.mu.Unlock()
 	var requests []request
 	for f, names := range n.pending {
 		if len(names) == 0 {
 			continue
 		}
-		requests = append(requests, request{format: f, names: slices.Sorted(maps.Keys(names))})
-	}
-	n.mu.Unlock()
-	if len(requests) == 0 {
-		return nil
+		requests = append(requests, request{format: f, version: n.version, names: slices.Sorted(maps.Keys(names))})
 	}
 	slices.SortFunc(requests, func(a, b request) int {
 		return strings.Compare(string(a.format.Casing)+" "+string(a.format.Acronyms), string(b.format.Casing)+" "+string(b.format.Acronyms))
 	})
-	formatted, err := formatIdentifiers(ctx, n.engine, n.version, requests)
-	if err != nil {
-		return err
-	}
+	return requests
+}
+
+// store records the formatted names of a request.
+func (n *Names) store(r request, formatted []string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	for i, r := range requests {
-		if n.formatted[r.format] == nil {
-			n.formatted[r.format] = map[string]string{}
-		}
-		for j, name := range r.names {
-			n.formatted[r.format][name] = formatted[i][j]
-			delete(n.pending[r.format], name)
-		}
+	if n.formatted[r.format] == nil {
+		n.formatted[r.format] = map[string]string{}
 	}
-	return nil
+	for i, name := range r.names {
+		n.formatted[r.format][name] = formatted[i]
+		delete(n.pending[r.format], name)
+	}
 }

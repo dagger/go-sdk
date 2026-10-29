@@ -55,20 +55,11 @@ func (c *Connector) Names(ctx context.Context, version string) (*Names, error) {
 	if !Applies(version) {
 		return nil, nil
 	}
-	c.once.Do(func() {
-		c.engine, c.err = c.dial()
-		if c.err != nil {
-			c.err = fmt.Errorf("connect to the engine to name identifiers: %w", c.err)
-			return
-		}
-		var release string
-		release, c.err = EngineVersion(ctx, c.engine)
-		c.applies = Applies(release)
-	})
-	if c.err != nil {
-		return nil, fmt.Errorf("version %s follows the engine's naming rules: %w", version, c.err)
+	applies, err := c.EngineApplies(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("version %s follows the engine's naming rules: %w", version, err)
 	}
-	if !c.applies {
+	if !applies {
 		// An older engine names every module by strcase, and its schemas
 		// report every v1.0.0 prerelease as v1.0.0, past CasingVersion.
 		return nil, nil
@@ -79,6 +70,23 @@ func (c *Connector) Names(ctx context.Context, version string) (*Names, error) {
 		c.names[version] = NewNames(c.engine, version)
 	}
 	return c.names[version], nil
+}
+
+// EngineApplies reports whether the engine's release is at or past
+// CasingVersion: whether it names modules by its identifier naming rules at
+// all. It connects to the engine.
+func (c *Connector) EngineApplies(ctx context.Context) (bool, error) {
+	c.once.Do(func() {
+		c.engine, c.err = c.dial()
+		if c.err != nil {
+			c.err = fmt.Errorf("connect to the engine to name identifiers: %w", c.err)
+			return
+		}
+		var release string
+		release, c.err = EngineVersion(ctx, c.engine)
+		c.applies = Applies(release)
+	})
+	return c.applies, c.err
 }
 
 // EngineVersion returns the engine's release: Query.version.
@@ -94,24 +102,32 @@ func EngineVersion(ctx context.Context, engine Engine) (string, error) {
 
 // request is one formatIdentifiers call of a batch.
 type request struct {
-	format Format
-	names  []string
+	format  Format
+	version string
+	names   []string
 }
 
 // formatIdentifiers formats every request's names in a single query, each
 // request an aliased formatIdentifiers field, and returns the formatted names
 // in request and input order.
-func formatIdentifiers(ctx context.Context, engine Engine, version string, requests []request) ([][]string, error) {
+func formatIdentifiers(ctx context.Context, engine Engine, requests []request) ([][]string, error) {
 	var params, fields strings.Builder
-	params.WriteString("$version: String!")
-	variables := map[string]any{"version": version}
+	variables := map[string]any{}
+	versions := map[string]string{} // version -> variable
 	for i, r := range requests {
+		v, ok := versions[r.version]
+		if !ok {
+			v = fmt.Sprintf("v%d", len(versions))
+			versions[r.version] = v
+			fmt.Fprintf(&params, ", $%s: String!", v)
+			variables[v] = r.version
+		}
 		fmt.Fprintf(&params, ", $n%d: [String!]!", i)
-		fmt.Fprintf(&fields, "  f%d: formatIdentifiers(names: $n%d, casing: %s, acronyms: %s, version: $version)\n",
-			i, i, r.format.Casing, r.format.Acronyms)
+		fmt.Fprintf(&fields, "  f%d: formatIdentifiers(names: $n%d, casing: %s, acronyms: %s, version: $%s)\n",
+			i, i, r.format.Casing, r.format.Acronyms, v)
 		variables[fmt.Sprintf("n%d", i)] = r.names
 	}
-	query := fmt.Sprintf("query FormatIdentifiers(%s) {\n%s}", params.String(), fields.String())
+	query := fmt.Sprintf("query FormatIdentifiers(%s) {\n%s}", strings.TrimPrefix(params.String(), ", "), fields.String())
 	var data map[string][]string
 	if err := engine.Query(ctx, query, variables, &data); err != nil {
 		return nil, fmt.Errorf("format identifiers: %w", err)
