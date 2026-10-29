@@ -66,10 +66,11 @@ func (e *Engine) FormatQueries() int {
 	return n
 }
 
-var fieldPattern = regexp.MustCompile(`(f\d+): formatIdentifiers\(names: \$(n\d+), casing: (\w+), acronyms: (\w+), version: \$version\)`)
+var fieldPattern = regexp.MustCompile(`(f\d+): formatIdentifiers\(names: \$(n\d+), casing: (\w+), acronyms: (\w+), version: \$(v\d+)\)`)
 
 // Query implements identifiers.Engine for the queries the identifiers
-// package sends.
+// package sends. Every version gets the same Table: dictionaries change only
+// with releases, which tests don't need to tell apart.
 func (e *Engine) Query(_ context.Context, query string, variables map[string]any, data any) error {
 	e.mu.Lock()
 	e.queries = append(e.queries, query)
@@ -78,6 +79,9 @@ func (e *Engine) Query(_ context.Context, query string, variables map[string]any
 	switch {
 	case strings.Contains(query, "formatIdentifiers"):
 		for _, m := range fieldPattern.FindAllStringSubmatch(query, -1) {
+			if version, _ := variables[m[5]].(string); version == "" {
+				return fmt.Errorf("fake engine: %s has no version", m[1])
+			}
 			key := m[3] + "/" + m[4]
 			names, ok := variables[m[2]].([]string)
 			if !ok {
