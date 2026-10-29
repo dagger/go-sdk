@@ -17,8 +17,10 @@ import (
 // (ModuleSource.NamingView): engine/naming from identifiers.CasingVersion on,
 // strcase before it. A name the bindings predict differently than the engine
 // names it breaks the module: with strcase, a module named by the new rules
-// that references JSONValue or LLMMessage gets JsonValue and LlmMessage,
-// which don't exist.
+// that references JSONValue or LLMMessage gets Jsonvalue and Llmmessage,
+// which don't exist. (The engine's legacy rules normalize those references
+// alike, Namer.ObjectName being strcase.ToCamel, so the legacy prediction
+// keeps them.)
 //
 // This is the opposite direction of goNamer: goNamer styles schema names as
 // Go identifiers, which is the SDK's choice; moduleNamer predicts schema
