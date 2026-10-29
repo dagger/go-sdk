@@ -14,9 +14,11 @@
 //
 // The client subcommand generates a standalone client package for one module
 // from a pre-computed introspection schema. It writes into an existing Go
-// module and updates that module's go.mod. It is engine-free: the schema and
-// the bound module's metadata are supplied as files, so no nested engine
-// session is opened.
+// module and updates that module's go.mod. The schema and the bound module's
+// metadata are supplied as files. For a schema whose identifiers follow the
+// engine's naming rules (v1.0.0-beta.22 or later, on an engine as recent), it
+// formats them through the Dagger session it runs in, as every subcommand
+// does (see package identifiers).
 package main
 
 import (
@@ -34,6 +36,7 @@ import (
 	"dagger.io/dagger"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	gogenerator "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/library"
 	"github.com/psanford/memfs"
@@ -57,6 +60,10 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// sessionConnector returns the Connector the commands name identifiers
+// through: the Dagger session they run in (see identifiers.SessionFromEnv).
+var sessionConnector = identifiers.SessionConnector
 
 func run(args []string) error {
 	if len(args) == 0 {
@@ -174,12 +181,15 @@ func trimURLScheme(ref string) string {
 // source positions a local workspace generates, so that the client does not
 // change with every commit. Client bindings render those relative to "../..",
 // as moduleRelPath does without a module.
-func localSourceLinks(overlay fs.FS, schema *introspection.Schema, schemaVersion, repo, pin string) (fs.FS, error) {
+func localSourceLinks(ctx context.Context, overlay fs.FS, schema *introspection.Schema, schemaVersion string, names *identifiers.Names, repo, pin string) (fs.FS, error) {
 	anchor, err := workspaceSourceLinkAnchor(repo, pin)
 	if err != nil {
 		return nil, err
 	}
-	catalog := newSourceLinkCatalog(schema, schemaVersion)
+	catalog, err := newSourceLinkCatalog(ctx, schema, schemaVersion, names)
+	if err != nil {
+		return nil, err
+	}
 	normalized := memfs.New()
 	err = fs.WalkDir(overlay, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || name == "." {
@@ -279,24 +289,31 @@ func runClient(args []string) error {
 	if err != nil {
 		return err
 	}
+	ctx := context.Background()
+	// Go identifiers follow the client schema's version: the bound module's
+	// own declarations are named by its version, as the engine serves them.
+	names, err := sessionConnector().Names(ctx, resp.SchemaVersion)
+	if err != nil {
+		return err
+	}
 	cfg := generator.Config{
 		OutputDir:     *outputDir,
 		PackageImport: packageImport,
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: meta.Module, Version: meta.TargetVersion},
 		UnifiedClient: *unified,
+		Names:         names,
 	}
 
 	generator.SetSchemaParents(resp.Schema)
 
 	gen := &gogenerator.GoGenerator{Config: cfg}
 
-	ctx := context.Background()
 	state, err := gen.GenerateClient(ctx, resp.Schema, resp.SchemaVersion)
 	if err != nil {
 		return fmt.Errorf("generate client: %w", err)
 	}
 	if inWorkspace {
-		if state.Overlay, err = localSourceLinks(state.Overlay, resp.Schema, resp.SchemaVersion, meta.Git.HTMLRepoURL, pin); err != nil {
+		if state.Overlay, err = localSourceLinks(ctx, state.Overlay, resp.Schema, resp.SchemaVersion, names, meta.Git.HTMLRepoURL, pin); err != nil {
 			return fmt.Errorf("normalize client source links: %w", err)
 		}
 	}
@@ -421,16 +438,30 @@ func runCore(args []string) error {
 	}
 
 	ctx := context.Background()
-	schema, schemaVersion, err := loadSchema(ctx, *introspectionPath)
+	schema, schemaVersion, engine, err := loadSchema(ctx, *introspectionPath)
 	if err != nil {
 		return err
 	}
+	if engine != nil {
+		defer engine.Close()
+	}
 	generator.SetSchemaParents(schema)
 
+	// The schema's own engine names the identifiers; a schema read from a
+	// file needs the session the command runs in.
+	connector := sessionConnector()
+	if engine != nil {
+		connector = identifiers.NewConnector(func() (identifiers.Engine, error) { return engine, nil })
+	}
+	names, err := connector.Names(ctx, schemaVersion)
+	if err != nil {
+		return err
+	}
 	gen := &gogenerator.GoGenerator{Config: generator.Config{
 		OutputDir:     *outputDir,
 		PackageImport: "dagger.io/dagger/core",
 		CoreLibrary:   true,
+		Names:         names,
 	}}
 	state, err := gen.GenerateCore(ctx, schema, schemaVersion)
 	if err != nil {
@@ -455,35 +486,46 @@ func runCore(args []string) error {
 }
 
 // loadSchema reads the API schema from an introspection JSON file if path is
-// set. Otherwise it connects to the Dagger engine and introspects it.
-func loadSchema(ctx context.Context, path string) (*introspection.Schema, string, error) {
+// set. Otherwise it connects to the Dagger engine and introspects it, and
+// returns the connection, which the caller closes.
+func loadSchema(ctx context.Context, path string) (*introspection.Schema, string, *clientEngine, error) {
 	if path == "" {
 		dag, err := dagger.Connect(ctx)
 		if err != nil {
-			return nil, "", fmt.Errorf("connect to engine: %w", err)
+			return nil, "", nil, fmt.Errorf("connect to engine: %w", err)
 		}
-		defer dag.Close()
 		schema, version, err := introspection.Introspect(ctx, dag)
 		if err != nil {
-			return nil, "", err
+			dag.Close()
+			return nil, "", nil, err
 		}
 		if schema == nil {
-			return nil, "", fmt.Errorf("engine returned no schema")
+			dag.Close()
+			return nil, "", nil, fmt.Errorf("engine returned no schema")
 		}
-		return schema, version, nil
+		return schema, version, &clientEngine{dag}, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("read introspection json: %w", err)
+		return nil, "", nil, fmt.Errorf("read introspection json: %w", err)
 	}
 	var resp introspection.Response
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, "", fmt.Errorf("unmarshal introspection json: %w", err)
+		return nil, "", nil, fmt.Errorf("unmarshal introspection json: %w", err)
 	}
 	if resp.Schema == nil {
-		return nil, "", fmt.Errorf("introspection json has no __schema")
+		return nil, "", nil, fmt.Errorf("introspection json has no __schema")
 	}
-	return resp.Schema, resp.SchemaVersion, nil
+	return resp.Schema, resp.SchemaVersion, nil, nil
+}
+
+// clientEngine runs identifier queries on a client connection.
+type clientEngine struct {
+	*dagger.Client
+}
+
+func (e *clientEngine) Query(ctx context.Context, query string, variables map[string]any, data any) error {
+	return e.Do(ctx, &dagger.Request{Query: query, Variables: variables}, &dagger.Response{Data: data})
 }
 
 // checkPackageDir makes sure that dir exists and is the directory of the Go
