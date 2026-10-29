@@ -50,8 +50,9 @@ func GoModuleTemplateFuncs(
 	if fullSchema == nil {
 		fullSchema = schema
 	}
+	namer := goNamer{names: cfg.Names}
 	return goTemplateFuncs{
-		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{}),
+		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{namer: namer}),
 		ctx:             ctx,
 		cfg:             cfg,
 		modulePkg:       pkg,
@@ -59,6 +60,7 @@ func GoModuleTemplateFuncs(
 		schema:          schema,
 		fullSchema:      fullSchema,
 		schemaVersion:   schemaVersion,
+		namer:           namer,
 		pass:            pass,
 	}.FuncMap()
 }
@@ -74,8 +76,9 @@ func NewModuleIntrospectionEmitter(
 	pkg *packages.Package,
 	fset *token.FileSet,
 ) ModuleIntrospectionEmitter {
+	namer := goNamer{names: cfg.Names}
 	return goTemplateFuncs{
-		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{}),
+		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{namer: namer}),
 		ctx:             ctx,
 		cfg:             cfg,
 		modulePkg:       pkg,
@@ -83,6 +86,7 @@ func NewModuleIntrospectionEmitter(
 		schema:          schema,
 		fullSchema:      schema,
 		schemaVersion:   schemaVersion,
+		namer:           namer,
 		pass:            1,
 	}
 }
@@ -99,6 +103,7 @@ type goTemplateFuncs struct {
 	// code) while schema may be a filtered subset used for code rendering.
 	fullSchema    *introspection.Schema
 	schemaVersion string
+	namer         goNamer
 	pass          int
 }
 
@@ -140,7 +145,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"Comment":                 funcs.comment,
 		"FormatDeprecation":       funcs.formatDeprecation,
 		"FormatExperimental":      funcs.formatExperimental,
-		"FormatName":              formatName,
+		"FormatName":              funcs.formatName,
 		"FormatParamName":         formatParamName,
 		"FormatEnum":              funcs.formatEnum,
 		"SortEnumFields":          funcs.sortEnumFields,
@@ -267,7 +272,7 @@ func (funcs goTemplateFuncs) formatHelper(name string, s string) string {
 	for _, match := range matches {
 		replacement := strings.TrimPrefix(match, "`")
 		replacement = strings.TrimSuffix(replacement, "`")
-		replacement = formatName(replacement)
+		replacement = funcs.formatName(replacement)
 		s = strings.ReplaceAll(s, match, replacement)
 	}
 	return funcs.comment(name + ": " + s)
@@ -291,13 +296,10 @@ func (funcs goTemplateFuncs) isPointer(t introspection.InputValue) (bool, error)
 	return strings.Index(representation, "*") == 0, err
 }
 
-// formatName formats a GraphQL name (e.g. object, field, arg) into a Go equivalent
-// Example: `fooId` -> `FooID`
-func formatName(s string) string {
-	if len(s) > 0 {
-		s = strings.ToUpper(string(s[0])) + s[1:]
-	}
-	return lintName(s)
+// formatName formats a GraphQL name (e.g. object, field, arg) into a Go
+// identifier, by the naming rules of the schema's version (see goNamer).
+func (funcs goTemplateFuncs) formatName(s string) string {
+	return funcs.namer.formatName(s)
 }
 
 // formatParamName formats a GraphQL argument or field name into a Go
@@ -395,9 +397,9 @@ func (funcs goTemplateFuncs) fieldOptionsStructName(f introspection.Field, scope
 		scope += "."
 	}
 	if f.ParentObject.Name == generator.QueryStructName {
-		return scope + formatName(f.Name) + "Opts"
+		return scope + funcs.formatName(f.Name) + "Opts"
 	}
-	return scope + formatName(f.ParentObject.Name) + formatName(f.Name) + "Opts"
+	return scope + funcs.formatName(f.ParentObject.Name) + funcs.formatName(f.Name) + "Opts"
 }
 
 // hasOptionals returns true if a field has optional arguments
@@ -434,7 +436,7 @@ func (funcs goTemplateFuncs) fieldFunction(f introspection.Field, topLevel bool,
 	// 	}
 	// }
 
-	structName := formatName(f.ParentObject.Name)
+	structName := funcs.formatName(f.ParentObject.Name)
 	signature := "func "
 	if !topLevel {
 		signature += `(r *` + structName + `) `
@@ -448,7 +450,7 @@ func (funcs goTemplateFuncs) fieldFunction(f introspection.Field, topLevel bool,
 		// collision, so it keeps the plain name.
 		signature += funcs.coreConstructorName(f)
 	} else {
-		signature += formatName(f.Name)
+		signature += funcs.formatName(f.Name)
 	}
 
 	// Generate arguments
@@ -574,9 +576,9 @@ func (funcs goTemplateFuncs) isListOfInterface(t *introspection.TypeRef) bool {
 // non-Node interfaces use the pre-cutover wrapper struct name directly.
 func (funcs goTemplateFuncs) interfaceClientName(name string) string {
 	if funcs.legacyGoSDKCompat() && name != "Node" {
-		return formatName(name)
+		return funcs.formatName(name)
 	}
-	return formatName(name) + "Client"
+	return funcs.formatName(name) + "Client"
 }
 
 // isInterfaceHandle reports whether an ID-handle field loads an interface
@@ -598,7 +600,7 @@ func (funcs goTemplateFuncs) idHandleClient(f introspection.Field) string {
 	if funcs.isInterfaceHandle(f) {
 		return funcs.interfaceClientName(handle)
 	}
-	return formatName(handle)
+	return funcs.formatName(handle)
 }
 
 // idHandleReturnType formats the (result, error) return of an ID-handle
@@ -628,9 +630,9 @@ func (funcs goTemplateFuncs) interfaceReturnType(name string, scopes ...string) 
 		scope += "."
 	}
 	if funcs.legacyGoSDKCompat() && name != "Node" {
-		return "*" + scope + formatName(name), nil
+		return "*" + scope + funcs.formatName(name), nil
 	}
-	return scope + formatName(name), nil
+	return scope + funcs.formatName(name), nil
 }
 
 func (funcs goTemplateFuncs) interfaceListResultType(t *introspection.TypeRef, scopes ...string) (string, error) {
@@ -641,7 +643,7 @@ func (funcs goTemplateFuncs) interfaceListResultType(t *introspection.TypeRef, s
 			if scope != "" {
 				scope += "."
 			}
-			return "[]*" + scope + formatName(inner.Name), nil
+			return "[]*" + scope + funcs.formatName(inner.Name), nil
 		}
 	}
 	return funcs.FormatOutputType(t, scopes...)
@@ -678,7 +680,7 @@ func (funcs goTemplateFuncs) implementedInterfaces(t introspection.Type) []*intr
 // interfaceMethodSignature generates a Go interface method signature for a field.
 // e.g. "Quack(ctx context.Context) (string, error)"
 func (funcs goTemplateFuncs) interfaceMethodSignature(f introspection.Field) (string, error) {
-	sig := formatName(f.Name)
+	sig := funcs.formatName(f.Name)
 
 	args := []string{}
 	if f.TypeRef.IsScalar() || f.TypeRef.IsList() || funcs.isNullableObject(f.TypeRef) {
@@ -746,7 +748,7 @@ func (funcs goTemplateFuncs) interfaceMethodSignature(f introspection.Field) (st
 //	func (r *duckClient) Quack(ctx context.Context) (string, error)
 func (funcs goTemplateFuncs) interfaceClientMethod(ifaceName string, f introspection.Field) (string, error) {
 	clientName := funcs.interfaceClientName(ifaceName)
-	sig := "func (r *" + clientName + ") " + formatName(f.Name)
+	sig := "func (r *" + clientName + ") " + funcs.formatName(f.Name)
 
 	args := []string{}
 	if f.TypeRef.IsScalar() || f.TypeRef.IsList() || funcs.isNullableObject(f.TypeRef) {
@@ -825,14 +827,14 @@ func (funcs goTemplateFuncs) FormatInputType(arg introspection.InputValue, scope
 			schemaType := schema.Types.Get(expectedType)
 			if schemaType != nil && schemaType.Kind == introspection.TypeKindInterface {
 				if funcs.legacyGoSDKCompat() && expectedType != "Node" {
-					baseType = "*" + scope + formatName(expectedType)
+					baseType = "*" + scope + funcs.formatName(expectedType)
 				} else {
-					baseType = scope + formatName(expectedType)
+					baseType = scope + funcs.formatName(expectedType)
 				}
 			}
 		}
 		if baseType == "" {
-			baseType = "*" + scope + formatName(expectedType)
+			baseType = "*" + scope + funcs.formatName(expectedType)
 		}
 		if arg.TypeRef != nil && arg.TypeRef.IsList() {
 			return "[]" + baseType, nil
@@ -850,7 +852,7 @@ func (funcs goTemplateFuncs) isPartial() bool {
 // legacyIDName returns the Go identifier for the per-type ID name
 // (e.g. "ContainerID") used by pre-cutover Go SDK code.
 func (funcs goTemplateFuncs) legacyIDName(typeName string) string {
-	return formatName(typeName + "ID")
+	return funcs.formatName(typeName + "ID")
 }
 
 // isLegacyIDAlias returns true when a scalar should be emitted as a Go

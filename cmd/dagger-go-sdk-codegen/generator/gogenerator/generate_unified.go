@@ -29,6 +29,12 @@ import (
 func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	generator.SetSchemaParents(schema)
 	generator.SetSchema(schema)
+	return g.withNames(ctx, schema, func() (*generator.GeneratedState, error) {
+		return g.generateUnifiedClient(ctx, schema, schemaVersion)
+	})
+}
+
+func (g *GoGenerator) generateUnifiedClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	if g.Config.PackageImport == "" {
 		return nil, fmt.Errorf("package import path is required")
 	}
