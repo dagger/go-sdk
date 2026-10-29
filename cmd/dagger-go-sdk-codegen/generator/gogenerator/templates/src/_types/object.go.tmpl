@@ -157,20 +157,22 @@ return &{{ $field | IDHandleClient }}{
 	if objectID == nil {
 		return nil, nil
 	}
+	{{- /* The fragment selects the schema's type, which its Go name can spell differently. */ -}}
+	{{- $schemaTypeName := $field.TypeRef.Name }}
 	{{- if IsInterfaceRef $field.TypeRef }}
 	{{- if IsSharedCoreObject $field.TypeRef }}
-return new({{ $typeName | InterfaceClientName }}).WithGraphQLQuery(selectNode(q.Root(), *objectID, "{{ $typeName }}"))
+return new({{ $typeName | InterfaceClientName }}).WithGraphQLQuery(selectNode(q.Root(), *objectID, "{{ $schemaTypeName }}"))
 {{- else }}
 return &{{ $typeName | InterfaceClientName }}{
-		query: selectNode(q.Root(), *objectID, "{{ $typeName }}"),
+		query: selectNode(q.Root(), *objectID, "{{ $schemaTypeName }}"),
 	}
 {{- end }}, nil
 	{{- else }}
 	{{- if IsSharedCoreObject $field.TypeRef }}
-return new({{ $typeName }}).WithGraphQLQuery(selectNode(q.Root(), *objectID, "{{ $typeName }}"))
+return new({{ $typeName }}).WithGraphQLQuery(selectNode(q.Root(), *objectID, "{{ $schemaTypeName }}"))
 {{- else }}
 return &{{ $typeName }}{
-		query: selectNode(q.Root(), *objectID, "{{ $typeName }}"),
+		query: selectNode(q.Root(), *objectID, "{{ $schemaTypeName }}"),
 	}
 {{- end }}, nil
 	{{- end }}

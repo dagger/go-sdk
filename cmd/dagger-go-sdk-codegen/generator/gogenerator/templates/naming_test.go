@@ -2,6 +2,7 @@ package templates
 
 import (
 	"bytes"
+	"encoding/json"
 	"go/format"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 // recordedNames are formatted as the engine at v1.0.0-beta.22 (dagger/dagger
@@ -103,6 +105,43 @@ func TestObjectFollowsEngineNames(t *testing.T) {
 	require.Contains(t, got, `Select("shortSha")`)
 	require.Contains(t, got, `Arg("length", opts[i].Length)`)
 	require.NotContains(t, got, "ShortSha(")
+}
+
+// A nullable object is loaded by its schema name, which its Go name can
+// spell differently: a dependency named by strcase keeps DepGpuThing, which
+// the engine's rules style as DepGPUThing in Go.
+func TestNullableObjectLoadsBySchemaName(t *testing.T) {
+	var foo, thing introspection.Type
+	require.NoError(t, json.Unmarshal([]byte(`{
+  "kind": "OBJECT",
+  "name": "Foo",
+  "fields": [{"name": "maybe", "args": [], "type": {"kind": "OBJECT", "name": "DepGpuThing"}}]
+}`), &foo))
+	require.NoError(t, json.Unmarshal([]byte(`{
+  "kind": "OBJECT",
+  "name": "DepGpuThing",
+  "fields": [{"name": "id", "args": [], "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}}]
+}`), &thing))
+	schema := &introspection.Schema{Types: introspection.Types{&foo, &thing}}
+	generator.SetSchemaParents(schema)
+	generator.SetSchema(schema)
+	t.Cleanup(func() { generator.SetSchema(nil) })
+	names := recordedNames(t, func(f identifiers.Format, name string) string {
+		if name == "DepGpuThing" {
+			return "DepGPUThing"
+		}
+		return legacyFormatName(name)
+	})
+	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.22", generator.Config{Names: names})
+	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(filepath.Join("src", "_types/object.go.tmpl"))
+	require.NoError(t, err)
+	got := formatted(t, names, func() string {
+		var buf bytes.Buffer
+		require.NoError(t, tmpl.Execute(&buf, &foo))
+		return buf.String()
+	})
+	require.Contains(t, got, "func (r *Foo) Maybe(ctx context.Context) (*DepGPUThing, error)")
+	require.Contains(t, got, `selectNode(q.Root(), *objectID, "DepGpuThing")`)
 }
 
 // The module namer predicts the names the engine gives a module's
