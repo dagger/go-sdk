@@ -21,9 +21,10 @@ type GoSdk {
   entrypoint with embedded bindings targets the same release: its bindings
   come from that release's schema, and its entrypoint declares it.
   The Go runtime refuses this setting: a new manifest declares the SDK's
-  release as its engineVersion, and an existing one keeps its own. In a
-  scope without a module, it pins the library of the standalone clients
-  the same way, by default for unified clients only.
+  release as its engineVersion, and an existing one keeps its own, or gets
+  the running engine's when it declares none. In a scope without a module,
+  it pins the library of the standalone clients the same way, by default
+  for unified clients only.
   """
   targetVersion: String! = ""
 

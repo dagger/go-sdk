@@ -100,9 +100,10 @@ Its generated entrypoint declares the release to the engine, in the
 `DAGGER_CLIENT_VERSION` variable of the process that runs the module; a
 generated standalone client with a target announces it when it starts a
 session.
-The engine ignores `DAGGER_CLIENT_VERSION` today and serves the module at
-its own version; a later engine release reads it and serves the declared
-release instead.
+The engine ignores `DAGGER_CLIENT_VERSION` today and serves the module at a
+version of its own choosing, v1.0.0-beta.20 for a module without a
+`dang.toml`, which predates the identifier renames of v1.0.0-beta.22; a
+later engine release reads it and serves the declared release instead.
 The fixed core library and the module's own bindings depend on the SDK
 release, the target setting and the module's sources.
 An engine update leaves them unchanged.
@@ -137,8 +138,9 @@ engine update can still change them.
 
 A module on the Go runtime refuses `targetVersion`.
 A new manifest declares the SDK's release as its `engineVersion`; an
-existing manifest keeps the `engineVersion` it declares, and the engine
-generates the module's code for that version.
+existing manifest keeps the `engineVersion` it declares, or gets the running
+engine's when it declares none, and the engine generates the module's code
+for that version.
 Fully pinned targeting needs the Dang entrypoint with unified clients; see
 Migration.
 
