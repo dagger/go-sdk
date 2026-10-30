@@ -57,7 +57,7 @@ func (c *Connector) Names(ctx context.Context, version string) (*Names, error) {
 	}
 	applies, err := c.EngineApplies(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("version %s follows the engine's naming rules: %w", version, err)
+		return nil, fmt.Errorf("naming identifiers at %s depends on the engine's release: %w", version, err)
 	}
 	if !applies {
 		// An older engine names every module by strcase, and its schemas

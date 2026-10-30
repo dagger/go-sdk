@@ -15,10 +15,11 @@
 // The client subcommand generates a standalone client package for one module
 // from a pre-computed introspection schema. It writes into an existing Go
 // module and updates that module's go.mod. The schema and the bound module's
-// metadata are supplied as files. For a schema whose identifiers follow the
-// engine's naming rules (v1.0.0-beta.22 or later, on an engine as recent), it
-// formats them through the Dagger session it runs in, as every subcommand
-// does (see package identifiers).
+// metadata are supplied as files. For a schema at v1.0.0-beta.22 or later, or
+// at v1.0.0 (which every older v1.0.0 prerelease engine reports), it checks
+// the engine's release and, on an engine as recent, formats identifiers by
+// the engine's naming rules, through the Dagger session it runs in, as every
+// subcommand does (see package identifiers). Older schemas need no session.
 package main
 
 import (
