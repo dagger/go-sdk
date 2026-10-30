@@ -208,9 +208,10 @@ type TargetChecks {
     assert("dang.toml does not declare what the process declares:\n" + first.file(dangConfigPath).contents) {
       configures(first, sdkTarget) and declares(first, sdkTarget)
     }
-    assert("generation moved the working directory to " + first.cwd) { first.cwd == scopePath }
+    assert("generation moved the working directory to " + first.cwd) { first.cwd == input.cwd }
     let again = goSdk.generateScope(ws: first, isModule: true, name: name, clients: [])
     assert("generating again changed files") { again.changes(first).isEmpty }
+    assert("generating again moved the working directory to " + again.cwd) { again.cwd == input.cwd }
 
     let embedded = goSdk(unifiedClients: false).generateScope(ws: input, isModule: true, name: name, clients: [])
     assert("embedded bindings have a different dang.toml:\n" + embedded.file(dangConfigPath).contents) {
@@ -226,14 +227,14 @@ type TargetChecks {
       configures(unpinned, sdkTarget) and declares(unpinned, sdkTarget)
     }
 
-    let settings = "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = true\nservice = \"engine\"\n\n[imports.Extra]\npath = \"../extra\"\n"
+    let settings = "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = true\nservice = [\"dagger\", \"session\"]\n\n[imports.Extra]\npath = \"../extra\"\n"
     let parent = "[imports.Parent]\npath = \"../parent\"\n"
     let customized = first.withNewFile(dangConfigPath, settings).withNewFile("dang.toml", parent)
     let managed = goSdk.generateScope(ws: customized, isModule: true, name: name, clients: [])
     let config = dangConfig(managed, dangConfigPath)
     assert("dang.toml lost its settings:\n" + managed.file(dangConfigPath).contents) {
       configures(managed, sdkTarget) and
-        config.field(["imports", "Dagger", "service"]).asString == "engine" and
+        toString(config.field(["imports", "Dagger", "service"]).contents).contains("session") and
         config.field(["imports", "Extra", "path"]).asString == "../extra"
     }
     assert("generation changed the dang.toml above the entrypoint") {
