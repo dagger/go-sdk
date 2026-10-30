@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"slices"
 
 	"golang.org/x/tools/go/packages"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 // moduleNamer gives the schema names the engine gives the module's own
@@ -60,18 +62,18 @@ func (n moduleNamer) isMainObject(name string) bool {
 
 // ModuleDeclarations lists the names of a module's package the engine names
 // for its generated code (identifiers.NameModule): the exported named struct
-// and interface types the module declares, the methods of the interfaces
-// (DaggerObject's but ID left out) and their parameters, and the structs
-// again as the candidates for the main object. Generated code declares
-// nothing.
-func ModuleDeclarations(pkg *packages.Package, fset *token.FileSet) (typeNames, fieldNames, candidates []string) {
-	ps := &parseState{fset: fset}
+// and interface types the module declares, and the structs again as the
+// candidates for the main object; for each interface that embeds
+// DaggerObject, ID and its other methods, with their arguments as the parser
+// names them. Generated code declares nothing.
+func ModuleDeclarations(pkg *packages.Package, fset *token.FileSet, schema *introspection.Schema, moduleName string) (typeNames, fieldNames, candidates []string) {
+	ps := &parseState{pkg: pkg, fset: fset, schema: schema, moduleName: moduleName}
 	scope := pkg.Types.Scope()
-	daggerObject := map[string]bool{}
+	var daggerObject []string
 	if obj, ok := scope.Lookup(daggerObjectIfaceName).(*types.TypeName); ok {
 		if iface, ok := obj.Type().Underlying().(*types.Interface); ok {
 			for method := range iface.Methods() {
-				daggerObject[method.Name()] = true
+				daggerObject = append(daggerObject, method.Name())
 			}
 		}
 	}
@@ -80,57 +82,42 @@ func ModuleDeclarations(pkg *packages.Package, fset *token.FileSet) (typeNames, 
 		if !ok || !obj.Exported() || ps.isDaggerGenerated(obj) {
 			continue
 		}
+		named, _ := obj.Type().(*types.Named)
 		switch underlying := obj.Type().Underlying().(type) {
 		case *types.Struct:
 			typeNames = append(typeNames, name)
 			candidates = append(candidates, name)
 		case *types.Interface:
+			if named == nil || name == daggerObjectIfaceName || !embedsAll(underlying, daggerObject) {
+				continue
+			}
 			typeNames = append(typeNames, name)
 			fieldNames = append(fieldNames, "ID")
 			for method := range underlying.Methods() {
-				if !method.Exported() || daggerObject[method.Name()] {
+				if !method.Exported() || slices.Contains(daggerObject, method.Name()) {
 					continue
 				}
 				fieldNames = append(fieldNames, method.Name())
-				fieldNames = append(fieldNames, paramNames(method.Signature().Params())...)
+				// A method the parser refuses fails generation when it's
+				// parsed again; it has no arguments to name.
+				specs, _ := ps.parseParamSpecs(named, method)
+				for _, spec := range specs {
+					if !spec.isContext {
+						fieldNames = append(fieldNames, spec.name)
+					}
+				}
 			}
 		}
 	}
 	return typeNames, fieldNames, candidates
 }
 
-// paramNames are the names the bindings pass params as arguments by, as
-// parseParamSpecs names them: an inline struct param (or a pointer to one)
-// by its fields, and an unnamed param by its type. A context is no argument.
-func paramNames(params *types.Tuple) []string {
-	var names []string
-	for param := range params.Variables() {
-		if param.Type().String() == contextTypename {
-			continue
+// embedsAll reports whether iface has every method named in methods.
+func embedsAll(iface *types.Interface, methods []string) bool {
+	for _, name := range methods {
+		if obj, _, _ := types.LookupFieldOrMethod(iface, false, nil, name); obj == nil {
+			return false
 		}
-		if inline, ok := asInlineStruct(param.Type()); ok {
-			for field := range inline.Fields() {
-				names = append(names, paramName(field))
-			}
-			continue
-		}
-		names = append(names, paramName(param))
 	}
-	return names
-}
-
-// paramName is a param's name, or its type's when it has none
-// (parseParamSpecVar).
-func paramName(param *types.Var) string {
-	if param.Name() != "" {
-		return param.Name()
-	}
-	typ := param.Type()
-	for {
-		ptr, ok := typ.(*types.Pointer)
-		if !ok {
-			return typ.String()
-		}
-		typ = ptr.Elem()
-	}
+	return true
 }
