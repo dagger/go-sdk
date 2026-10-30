@@ -16,7 +16,7 @@ import (
 )
 
 func TestGenerateEmbeddedClientUsesModuleBootstrap(t *testing.T) {
-	gen := &GoGenerator{Config: generator.Config{
+	gen := &GoGenerator{Config: generator.Config{Names: styled,
 		OutputDir: t.TempDir(),
 		ModuleConfig: &generator.ModuleGeneratorConfig{
 			ModuleName: "hello",
@@ -50,7 +50,7 @@ func TestEmbeddedClientSharesSuccessfulSessionWithoutGlobalAPI(t *testing.T) {
 		t.Skip("set GO_SDK_TEST_RUNTIME to the SDK split checkout")
 	}
 	root := t.TempDir()
-	gen := &GoGenerator{Config: generator.Config{
+	gen := &GoGenerator{Config: generator.Config{Names: styled,
 		OutputDir:    root,
 		ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "hello"},
 	}}

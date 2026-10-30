@@ -23,7 +23,7 @@ type SourcesChecks {
     let entrypoint = ready.file("internal/dagger/entrypoint/main.dang").contents
     [
       "pub sources(workspace: Workspace!): Directory! {\n    directory\n      .withDirectory(workspace.cwd + \"/..\", workspace.directory(\"..\",\n        include: [\"lib/go.mod\", \"lib/greet/*.go\", \"lib/greet/*.h\", \"lib/greet/*.s\", \"lib/greet/*.syso\", \"lib/greet/greeting.txt\"],",
-      "# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing \"workspace\" argument.\ntype Entrypoint implements ModuleEntrypoint {",
+      "# Needs Dagger v1.0.0-beta.22 or later; engines before v1.0.0-beta.18 report a missing \"workspace\" argument.\ntype Entrypoint implements ModuleEntrypoint {",
       "pub types: [TypeDef!]! {",
       "pub call(\n    receiverType: String!,\n",
       ".withWorkdir(\"/workspace/\" + currentModule.sourceSubpath)",

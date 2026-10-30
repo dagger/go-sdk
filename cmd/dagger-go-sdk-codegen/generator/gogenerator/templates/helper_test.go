@@ -2,6 +2,7 @@ package templates
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"go/format"
@@ -13,10 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 var updateFixtures = flag.Bool("test.update-fixtures", false, "update the test fixtures")
+
+// styled styles Go identifiers as the engine does, from its recorded
+// formatting (identifierstest.Recorded).
+var styled = func() *identifiers.Names {
+	names, err := identifierstest.Styled("v1.0.0-beta.22").Connector().Names(context.Background(), "v1.0.0-beta.22")
+	if err != nil {
+		panic(err)
+	}
+	return names
+}()
 
 func loadSchemaFromTypeJSON(t *testing.T, jsonString string) (*introspection.Schema, *introspection.Type) {
 	t.Helper()
@@ -36,7 +49,7 @@ func parseTemplateFiles(t *testing.T, schema *introspection.Schema, paths ...str
 	if len(paths) == 0 {
 		t.Fatalf("parseTemplateFiles requires at least one template path")
 	}
-	funcs := GoTemplateFuncs(schema, nil, "v0.0.0", generator.Config{})
+	funcs := GoTemplateFuncs(schema, nil, "v0.0.0", generator.Config{Names: styled})
 	fullPaths := make([]string, len(paths))
 	for i, path := range paths {
 		fullPaths[i] = filepath.Join("src", path)

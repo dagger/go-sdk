@@ -247,7 +247,7 @@ type EngineE2e {
       assert("beta.17 did not refuse " + args.join(" ") + " with the release it needs:\n" + refused.stdout + refused.stderr) {
         refused.exitCode != 0 and
           refused.stderr.contains("missing argument \"workspace\" required by interface") and
-          refused.stderr.contains("Needs Dagger v1.0.0-beta.18 or later")
+          refused.stderr.contains("Needs Dagger v1.0.0-beta.22 or later")
       }
     }
     null

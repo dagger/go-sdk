@@ -39,7 +39,7 @@ func TestGenerateCollectionClient(t *testing.T) {
 		schema.Types = append(schema.Types, obj)
 	}
 	generator.SetSchemaParents(schema)
-	gen := &GoGenerator{Config: generator.Config{OutputDir: t.TempDir(), PackageImport: "example.com/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: "hello"}}}}
+	gen := &GoGenerator{Config: generator.Config{Names: styled, OutputDir: t.TempDir(), PackageImport: "example.com/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: "hello"}}}}
 	state, err := gen.GenerateClient(t.Context(), schema, "v1.0.0-beta.14")
 	require.NoError(t, err)
 	got := readOverlay(t, state, "hello.gen.go")

@@ -31,10 +31,13 @@ type GoGenerator struct {
 // withNames formats the names the schema declares, in one query, then runs
 // generate once: the bindings format each of those names, and the few they
 // derive (FooID, handles) are formatted as they're looked up. A failure to
-// format a name fails generation. With the legacy rules (nil Config.Names),
-// nothing is formatted.
+// format a name fails generation, and so does generating without the
+// engine's names.
 func (g *GoGenerator) withNames(schema *introspection.Schema, generate func() (*generator.GeneratedState, error)) (*generator.GeneratedState, error) {
 	names := g.Config.Names
+	if names == nil {
+		return nil, fmt.Errorf("generating Go bindings needs the engine to name their identifiers (generator.Config.Names)")
+	}
 	if err := names.Prefetch(templates.DeclaredNames(schema)); err != nil {
 		return nil, err
 	}

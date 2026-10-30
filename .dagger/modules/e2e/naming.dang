@@ -1,8 +1,9 @@
 """
 Generate and call a module whose schema names differ between the engine's
 identifier naming rules and the legacy strcase rules: wire-name predictions
-follow the version the engine names the module by, and Go identifier style
-follows the schema the bindings are generated from.
+follow the version the engine names the module by, and Go identifiers are
+the engine's formatting at the version of the schema the bindings are
+generated from.
 
 It needs an engine at v1.0.0-beta.22 or later, so no check runs it yet. cli
 is that engine's dagger CLI, which runs nested in this session:
@@ -59,9 +60,8 @@ type NamingChecks {
   The interface bindings load a module interface by the name they predict
   by the version the engine names the module by, with and without a pinned
   version, and the module's functions answer by the engine's names, through
-  the main object the entrypoint constructs. The schema the bindings are
-  generated from is at the engine's version either way, so their Go
-  identifiers follow its rules in both (GitCommit.ShortSHA). The module
+  the main object the entrypoint constructs. The bindings' Go identifiers
+  are the engine's formatting either way (GitCommit.ShortSHA). The module
   calls itself only through a client added with dagger module client add .,
   generated from the schema the engine serves, so no bindings here predict
   its functions.
@@ -76,7 +76,7 @@ type NamingChecks {
       assert(label + "'s interface bindings lack " + want.fetcher) {
         module.file("dagger.gen.go").contents.contains(want.fetcher)
       }
-      assert(label + "'s core bindings do not follow the schema's rules") {
+      assert(label + "'s core bindings are not styled by the engine") {
         module.file("internal/dagger/dagger.gen.go").contents.contains("func (r *GitCommit) ShortSHA(")
       }
       let e2e = call(module, want.e2e)

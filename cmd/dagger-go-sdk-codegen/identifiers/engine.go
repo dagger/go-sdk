@@ -19,15 +19,14 @@ type Engine interface {
 	Query(ctx context.Context, query string, variables map[string]any, data any) error
 }
 
-// Connector applies the gate: it hands out Names for a version only when the
-// version and the engine are both past CasingVersion. It connects to the
-// engine, and asks for its release, at most once, and only when a version
-// past CasingVersion needs it.
+// Connector connects generators to the engine that names their identifiers.
+// It connects, and asks for the engine's release, at most once.
 type Connector struct {
 	dial func() (Engine, error)
 
 	once    sync.Once
 	engine  Engine
+	release string
 	applies bool
 	err     error
 
@@ -46,30 +45,69 @@ func SessionConnector() *Connector {
 	return NewConnector(func() (Engine, error) { return SessionFromEnv() })
 }
 
-// Names returns the Names for code generated at version: a schema's
-// __schemaVersion, or the engine version a module's declarations are named
-// by. It is nil, the legacy rules, when version is before CasingVersion,
-// without connecting, or when the engine's release is. Each version has one
-// Names, so everything generated at a version shares its formatted names.
+// Names returns the Names Go identifiers are styled through for code
+// generated at version: a schema's __schemaVersion, or the version a
+// runtime's Go identifiers follow. Every version is styled by the engine's
+// rules, with that version's dictionary, so generation always needs the
+// engine, whatever the version. Each version has one Names, so everything
+// generated at a version shares its formatted names. An engine released
+// before CasingVersion may not serve formatIdentifiers: its failures say
+// which release generation needs.
 func (c *Connector) Names(ctx context.Context, version string) (*Names, error) {
+	if _, err := c.EngineApplies(ctx); err != nil {
+		return nil, fmt.Errorf("style Go identifiers: %w", err)
+	}
+	return c.namesAt(ctx, version), nil
+}
+
+// ModuleNames returns the Names the engine's names for a module's own
+// declarations are predicted through, for a module the engine names by
+// version. It is nil, the legacy strcase rules, when version is before
+// CasingVersion, without connecting, or when the engine's release is: such
+// an engine names every module by strcase.
+func (c *Connector) ModuleNames(ctx context.Context, version string) (*Names, error) {
 	if !Applies(version) {
 		return nil, nil
 	}
 	applies, err := c.EngineApplies(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("naming identifiers at %s depends on the engine's release: %w", version, err)
+		return nil, fmt.Errorf("naming the module at %s depends on the engine's release: %w", version, err)
 	}
 	if !applies {
 		// An older engine names every module by strcase, and its schemas
 		// report every v1.0.0 prerelease as v1.0.0, past CasingVersion.
 		return nil, nil
 	}
+	return c.namesAt(ctx, version), nil
+}
+
+// namesAt returns the one Names of version.
+func (c *Connector) namesAt(ctx context.Context, version string) *Names {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.names[version] == nil {
-		c.names[version] = NewNames(ctx, c.engine, version)
+		engine := c.engine
+		if !c.applies {
+			engine = olderEngine{Engine: c.engine, release: c.release}
+		}
+		c.names[version] = NewNames(ctx, engine, version)
 	}
-	return c.names[version], nil
+	return c.names[version]
+}
+
+// olderEngine is an engine released before CasingVersion, which may not
+// serve formatIdentifiers at all, or not in the session's view: its errors
+// say what generation needs.
+type olderEngine struct {
+	Engine
+	release string
+}
+
+func (e olderEngine) Query(ctx context.Context, query string, variables map[string]any, data any) error {
+	if err := e.Engine.Query(ctx, query, variables, data); err != nil {
+		return fmt.Errorf("%w (the engine is Dagger %s; the Go SDK names Go identifiers through its formatIdentifiers: use Dagger %s or later)", err, e.release, CasingVersion)
+	}
+	return nil
 }
 
 // EngineApplies reports whether the engine's release is at or past
@@ -82,9 +120,8 @@ func (c *Connector) EngineApplies(ctx context.Context) (bool, error) {
 			c.err = fmt.Errorf("connect to the engine to name identifiers: %w", c.err)
 			return
 		}
-		var release string
-		release, c.err = EngineVersion(ctx, c.engine)
-		c.applies = Applies(release)
+		c.release, c.err = EngineVersion(ctx, c.engine)
+		c.applies = Applies(c.release)
 	})
 	return c.applies, c.err
 }
