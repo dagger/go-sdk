@@ -112,8 +112,9 @@ func GenerateV2Artifacts(
 	targetVersion string,
 	sources *EntrypointSources,
 ) (*V2Artifacts, error) {
+	namer := goNamer{names: cfg.Names}
 	funcs := goTemplateFuncs{
-		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{}),
+		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{namer: namer}),
 		ctx:             ctx,
 		cfg:             cfg,
 		modulePkg:       pkg,
@@ -121,6 +122,7 @@ func GenerateV2Artifacts(
 		schema:          schema,
 		fullSchema:      schema,
 		schemaVersion:   schemaVersion,
+		namer:           namer,
 		pass:            1,
 		codeDir:         codeDir,
 	}
@@ -155,6 +157,7 @@ type v2Module struct {
 	// directory that holds its manifest: "." unless the manifest names a
 	// subdirectory, such as "runtime".
 	codeDir string
+	namer   moduleNamer
 }
 
 // moduleSubpathExpr is the Dang expression of the module directory's path in
@@ -190,6 +193,7 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		goCacheVolumes: goCacheVolumes,
 		codeDir:        funcs.codeDir,
 		unified:        funcs.cfg.UnifiedClient,
+		namer:          funcs.moduleNamer(),
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -414,6 +418,10 @@ func slicesSortStrings(values []string) {
 
 func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage string, packageNames ...string) ([]byte, error) {
 	var defs []string
+	objectNames := make([]string, len(mod.objects))
+	for i, obj := range mod.objects {
+		objectNames[i] = obj.name
+	}
 	for _, obj := range mod.objects {
 		def, err := renderDangObject(obj, mod.casesIdentifiers())
 		if err != nil {
@@ -421,7 +429,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 		}
 		// The entrypoint protocol needs an explicit constructor to expose the
 		// module's main object. Match the Go runtime's implicit zero-value New.
-		if obj.constructor == nil && strcase.ToCamel(obj.name) == strcase.ToCamel(moduleName) {
+		if obj.constructor == nil && mod.namer.isMainObject(obj.name, moduleName, objectNames) {
 			def += "\n  .withConstructor(function(\"\", typeDef.withObject(" + strconv.Quote(obj.name) + ")))"
 		}
 		defs = append(defs, def)
