@@ -269,7 +269,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	// The engine names the module's declarations the generated code spells,
 	// in one query.
-	typeNames, fieldNames, candidates := templates.ModuleDeclarations(pkg, fset)
+	typeNames, fieldNames, candidates := templates.ModuleDeclarations(pkg, fset, resp.Schema, cfg.ModuleName)
 	genCfg.ModuleConfig.Naming, err = identifiers.NameModule(ctx, query, cfg.ModuleSourceID, typeNames, fieldNames, candidates)
 	if err != nil {
 		return err

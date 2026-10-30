@@ -19,9 +19,10 @@ import (
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
-// The engine is asked for the arguments the bindings pass, named as the
-// parser names them: an unnamed param by its type, and a pointer to an
-// inline struct by its fields.
+// The engine is asked for the functions and arguments of the module's
+// interfaces as the parser names them: an unnamed param by its type, a
+// pointer to an inline struct by its fields. An interface that doesn't
+// embed DaggerObject is no module interface, and isn't asked for.
 func TestModuleDeclarationsNameArgumentsAsParsed(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", `package main
@@ -30,17 +31,28 @@ import "context"
 
 type Main struct{}
 
+type DaggerObject interface{ XXX_GraphQLType() string }
+
+type Path string
+
+type Label = string
+
 type Finder interface {
+	DaggerObject
 	Count(context.Context, string) (int, error)
 	Find(ctx context.Context, opts *struct{ Path string }) (string, error)
+	Build(context.Context, Path) (string, error)
+	Tag(context.Context, Label) (string, error)
 }
-`, 0)
+
+type Writer interface{ Write(_ []byte) error }
+`, parser.ParseComments)
 	require.NoError(t, err)
 	pkg, err := (&types.Config{Importer: importer.ForCompiler(fset, "source", nil)}).Check("example.com/m", fset, []*ast.File{file}, nil)
 	require.NoError(t, err)
-	typeNames, fieldNames, candidates := ModuleDeclarations(&packages.Package{Types: pkg}, fset)
+	typeNames, fieldNames, candidates := ModuleDeclarations(&packages.Package{Types: pkg, Syntax: []*ast.File{file}, Fset: fset, Module: &packages.Module{Dir: "."}}, fset, &introspection.Schema{}, "main")
 	require.Equal(t, []string{"Finder", "Main"}, typeNames)
-	require.Equal(t, []string{"ID", "Count", "string", "Find", "Path"}, fieldNames)
+	require.Equal(t, []string{"ID", "Build", "string", "Count", "string", "Find", "Path", "Tag", "string"}, fieldNames)
 	require.Equal(t, []string{"Main"}, candidates)
 }
 
