@@ -417,7 +417,7 @@ func runCore(args []string) error {
 	var (
 		outputDir         = flags.String("output", ".", "directory of the dagger.io/dagger/core package")
 		dagOutputDir      = flags.String("dag-output", "", "directory of the deprecated dagger.io/dagger/dag package (optional; if empty, do not generate it)")
-		introspectionPath = flags.String("introspection-json-path", "", "optional: read the schema from this introspection JSON file, not from the engine.\nThis is an escape hatch for advanced use. Most users do not need it.")
+		introspectionPath = flags.String("introspection-json-path", "", "optional: read the schema from this introspection JSON file, not from the engine.\nThis is an escape hatch for advanced use. Most users do not need it.\nA schema at v1.0.0 or later still needs the Dagger session of the engine it\ncame from (DAGGER_SESSION_PORT and DAGGER_SESSION_TOKEN), whose release\ndecides its naming rules; dagger.Connect is not used.")
 	)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
