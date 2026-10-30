@@ -469,6 +469,11 @@ func dangStringList(values []string) string {
 }
 
 func renderDangObject(spec *parsedObjectType) (string, error) {
+	if spec.isCollection {
+		if err := checkCollection(spec); err != nil {
+			return "", err
+		}
+	}
 	base := "typeDef.withObject(" + strings.Join(append([]string{strconv.Quote(spec.name)}, objectOpts(spec.doc, spec.sourceMap, spec.deprecated)...), ", ") + ")"
 	if spec.isCollection {
 		base += "\n  .withCollection"
@@ -509,6 +514,37 @@ func renderDangObject(spec *parsedObjectType) (string, error) {
 		base += "\n  .withConstructor(\n" + indentDang(fn, 4) + "\n  )"
 	}
 	return base, nil
+}
+
+// checkCollection refuses at generation a collection the engine would refuse
+// at load: it needs a stored keys field and a get function of one argument,
+// marked or named so.
+func checkCollection(spec *parsedObjectType) error {
+	hasKeys := false
+	for _, field := range spec.fields {
+		if field.isCollectionKeys || (!field.isPrivate && strcase.ToLowerCamel(field.name) == "keys") {
+			hasKeys = true
+		}
+	}
+	var get *funcTypeSpec
+	for _, method := range spec.methods {
+		if method.isCollectionGet || (get == nil && strcase.ToLowerCamel(method.name) == "get") {
+			get = method
+		}
+	}
+	if !hasKeys || get == nil {
+		return fmt.Errorf("collection %q requires a stored keys field and a get function", spec.name)
+	}
+	args := 0
+	for _, arg := range get.argSpecs {
+		if !arg.isContext {
+			args++
+		}
+	}
+	if args != 1 {
+		return fmt.Errorf("collection %q get function requires one argument", spec.name)
+	}
+	return nil
 }
 
 func renderDangInterface(spec *parsedIfaceType) (string, error) {
