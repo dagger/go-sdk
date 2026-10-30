@@ -127,7 +127,22 @@ func GenerateV2Artifacts(
 		codeDir:         codeDir,
 	}
 
-	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, goCacheVolumes, targetVersion, sources)
+	// Format the schema's names, styled as Go identifiers, in one query. The
+	// module's own names are formatted as they're looked up, so only names
+	// its declarations use reach the engine. A failure to format a name comes
+	// first: what was rendered with a fallback may be what failed.
+	moduleNames := funcs.moduleNamer().names
+	if err := cfg.Names.Prefetch(DeclaredNames(schema)); err != nil {
+		return nil, err
+	}
+	artifacts, err := funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, goCacheVolumes, targetVersion, sources)
+	if nameErr := errors.Join(cfg.Names.Err(), moduleNames.Err()); nameErr != nil {
+		return nil, nameErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return artifacts, nil
 }
 
 type v2Module struct {
