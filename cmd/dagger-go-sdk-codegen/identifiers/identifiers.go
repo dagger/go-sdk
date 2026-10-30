@@ -14,14 +14,18 @@
 //     schemas keep the names they shipped with, so nil means the generator
 //     produces exactly what it did before the rules existed. Nothing gates on
 //     whether formatIdentifiers is in the schema: engines serve it on every
-//     v1 view, including the views whose modules keep the legacy rules.
+//     v1 view, including the views whose modules keep the legacy rules. The
+//     engine asked is the session's, so a schema read from a file is taken
+//     to come from it: an older engine's schemas report v1.0.0, which only
+//     its release tells apart from a schema past the cut.
 //   - Batching: a generator looks names up while it renders. A name that isn't
 //     formatted yet is recorded, and Names.Run formats every recorded name in
 //     a single GraphQL query (one aliased formatIdentifiers field per Format),
 //     then renders again, until nothing is missing.
-//   - Versioning: every request passes the schema's version, so names are
-//     parsed with that version's dictionary whatever version the session is
-//     served at. Released dictionaries never change, so the output is stable.
+//   - Versioning: every request passes the version its Names is for (a
+//     schema's, a module's, a runtime's), so names are parsed with that
+//     version's dictionary whatever version the session is served at.
+//     Released dictionaries never change, so the output is stable.
 package identifiers
 
 import (
