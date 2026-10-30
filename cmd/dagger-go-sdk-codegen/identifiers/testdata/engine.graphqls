@@ -1,0 +1,47 @@
+# The parts of the engine's schema the identifiers package queries, as
+# dagger/dagger#14996 (naming/module-source-naming 6d5350e) defines them in
+# docs/docs-graphql/schema.graphqls. Descriptions and directives are left out.
+# TestQueriesMatchTheEngineSchema validates every query the package sends
+# against it.
+
+schema {
+  query: Query
+}
+
+enum AcronymStyle {
+  UPPERCASE
+  CAPITALIZED
+}
+
+enum Casing {
+  PASCAL
+  CAMEL
+  SNAKE
+  SCREAMING_SNAKE
+  KEBAB
+  FLAT
+}
+
+interface Node {
+  id: ID!
+}
+
+type ModuleNaming implements Node {
+  id: ID!
+  typeNames(names: [String!]!): [String!]!
+  fieldNames(names: [String!]!): [String!]!
+  enumMemberNames(names: [String!]!): [String!]!
+  mainObject(candidates: [String!]!): String
+}
+
+type ModuleSource implements Node {
+  id: ID!
+  naming: ModuleNaming!
+}
+
+type Query implements Node {
+  id: ID!
+  node(id: ID!): Node
+  version: String!
+  formatIdentifiers(names: [String!]!, casing: Casing!, acronyms: AcronymStyle = UPPERCASE, version: String): [String!]!
+}
