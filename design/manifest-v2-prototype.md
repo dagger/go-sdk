@@ -62,7 +62,7 @@ hello/
 | `dagger.gen.go` | Go SDK | Codecs and the static `DaggerDispatch` function. |
 | `cmd/hello-dispatch/main.go` | Go SDK | Dispatch command for an importable package. |
 | `dagger.dispatch.gen.go` | Go SDK | Dispatch command for `package main`. |
-| `internal/dagger/*.gen.go` | Go SDK | Embedded Dagger client, including self-call bindings. |
+| `internal/dagger/*.gen.go` | Go SDK | Embedded Dagger client. A module calls itself through a client added with `dagger module client add .`. |
 | `internal/dagger/entrypoint/main.dang` | Go SDK | Entrypoint that the engine loads. |
 
 The module may be an importable Go package or `package main`. A new module's
@@ -160,11 +160,8 @@ Dagger API needs a session, for example `dagger run go run ...`.
    would load the module through the entrypoint that is being generated.
 4. Run `module-codegen` on the module's Go root:
    1. Generate the dependency client with the existing client renderer.
-   2. Load and analyze the module package.
-   3. Emit the module schema and merge it with the dependency schema.
-   4. Generate the client again with self-call bindings.
-   5. Reload the package and emit codecs, static dispatch, the dispatch
-      command, and the Dang entrypoint.
+   2. Load and analyze the module package, and emit codecs, static dispatch,
+      the dispatch command, and the Dang entrypoint.
 5. Type-check the entrypoint with `entrypoint-contract`, which installs the
    engine's `ModuleEntrypoint` interface next to it.
 6. Merge only the generated files, ownership metadata, `go.mod`, and `go.sum`
@@ -206,8 +203,8 @@ not switch such a module back silently. The message says to set
 
 ## Reuse boundary
 
-The client renderer, Go source analyzer, type validation, JSON codec, static
-dispatch, and self-call generation share one package:
+The client renderer, Go source analyzer, type validation, JSON codec, and static
+dispatch share one package:
 `helpers/codegen/generator/gogenerator/templates`.
 
 The analyzer is a direct port of the hardened analyzer from
@@ -220,16 +217,17 @@ The analyzer is a direct port of the hardened analyzer from
 - pragma parsing
 - JSON codecs for Dagger values
 - static invocation cases
-- module self-introspection for self-call client generation
+
+It drops module self-introspection. A module calls itself through a client
+added with `dagger module client add .`, generated from the schema the engine
+serves, like any other client.
 
 `GenerateEmbeddedClient` writes the client below `internal/dagger` without a
 nested `go.mod`. The embedded client returns a nullable object with a context
 and an error, as the engine's Go SDK does. Standalone clients keep their
 current API, and their output does not change.
 
-`helpers/module-codegen` only coordinates these shared parts. Its schema merge
-is a direct port of `core.Schema.Merge`. It generates self-call bindings
-without an engine schema helper call.
+`helpers/module-codegen` only coordinates these shared parts.
 
 ## Current limits
 
