@@ -12,8 +12,8 @@ import (
 )
 
 // A name that wasn't prefetched is formatted with a direct call when first
-// looked up, and kept. The first failure is kept for Err, and later misses
-// don't call again.
+// looked up, and kept; a formatted name is never sent again. The first
+// failure is kept for Err, and later misses don't call again.
 func TestLookup(t *testing.T) {
 	calls := 0
 	fail := false
@@ -33,6 +33,8 @@ func TestLookup(t *testing.T) {
 			require.Equal(t, want, got)
 		}
 	}
+	require.Equal(t, 2, calls)
+	require.NoError(t, names.Prefetch([]string{"commitSha", "shortSha"}), "formatted names aren't sent again")
 	require.Equal(t, 2, calls)
 	require.NoError(t, names.Err())
 

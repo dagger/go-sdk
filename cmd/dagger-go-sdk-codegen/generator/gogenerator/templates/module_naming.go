@@ -99,20 +99,38 @@ func ModuleDeclarations(pkg *packages.Package, fset *token.FileSet) (typeNames, 
 	return typeNames, fieldNames, candidates
 }
 
-// paramNames are the names of params, and the fields of an inline struct
-// param, which the bindings pass as arguments.
+// paramNames are the names the bindings pass params as arguments by, as
+// parseParamSpecs names them: an inline struct param (or a pointer to one)
+// by its fields, and an unnamed param by its type. A context is no argument.
 func paramNames(params *types.Tuple) []string {
 	var names []string
 	for param := range params.Variables() {
-		if inline, ok := param.Type().(*types.Struct); ok {
+		if param.Type().String() == contextTypename {
+			continue
+		}
+		if inline, ok := asInlineStruct(param.Type()); ok {
 			for field := range inline.Fields() {
-				names = append(names, field.Name())
+				names = append(names, paramName(field))
 			}
 			continue
 		}
-		if name := param.Name(); name != "" && name != "_" {
-			names = append(names, name)
-		}
+		names = append(names, paramName(param))
 	}
 	return names
+}
+
+// paramName is a param's name, or its type's when it has none
+// (parseParamSpecVar).
+func paramName(param *types.Var) string {
+	if param.Name() != "" {
+		return param.Name()
+	}
+	typ := param.Type()
+	for {
+		ptr, ok := typ.(*types.Pointer)
+		if !ok {
+			return typ.String()
+		}
+		typ = ptr.Elem()
+	}
 }

@@ -30,19 +30,28 @@ func NewNames(ctx context.Context, query Query, version string) *Names {
 	return &Names{ctx: ctx, query: query, version: version, formatted: map[string]string{}}
 }
 
-// Prefetch formats names in one query and keeps them for Lookup. A name the
-// engine can't parse fails the query.
+// Prefetch formats names in one query and keeps them for Lookup. Names are
+// formatted once: a generator that shares its Names across several outputs
+// of one schema queries once. A name the engine can't parse fails the query.
 func (n *Names) Prefetch(names []string) error {
-	if len(names) == 0 {
+	n.mu.Lock()
+	var missing []string
+	for _, name := range names {
+		if _, ok := n.formatted[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	n.mu.Unlock()
+	if len(missing) == 0 {
 		return nil
 	}
-	formatted, err := n.format(names)
+	formatted, err := n.format(missing)
 	if err != nil {
 		return err
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	for i, name := range names {
+	for i, name := range missing {
 		n.formatted[name] = formatted[i]
 	}
 	return nil
