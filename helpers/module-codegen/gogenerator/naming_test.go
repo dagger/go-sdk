@@ -1,7 +1,6 @@
 package gogenerator
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,17 +15,19 @@ import (
 
 // approximateEngine is an engine past identifiers.CasingVersion that formats
 // the names versions pins as recorded there, and every other name roughly
-// as the engine would: generated code only needs to compile with them.
-func approximateEngine(versions map[string]identifierstest.Table) *identifierstest.Engine {
+// as the engine would: generated code only needs to compile with them. It
+// serves the naming of module source "src" from module.
+func approximateEngine(versions map[string]identifierstest.Table, module *identifierstest.Module) *identifierstest.Engine {
 	return &identifierstest.Engine{
 		Release:  "v1.0.0-beta.22",
 		Versions: versions,
+		Modules:  map[string]*identifierstest.Module{"src": module},
 		Fallback: func(f identifiers.Format, name string) string {
 			switch f.Casing {
 			case identifiers.Camel:
 				return strcase.ToLowerCamel(name)
-			case identifiers.Kebab:
-				return strcase.ToKebab(name)
+			case identifiers.ScreamingSnake:
+				return strcase.ToScreamingSnake(name)
 			}
 			if strings.ContainsAny(name, "-_") {
 				return strcase.ToCamel(name)
@@ -36,12 +37,21 @@ func approximateEngine(versions map[string]identifierstest.Table) *identifierste
 	}
 }
 
+// helloModule is how the engine would answer ModuleSource.naming for module
+// hello: the names pins records, and strcase for the rest, which the
+// generated code only needs to compile with.
+func helloModule(pins map[string]map[string]string) *identifierstest.Module {
+	mod := identifierstest.Strcase("hello")
+	mod.Names = pins
+	return mod
+}
+
 // The schema's Go identifiers are styled by the engine at the generated
-// schema's version, on either side of the cut, while the module's predicted
-// schema names, which its interface bindings select, follow the version the
-// engine names it by: strcase before the cut. The engine's spellings below
-// are what dagger/dagger 441d95c2 formats at v1.0.0-beta.22; it formats
-// every version with the same dictionary.
+// schema's version, and the module's schema names, which its interface
+// bindings select, are the engine's naming of it, whichever side of the cut
+// either is on. The engine's spellings below are what dagger/dagger 441d95c2
+// names at v1.0.0-beta.22; it formats every version with the same
+// dictionary.
 func TestGenerateSplitsNamingVersions(t *testing.T) {
 	const source = `package hello
 
@@ -57,35 +67,42 @@ type HttpTester interface {
 func (h *Hello) Run(ctx context.Context, tester HttpTester) (string, error) { return tester.E2ETest(ctx) }
 `
 	formatted := identifierstest.Table{
-		identifierstest.Key(identifiers.FieldName): {"E2ETest": "e2eTest"},
-		identifierstest.Key(identifiers.GoName):    {"id": "ID", "shortSha": "ShortSHA", "HttpTester": "HTTPTester"},
+		identifierstest.Key(identifiers.GoName): {"id": "ID", "shortSha": "ShortSHA"},
 	}
 	pinned := map[string]identifierstest.Table{"v1.0.0-beta.20": formatted, "v1.0.0-beta.22": formatted}
+	modules := map[bool]*identifierstest.Module{
+		true: helloModule(nil),
+		false: helloModule(map[string]map[string]string{
+			"typeNames":  {"HttpTester": "HelloHTTPTester"},
+			"fieldNames": {"E2ETest": "e2eTest"},
+		}),
+	}
 	for _, test := range []struct {
-		name           string
-		schema, module string
-		want, wantNot  []string
-		names          []string
+		name          string
+		schema        string
+		legacy        bool
+		want, wantNot []string
+		names         []string
 	}{
 		{
 			// A Dang entrypoint without a dang.toml, generated on an engine
 			// past the cut.
 			name:   "schema past the cut, module before",
-			schema: "v1.0.0-beta.22", module: "v1.0.0-beta.20",
+			schema: "v1.0.0-beta.22", legacy: true,
 			names:   []string{`"HelloHttpTester"`, `"e2Etest"`},
 			want:    []string{"func (r *GitCommit) ShortSHA("},
 			wantNot: []string{"func (r *GitCommit) ShortSha("},
 		},
 		{
 			name:   "schema before the cut, module past",
-			schema: "v1.0.0-beta.20", module: "v1.0.0-beta.22",
+			schema: "v1.0.0-beta.20", legacy: false,
 			names:   []string{`"HelloHTTPTester"`, `"e2eTest"`},
 			want:    []string{"func (r *GitCommit) ShortSHA("},
 			wantNot: []string{"func (r *GitCommit) ShortSha("},
 		},
 		{
 			name:   "both past the cut",
-			schema: "v1.0.0-beta.22", module: "v1.0.0-beta.22",
+			schema: "v1.0.0-beta.22", legacy: false,
 			names: []string{`"HelloHTTPTester"`, `"e2eTest"`},
 			want:  []string{"func (r *GitCommit) ShortSHA("},
 		},
@@ -93,10 +110,10 @@ func (h *Hello) Run(ctx context.Context, tester HttpTester) (string, error) { re
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
-			engine := approximateEngine(pinned)
+			engine := approximateEngine(pinned, modules[test.legacy])
 			cfg := GenerateConfig{
 				ModuleRoot: root, ModuleName: "hello", SchemaPath: moduleContextSchema(t),
-				SchemaVersion: test.schema, ModuleVersion: test.module, Connector: engine.Connector(),
+				SchemaVersion: test.schema, ModuleSourceID: "src", Connector: engine.Connector(),
 				DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26-alpine",
 			}
 			require.NoError(t, Generate(t.Context(), cfg))
@@ -142,10 +159,10 @@ func (h *Hello) E2ETest() string { _ = dagger.SSHFSVolumeOpts{}; return "e2e" }
 		"v1.0.0-beta.23": {
 			identifierstest.Key(identifiers.GoName): {"id": "ID", "sshfsVolume": "SshfsVolume"},
 		},
-	})
+	}, helloModule(nil))
 	cfg := GenerateConfig{
 		ModuleRoot: root, ModuleName: "hello", SchemaPath: moduleContextSchema(t),
-		SchemaVersion: "v1.0.0-beta.23", Connector: engine.Connector(),
+		SchemaVersion: "v1.0.0-beta.23", ModuleSourceID: "src", Connector: engine.Connector(),
 		DaggerVersion: runtimeVersion, UnifiedClient: true, GoImage: "golang:1.26-alpine",
 	}
 	require.NoError(t, Generate(t.Context(), cfg))
@@ -213,46 +230,4 @@ func TestGenerateUnifiedRefusesPreCutLibrary(t *testing.T) {
 		require.Equal(t, contents, string(data), "a refused module changed")
 	}
 	require.NoFileExists(t, filepath.Join(root, "dagger.gen.go"), "a refused module changed")
-}
-
-// Which Names each side gets, and what an unreadable module version means:
-// the schema is styled at its version on any engine, and the module named by
-// strcase on an engine that names every module so, while an unreadable
-// module version is an error on one that names modules by their version.
-func TestIdentifierNames(t *testing.T) {
-	version := func(n *identifiers.Names) string {
-		if n == nil {
-			return "legacy"
-		}
-		return n.Version()
-	}
-	for _, test := range []struct {
-		name                   string
-		release                string
-		schema, module         string
-		moduleErr              error
-		wantSchema, wantModule string
-		wantErr                string
-	}{
-		{name: "module version defaults to the schema's", release: "v1.0.0-beta.22", schema: "v1.0.0-beta.22", wantSchema: "v1.0.0-beta.22", wantModule: "v1.0.0-beta.22"},
-		{name: "each its own version", release: "v1.0.0-beta.22", schema: "v1.0.0-beta.23", module: "v1.0.0-beta.22", wantSchema: "v1.0.0-beta.23", wantModule: "v1.0.0-beta.22"},
-		{name: "module before the cut", release: "v1.0.0-beta.22", schema: "v1.0.0-beta.22", module: "v1.0.0-beta.20", wantSchema: "v1.0.0-beta.22", wantModule: "legacy"},
-		{name: "older engine", release: "v1.0.0-beta.21", schema: "v1.0.0", module: "v1.0.0", wantSchema: "v1.0.0", wantModule: "legacy"},
-		{name: "unreadable on an older engine", release: "v1.0.0-beta.21", schema: "v1.0.0", moduleErr: errors.New("no such field"), wantSchema: "v1.0.0", wantModule: "legacy"},
-		{name: "unreadable past the cut", release: "v1.0.0-beta.22", schema: "v1.0.0-beta.22", moduleErr: errors.New("no such field"), wantErr: "the engine names the module by the version it declares, which couldn't be read: no such field"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			engine := &identifierstest.Engine{Release: test.release}
-			names, moduleNames, err := identifierNames(t.Context(), GenerateConfig{
-				SchemaVersion: test.schema, ModuleVersion: test.module, ModuleVersionErr: test.moduleErr, Connector: engine.Connector(),
-			}, test.schema)
-			if test.wantErr != "" {
-				require.EqualError(t, err, test.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, test.wantSchema, version(names))
-			require.Equal(t, test.wantModule, version(moduleNames))
-		})
-	}
 }

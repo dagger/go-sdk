@@ -757,7 +757,7 @@ type parseState struct {
 	legacyGoSDKCompat bool
 	objs              []types.Object
 
-	// namer predicts the schema names the engine gives the module's
+	// namer gives the schema names the engine gives the module's
 	// declarations (see moduleNamer).
 	namer moduleNamer
 
@@ -786,7 +786,7 @@ func (ps *parseState) isMainModuleObject(name string) bool {
 	if ps.pkg != nil {
 		objects = packageObjectNames(ps.pkg.Types)
 	}
-	return ps.namer.isMainObject(name, ps.moduleName, objects)
+	return ps.namer.isMainObject(name, objects)
 }
 
 // pkgDoc returns the package level documentation comment, if any,

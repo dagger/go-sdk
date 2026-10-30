@@ -3,7 +3,6 @@ package identifiers_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,6 +49,9 @@ var table = identifierstest.Table{
 	},
 }
 
+// camel is a format besides GoName, for queries of several formats.
+var camel = identifiers.Format{Casing: identifiers.Camel, Acronyms: identifiers.Capitalized}
+
 // Every version is styled by the engine, whatever its release: before the
 // cut too, with that version's dictionary.
 func TestConnectorStylesEveryVersion(t *testing.T) {
@@ -82,36 +84,12 @@ func TestConnectorOlderEngineFailuresNameTheRelease(t *testing.T) {
 	}
 }
 
-// Before the cut, the engine names a module's declarations by strcase:
-// predicting them connects to nothing.
-func TestConnectorLegacyModuleDoesNotConnect(t *testing.T) {
-	c := identifiers.NewConnector(func() (identifiers.Engine, error) {
-		return nil, errors.New("must not connect")
-	})
-	for _, version := range []string{"", "v0.21.9", "v1.0.0-beta.21"} {
-		names, err := c.ModuleNames(t.Context(), version)
-		require.NoError(t, err)
-		require.Nil(t, names)
-	}
-}
-
-// Engines before the cut name modules by strcase, and report every v1.0.0
-// prerelease view as v1.0.0: the module's version alone can't tell.
-func TestConnectorOlderEngineNamesModulesByStrcase(t *testing.T) {
-	for _, release := range []string{"v1.0.0-beta.19", "v1.0.0-beta.21+abc", "v0.21.9"} {
-		engine := &identifierstest.Engine{Release: release, Table: table}
-		names, err := engine.Connector().ModuleNames(t.Context(), "v1.0.0")
-		require.NoError(t, err)
-		require.Nil(t, names, release)
-		require.Equal(t, 0, engine.FormatQueries())
-	}
-}
-
-func TestConnectorAppliesPastTheCut(t *testing.T) {
+// A version has one Names, and the engine's release is asked once.
+func TestConnectorNamesOncePerVersion(t *testing.T) {
 	for _, release := range []string{"v1.0.0-beta.22", "v1.0.0-beta.22+441d95c2", "v1.0.0-dev-0123456789ab"} {
 		engine := &identifierstest.Engine{Release: release, Table: table}
 		c := engine.Connector()
-		names, err := c.ModuleNames(t.Context(), "v1.0.0-beta.22")
+		names, err := c.Names(t.Context(), "v1.0.0-beta.22")
 		require.NoError(t, err)
 		require.NotNil(t, names, release)
 		require.Equal(t, "v1.0.0-beta.22", names.Version())
@@ -133,7 +111,7 @@ func TestConnectorNeedsAnEngine(t *testing.T) {
 	}
 }
 
-// Nil Names, a module named by strcase, format nothing.
+// Nil Names format nothing.
 func TestNilNamesFormatNothing(t *testing.T) {
 	var names *identifiers.Names
 	_, ok := names.Lookup(identifiers.GoName, "commitSha")
@@ -149,8 +127,8 @@ func TestPrefetch(t *testing.T) {
 	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table}
 	names := identifiers.NewNames(t.Context(), engine, "v1.0.0-beta.22")
 	require.NoError(t, names.Prefetch(map[identifiers.Format][]string{
-		identifiers.GoName:    {"commitSha", "shortSha", "commitSha", "JSONValue"},
-		identifiers.FieldName: {"HTTPClient", "GetURL"},
+		identifiers.GoName: {"commitSha", "shortSha", "commitSha", "JSONValue"},
+		camel:              {"HTTPClient", "GetURL"},
 	}))
 	require.Equal(t, 1, engine.FormatQueries())
 	query := engine.Queries()[0]
@@ -164,8 +142,8 @@ func TestPrefetch(t *testing.T) {
 		name string
 	}{
 		{identifiers.GoName, "commitSha"},
-		{identifiers.TypeName, "JSONValue"},
-		{identifiers.FieldName, "GetURL"},
+		{identifiers.GoName, "JSONValue"},
+		{camel, "GetURL"},
 	} {
 		formatted, ok := names.Lookup(lookup.f, lookup.name)
 		require.True(t, ok, lookup.name)
@@ -209,6 +187,43 @@ func TestFormatErrorsFailGeneration(t *testing.T) {
 	_, ok = names.Lookup(identifiers.GoName, "shortSha")
 	require.False(t, ok)
 	require.Equal(t, queries, engine.FormatQueries())
+}
+
+func TestConnectorModuleNamingNeedsASource(t *testing.T) {
+	_, err := (&identifierstest.Engine{}).Connector().ModuleNaming(t.Context(), "")
+	require.ErrorContains(t, err, "module source ID")
+}
+
+// The module's names are asked for with a direct call each when first looked
+// up, and kept: a name, or a set of main-object candidates, is asked once.
+func TestModuleNaming(t *testing.T) {
+	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Modules: map[string]*identifierstest.Module{
+		"src": {
+			Names: map[string]map[string]string{
+				"typeNames":  {"HttpClient": "MyModHTTPClient"},
+				"fieldNames": {"GetURL": "getUrl"},
+			},
+			Main: func(candidates []string) string { return candidates[0] },
+		},
+	}}
+	naming, err := engine.Connector().ModuleNaming(t.Context(), "src")
+	require.NoError(t, err)
+	for range 2 {
+		typ, _ := naming.TypeName("HttpClient")
+		field, _ := naming.FieldName("GetURL")
+		main, _ := naming.MainObject([]string{"MyMod", "HttpClient"})
+		require.Equal(t, []string{"MyModHTTPClient", "getUrl", "MyMod"}, []string{typ, field, main})
+	}
+	require.Equal(t, 3, engine.FormatQueries())
+	queries := engine.Queries()
+	require.Contains(t, queries[0], "m0: node(id: $m0) { ... on ModuleSource { naming { typeNames(names: $l0) } } }")
+	require.Contains(t, queries[2], "m0: node(id: $m0) { ... on ModuleSource { naming { main: mainObject(candidates: $c0) } } }")
+	require.NoError(t, naming.Err())
+
+	// A name the engine can't answer fails the lookup, and Err returns why.
+	_, ok := naming.FieldName("Unknown")
+	require.False(t, ok)
+	require.ErrorContains(t, naming.Err(), `no fieldNames answer for "Unknown"`)
 }
 
 // Session speaks the engine's GraphQL HTTP protocol: POST /query, the
