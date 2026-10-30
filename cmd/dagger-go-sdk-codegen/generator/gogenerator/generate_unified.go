@@ -30,7 +30,7 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 	schema = projectChecks(schema)
 	generator.SetSchemaParents(schema)
 	generator.SetSchema(schema)
-	return g.withNames(ctx, schema, func() (*generator.GeneratedState, error) {
+	return g.withNames(schema, func() (*generator.GeneratedState, error) {
 		return g.generateUnifiedClient(ctx, schema, schemaVersion)
 	})
 }

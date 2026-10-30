@@ -67,7 +67,7 @@ func (c *Connector) Names(ctx context.Context, version string) (*Names, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.names[version] == nil {
-		c.names[version] = NewNames(c.engine, version)
+		c.names[version] = NewNames(ctx, c.engine, version)
 	}
 	return c.names[version], nil
 }

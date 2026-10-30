@@ -44,14 +44,10 @@ func (n moduleNamer) legacy() bool {
 	return n.names == nil
 }
 
-// format returns name formatted in f. A name the engine can't parse stays as
-// it is, as the engine leaves it (schema validation reports it). A name that
-// isn't formatted yet returns false: it's formatted before the next render
-// (identifiers.Names.Run), and the caller stands in its legacy name.
+// format returns name formatted in f, or false when formatting it failed:
+// the caller stands in its legacy name, and generation returns the error
+// (identifiers.Names.Err).
 func (n moduleNamer) format(f identifiers.Format, name string) (string, bool) {
-	if !identifiers.Valid(name) {
-		return name, true
-	}
 	return n.names.Lookup(f, name)
 }
 
@@ -84,9 +80,6 @@ func (n moduleNamer) FieldName(name string) string {
 func (n moduleNamer) namespaceObject(typeName, moduleName string) string {
 	if n.legacy() {
 		return legacyNamespaceObject(typeName, moduleName)
-	}
-	if !identifiers.Valid(typeName) || !identifiers.Valid(moduleName) {
-		return n.ObjectName(moduleName + "_" + typeName)
 	}
 	typePascal, ok1 := n.names.Lookup(identifiers.TypeName, typeName)
 	typeWords, ok2 := n.names.Lookup(identifiers.Words, typeName)
@@ -183,11 +176,16 @@ func flatWordPrefix(words []string, prefix string) int {
 // engine/naming rules, they're the same once flattened: a template may spell
 // the main object differently around digits and acronyms than the module's
 // name (K8STools for k8s-tools, My2Go for my2go).
+//
+// Past the cut, two names the engine formats alike are the same once
+// flattened too, since formatting only cases words and drops separators, so
+// the flat comparison decides alone: no other object's name is sent to the
+// engine, such as a helper type the module never declares.
 func (n moduleNamer) sameDeclaredName(a, b string) bool {
-	if n.ObjectName(a) == n.ObjectName(b) {
-		return true
+	if n.legacy() {
+		return n.ObjectName(a) == n.ObjectName(b)
 	}
-	return !n.legacy() && flatName(a) != "" && flatName(a) == flatName(b)
+	return flatName(a) != "" && flatName(a) == flatName(b)
 }
 
 // isMainObject reports whether the object named name is the module's main
@@ -195,7 +193,15 @@ func (n moduleNamer) sameDeclaredName(a, b string) bool {
 // the object whose name normalizes like the module's, or else the only one
 // that's the same once flattened. objects are the names of every object the
 // module may declare.
+//
+// It's asked of every exported name of the package. Past the cut, a name
+// that isn't the module's once flattened can't format like it (see
+// sameDeclaredName), so only names that are go to the engine: a helper type,
+// function or constant is never sent.
 func (n moduleNamer) isMainObject(name, moduleName string, objects []string) bool {
+	if !n.legacy() && flatName(name) != flatName(moduleName) {
+		return false
+	}
 	if n.ObjectName(name) == n.ObjectName(moduleName) {
 		return true
 	}

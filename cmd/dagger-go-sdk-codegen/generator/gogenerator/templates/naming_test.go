@@ -31,15 +31,12 @@ func recordedNames(t *testing.T, fallback func(identifiers.Format, string) strin
 	return names
 }
 
-// formatted runs f until every name it looks up is formatted (see
-// identifiers.Names.Run), and returns what it returned last.
+// formatted returns what f returns, and checks every name it looked up was
+// formatted (identifiers.Names.Err).
 func formatted[T any](t *testing.T, names *identifiers.Names, f func() T) T {
 	t.Helper()
-	var got T
-	require.NoError(t, names.Run(t.Context(), func() error {
-		got = f()
-		return nil
-	}))
+	got := f()
+	require.NoError(t, names.Err())
 	return got
 }
 
@@ -199,4 +196,8 @@ func TestModuleNamerMainObject(t *testing.T) {
 	require.False(t, isMain(engine, "Tools", "k8s-tools", "K8STools", "Tools"))
 	require.False(t, moduleNamer{}.isMainObject("K8STools", "k8s-tools", []string{"K8STools"}), "strcase has no flat match")
 	require.True(t, moduleNamer{}.isMainObject("K8sTools", "k8s-tools", []string{"K8sTools"}))
+	// Only names that are the module's once flattened reach the engine: a
+	// helper type the table can't format isn't asked about.
+	require.False(t, isMain(engine, "Café", "k8s-tools", "K8STools", "Café"))
+	require.True(t, isMain(engine, "K8STools", "k8s-tools", "K8STools", "Café"))
 }

@@ -1,9 +1,11 @@
 package templates
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 // goNamer formats GraphQL names (types, fields, arguments) as exported Go
@@ -23,9 +25,11 @@ type goNamer struct {
 // formatName formats a GraphQL name (e.g. object, field, arg) into a Go
 // identifier. Example: `fooId` -> `FooID`
 //
-// With the engine's rules, a name that isn't formatted yet gets its legacy
-// spelling for this render; identifiers.Names.Run renders again once it is.
-// Internal names (__typename) keep the legacy spelling, as in dagger/dagger.
+// With the engine's rules, a name the schema doesn't declare (FooID) is
+// formatted with a direct call when first looked up; if that fails, the
+// legacy spelling stands in and the generator returns the error
+// (identifiers.Names.Err). Internal names (__typename) keep the legacy
+// spelling, as in dagger/dagger.
 func (n goNamer) formatName(s string) string {
 	if n.names != nil && s != "" && !strings.HasPrefix(s, "_") {
 		if name, ok := n.names.Lookup(identifiers.GoName, s); ok {
@@ -33,6 +37,28 @@ func (n goNamer) formatName(s string) string {
 		}
 	}
 	return legacyFormatName(s)
+}
+
+// DeclaredNames lists the names schema declares that bindings format as Go
+// identifiers: its types, fields, arguments and input fields, less internal
+// names (__typename), which keep their legacy spelling. Generators format
+// them up front, in one query (identifiers.Names.Prefetch).
+func DeclaredNames(schema *introspection.Schema) map[identifiers.Format][]string {
+	var declared []string
+	for _, typ := range schema.Types {
+		declared = append(declared, typ.Name)
+		for _, field := range typ.Fields {
+			declared = append(declared, field.Name)
+			for _, arg := range field.Args {
+				declared = append(declared, arg.Name)
+			}
+		}
+		for _, field := range typ.InputFields {
+			declared = append(declared, field.Name)
+		}
+	}
+	declared = slices.DeleteFunc(declared, func(name string) bool { return name == "" || strings.HasPrefix(name, "_") })
+	return map[identifiers.Format][]string{identifiers.GoName: declared}
 }
 
 // legacyFormatName formats a GraphQL name into a Go identifier with

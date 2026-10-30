@@ -279,13 +279,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return fmt.Errorf("load module package: %w", err)
 	}
-	var artifacts *templates.V2Artifacts
-	err = identifiers.Run(ctx, func() (err error) {
-		artifacts, err = templates.GenerateV2Artifacts(
-			ctx, resp.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.TargetVersion, sources,
-		)
-		return err
-	}, names, moduleNames)
+	artifacts, err := templates.GenerateV2Artifacts(
+		ctx, resp.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.TargetVersion, sources,
+	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
 	}
