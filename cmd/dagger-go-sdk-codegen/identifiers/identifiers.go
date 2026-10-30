@@ -1,102 +1,63 @@
-// Package identifiers names identifiers by the engine's identifier naming
-// rules, through the engine's own Query.formatIdentifiers.
-//
-// The engine parses a name into words with a versioned dictionary of acronyms
-// and terms (engine/naming in dagger/dagger), both to name a module's
-// declarations (from CasingVersion on) and to answer formatIdentifiers (on
-// every v1 view). A generator that formats names itself, or with another copy
-// of those rules, eventually disagrees with the engine, so generators ask the
-// engine instead:
-//
-//   - Styling: Go identifiers are always the engine's formatting
-//     (Connector.Names), whatever the schema's version, so generation needs
-//     the engine's session.
-//   - Modules: the engine names a module's own declarations itself, and
-//     answers for them through ModuleSource.naming (see ModuleNames), on
-//     either side of the cut: strcase before it. Generators don't predict
-//     them.
-//   - Lookups: a generator formats the names it knows up front (a schema's
-//     types, fields and arguments) in a single GraphQL query, and keeps them
-//     in a map. A name it derives while rendering (FooID, a handle's name),
-//     and each of the module's own names, is asked for with a direct call
-//     when first looked up, and cached. A name the engine can't parse fails
-//     the call, and with it generation.
-//   - Floor: generation needs an engine at CasingVersion or later, the first
-//     release that serves ModuleSource.naming; the Connector refuses an
-//     older one.
-//   - Versioning: every request passes the version its Names is for (a
-//     schema's, a module's, a runtime's), so names are parsed with that
-//     version's dictionary whatever version the session is served at.
-//     Released dictionaries never change, so the output is stable.
+// Package identifiers names identifiers through the engine, so generators
+// don't carry a copy of its naming rules: Go identifiers by
+// Query.formatIdentifiers (Names), and the schema names the engine gives a
+// module's own declarations by ModuleSource.naming (ModuleNames,
+// dagger/dagger#14996). Both ask the Dagger session the generator runs in; a
+// name the engine can't parse fails generation.
 package identifiers
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
 	"strings"
-
-	"golang.org/x/mod/semver"
 )
 
-// CasingVersion is engine.IdentifierCasingVersion in dagger/dagger: the first
-// engine release, and API view, that names module declarations with its
-// identifier naming rules (and whose core API follows the GraphQL casing
-// convention). It's also taken to be the first release serving
-// ModuleSource.naming (dagger/dagger#14996), the Go SDK's engine floor.
-// Released versions never move it.
-const CasingVersion = "v1.0.0-beta.22"
+// Query runs a GraphQL query against the engine and decodes the response's
+// data into data. GraphQL errors are returned as an error.
+type Query func(ctx context.Context, query string, variables map[string]any, data any) error
 
-// Casing is a value of the engine's Casing enum: how words are joined.
-type Casing string
-
-const (
-	Pascal         Casing = "PASCAL"
-	Camel          Casing = "CAMEL"
-	ScreamingSnake Casing = "SCREAMING_SNAKE"
-	Kebab          Casing = "KEBAB"
-)
-
-// AcronymStyle is a value of the engine's AcronymStyle enum: how acronyms and
-// terms are written where a word starts with a capital.
-type AcronymStyle string
-
-const (
-	Uppercase   AcronymStyle = "UPPERCASE"
-	Capitalized AcronymStyle = "CAPITALIZED"
-)
-
-// Format is how formatIdentifiers formats a name.
-type Format struct {
-	Casing   Casing
-	Acronyms AcronymStyle
-}
-
-// GoName is the format Go codegen uses: an exported Go identifier, a type,
-// method, option struct or option field (CommitSHA, WithGPU, ParentSHAs).
-var GoName = Format{Pascal, Uppercase}
-
-// Applies reports whether a version is at or past CasingVersion. The version
-// is an engine release (Query.version), a schema's __schemaVersion, or a
-// module's engine version. Build metadata is dropped, and a development
-// build counts as its release (v1.0.0-dev-<commit> is v1.0.0), as the engine
-// maps versions to API views; other prereleases order as semver says, so
-// every v1.0.0 beta before CasingVersion is before the cut. An invalid
-// version doesn't apply.
-func Applies(version string) bool {
-	v := release(version)
-	return semver.IsValid(v) && semver.Compare(v, CasingVersion) >= 0
-}
-
-// release normalizes a version the way the engine maps it to an API view.
-func release(version string) string {
-	v := strings.TrimSpace(version)
-	if v != "" && !strings.HasPrefix(v, "v") {
-		v = "v" + v
+// SessionQuery returns the Query of the Dagger session a command runs in as
+// a nested client: DAGGER_SESSION_PORT and DAGGER_SESSION_TOKEN.
+func SessionQuery() (Query, error) {
+	port, token := os.Getenv("DAGGER_SESSION_PORT"), os.Getenv("DAGGER_SESSION_TOKEN")
+	if port == "" || token == "" {
+		return nil, errors.New("no Dagger session to name identifiers: DAGGER_SESSION_PORT and DAGGER_SESSION_TOKEN are not set; run the command as a nested client of a Dagger session")
 	}
-	if !semver.IsValid(v) {
-		return ""
-	}
-	v = strings.TrimSuffix(v, semver.Build(v))
-	if pre := semver.Prerelease(v); strings.Contains(pre, "dev") {
-		v = strings.TrimSuffix(v, pre)
-	}
-	return v
+	return func(ctx context.Context, query string, variables map[string]any, data any) error {
+		body, err := json.Marshal(map[string]any{"query": query, "variables": variables})
+		if err != nil {
+			return err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:"+port+"/query", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.SetBasicAuth(token, "")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		var result struct {
+			Data   json.RawMessage
+			Errors []struct{ Message string }
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return fmt.Errorf("decode response (HTTP %s): %w", resp.Status, err)
+		}
+		if len(result.Errors) > 0 {
+			messages := make([]string, len(result.Errors))
+			for i, e := range result.Errors {
+				messages[i] = e.Message
+			}
+			return errors.New(strings.Join(messages, "; "))
+		}
+		return json.Unmarshal(result.Data, data)
+	}, nil
 }
