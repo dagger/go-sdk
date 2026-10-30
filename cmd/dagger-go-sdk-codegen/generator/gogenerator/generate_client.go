@@ -23,7 +23,12 @@ func (g *GoGenerator) GenerateClient(ctx context.Context, schema *introspection.
 		return g.GenerateUnifiedClient(ctx, schema, schemaVersion)
 	}
 	generator.SetSchema(schema)
+	return g.withNames(ctx, schema, func() (*generator.GeneratedState, error) {
+		return g.generateClient(ctx, schema, schemaVersion)
+	})
+}
 
+func (g *GoGenerator) generateClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	mfs := memfs.New()
 	if g.Config.PackageImport == "" {
 		return nil, fmt.Errorf("package import path is required")

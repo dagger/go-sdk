@@ -7,13 +7,20 @@ import (
 	"sort"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 // GenerateCoreJSONCodecs lets shared core handles decode the ID strings the
 // engine passes to module functions. Constructing a decoded handle stays lazy.
-func GenerateCoreJSONCodecs(schema *introspection.Schema, schemaVersion string) ([]byte, error) {
-	funcs := goTemplateFuncs{CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{})}
+// Type names are formatted through formatted, as for the core bindings (nil
+// for the legacy rules).
+func GenerateCoreJSONCodecs(schema *introspection.Schema, schemaVersion string, formatted *identifiers.Names) ([]byte, error) {
+	namer := goNamer{names: formatted}
+	funcs := goTemplateFuncs{
+		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{namer: namer}),
+		namer:           namer,
+	}
 	types := map[string]string{}
 	for _, typ := range schema.Types {
 		if typ.Kind != introspection.TypeKindObject && typ.Kind != introspection.TypeKindInterface {
@@ -23,7 +30,7 @@ func GenerateCoreJSONCodecs(schema *introspection.Schema, schemaVersion string) 
 			if field.Name != "id" {
 				continue
 			}
-			name := formatName(typ.Name)
+			name := funcs.formatName(typ.Name)
 			if typ.Kind == introspection.TypeKindInterface {
 				name = funcs.interfaceClientName(typ.Name)
 			}
