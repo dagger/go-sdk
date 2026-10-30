@@ -762,6 +762,10 @@ type parseState struct {
 	// from the module directory.
 	codeDir string
 
+	// namer predicts the schema names the engine gives the module's
+	// declarations (see moduleNamer).
+	namer moduleNamer
+
 	// dependencyTypes are the dependency client types referenced through
 	// global client aliases. The module's schema has no dependencies, so its
 	// API cannot use them; private fields and function bodies can.
@@ -779,8 +783,15 @@ type parseState struct {
 	daggerObjectIfaceType *types.Interface
 }
 
+// isMainModuleObject reports whether the object named name is the module's
+// main object, which the engine finds by its name (see
+// moduleNamer.isMainObject).
 func (ps *parseState) isMainModuleObject(name string) bool {
-	return strcase.ToCamel(ps.moduleName) == strcase.ToCamel(name)
+	var objects []string
+	if ps.pkg != nil {
+		objects = packageObjectNames(ps.pkg.Types)
+	}
+	return ps.namer.isMainObject(name, ps.moduleName, objects)
 }
 
 // pkgDoc returns the package level documentation comment, if any,
