@@ -20,6 +20,8 @@ The `dagger` value is the release the module targets: the SDK's own release,
 or the `targetVersion` setting.
 It equals the `DAGGER_CLIENT_VERSION` value in the generated `main.dang`.
 Commit this file with the entrypoint, and do not ignore it in `.gitignore`.
+The engine loads a local module without its ignored files, so an engine that
+reads this file would not see an ignored one.
 
 ### What generation changes in an existing file
 
@@ -58,8 +60,8 @@ A generated entrypoint that replaces a remote one follows the rules above.
 
 ### Engines and tools
 
-Released engines up to v1.0.0-beta.21 copy only `.dang` files to evaluate an
-entrypoint, so they ignore this file.
+Engines v1.0.0-beta.18 to v1.0.0-beta.21, the releases this entrypoint loads
+on, copy only `.dang` files to evaluate an entrypoint, so they ignore this file.
 [dagger/dagger#14902](https://github.com/dagger/dagger/pull/14902), which is not
 merged, makes the engine read it to select the module's API view and naming
 rules.

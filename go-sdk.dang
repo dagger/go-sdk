@@ -13,7 +13,10 @@ type GoSdk {
   An SDK update changes the targeted release unless this setting pins it.
   The entrypoint sets DAGGER_CLIENT_VERSION for the module process, and the
   dang.toml beside it declares the release as its Dagger import.
-  The engine ignores both declarations until a future engine change.
+  Released engines up to v1.0.0-beta.21 ignore both declarations. Engines
+  with dagger/dagger#14881 read the variable, which moves the core API view
+  of the module process. dagger/dagger#14902, not merged, reads the file,
+  which sets the module's own version.
   A go.mod requirement that needs a later release is refused until the
   target is raised; a replace directive for dagger.io/dagger is a
   development exception that generation reports. The setting pins an older
