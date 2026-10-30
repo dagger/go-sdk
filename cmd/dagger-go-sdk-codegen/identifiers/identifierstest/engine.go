@@ -37,11 +37,18 @@ func Load(path string) (Table, error) {
 }
 
 // Engine is a fake engine. It answers Query.version with Release and
-// Query.formatIdentifiers from Table, failing on a name the table doesn't
-// have. It records the queries it answers.
+// Query.formatIdentifiers from its tables: a request's version's table in
+// Versions, then Table, then Fallback; without a Fallback, it fails on a name
+// no table has, so a test learns of every name its generator formats. It
+// records the queries it answers.
 type Engine struct {
 	Release string
 	Table   Table
+	// Versions holds the tables of particular versions, for tests that tell
+	// the names of one version from another's.
+	Versions map[string]Table
+	// Fallback formats a name no table has.
+	Fallback func(f identifiers.Format, name string) string
 
 	mu      sync.Mutex
 	queries []string
@@ -69,8 +76,7 @@ func (e *Engine) FormatQueries() int {
 var fieldPattern = regexp.MustCompile(`(f\d+): formatIdentifiers\(names: \$(n\d+), casing: (\w+), acronyms: (\w+), version: \$(v\d+)\)`)
 
 // Query implements identifiers.Engine for the queries the identifiers
-// package sends. Every version gets the same Table: dictionaries change only
-// with releases, which tests don't need to tell apart.
+// package sends.
 func (e *Engine) Query(_ context.Context, query string, variables map[string]any, data any) error {
 	e.mu.Lock()
 	e.queries = append(e.queries, query)
@@ -79,17 +85,25 @@ func (e *Engine) Query(_ context.Context, query string, variables map[string]any
 	switch {
 	case strings.Contains(query, "formatIdentifiers"):
 		for _, m := range fieldPattern.FindAllStringSubmatch(query, -1) {
-			if version, _ := variables[m[5]].(string); version == "" {
+			version, _ := variables[m[5]].(string)
+			if version == "" {
 				return fmt.Errorf("fake engine: %s has no version", m[1])
 			}
-			key := m[3] + "/" + m[4]
+			format := identifiers.Format{Casing: identifiers.Casing(m[3]), Acronyms: identifiers.AcronymStyle(m[4])}
+			key := Key(format)
 			names, ok := variables[m[2]].([]string)
 			if !ok {
 				return fmt.Errorf("variable %s is %T, not []string", m[2], variables[m[2]])
 			}
 			formatted := make([]string, len(names))
 			for i, name := range names {
-				f, ok := e.Table[key][name]
+				f, ok := e.Versions[version][key][name]
+				if !ok {
+					f, ok = e.Table[key][name]
+				}
+				if !ok && e.Fallback != nil {
+					f, ok = e.Fallback(format, name), true
+				}
 				if !ok {
 					return fmt.Errorf("fake engine: no %s formatting of %q", key, name)
 				}
