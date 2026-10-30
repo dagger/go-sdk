@@ -442,13 +442,13 @@ type GoSdk {
     let stable = if (source.kind == GIT_SOURCE) {
       codegenBuilder
         .withDirectory("/out", generated)
-        .withFile("/schema.json", source.introspectionSchemaJSON)
+        .withFile("/schema.json", source.introspectionSchemaJson)
         .withExec([
           "dagger-go-sdk-codegen", "normalize-source-links",
           "--introspection-json-path", "/schema.json",
           "--output", "/out",
           "--scope", scopePath,
-          "--workspace-repo-url", source.htmlRepoURL,
+          "--workspace-repo-url", source.htmlRepoUrl,
           "--workspace-pin", source.pin,
         ])
         .directory("/out")
@@ -658,7 +658,7 @@ type GoSdk {
     # The module source ID can outgrow an exec argument: it's passed in a file.
     let inputs = builder
       .withDirectory("/src", tree)
-      .withFile("/schema.json", source.introspectionSchemaJSON)
+      .withFile("/schema.json", source.introspectionSchemaJson)
       .withNewFile("/module-source-id", moduleSourceID)
     let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
@@ -914,7 +914,7 @@ type GoSdk {
     if (target.kind != GIT_SOURCE) { return "" }
     let commit = ws.git.head.commit rescue { err: Error => "" }
     ",\"workspace\":{\"address\":" + JSON.encode(ws.address) + ",\"commit\":" + JSON.encode(commit) + "}" +
-      ",\"git\":{\"cloneRef\":" + JSON.encode(target.cloneRef) + ",\"htmlRepoURL\":" + JSON.encode(target.htmlRepoURL) + "}"
+      ",\"git\":{\"cloneRef\":" + JSON.encode(target.cloneRef) + ",\"htmlRepoURL\":" + JSON.encode(target.htmlRepoUrl) + "}"
   }
 
   """
@@ -943,7 +943,7 @@ type GoSdk {
         client.pin,
       ) + gitMetaJSON(client, ws) + "}"
     ctr
-      .withFile("/schema.json", client.clientSchemaIntrospectionJSON)
+      .withFile("/schema.json", client.clientSchemaIntrospectionJson)
       .withNewFile("/meta.json", metaJSON)
       .withExec([
         "dagger-go-sdk-codegen", "client",

@@ -164,7 +164,7 @@ type TargetChecks {
     null
   }
 
-  let expectRefusal(sdk: GoSdk!, input: Workspace!, name: String!, want: String!): Void {
+  let expectRefusal(sdk: GoSDK!, input: Workspace!, name: String!, want: String!): Void {
     let got = sdk.generateScope(ws: input, isModule: true, name: name, clients: []).file("dagger-module.toml").contents rescue {
       err: Error => err.message
     }
