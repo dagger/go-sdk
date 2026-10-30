@@ -160,6 +160,30 @@ func TestEntrypointExposesDefaultConstructor(t *testing.T) {
 	require.Equal(t, 1, strings.Count(string(source), ".withConstructor("))
 }
 
+// Generation refuses a collection the engine would refuse at load.
+func TestDangObjectRefusesIncompleteCollection(t *testing.T) {
+	str := &parsedPrimitiveType{goType: types.Typ[types.String]}
+	keys := &fieldSpec{name: "Names", isCollectionKeys: true, typeSpec: &parsedSliceType{underlying: str}}
+	lookup := func(marked bool, args ...string) *funcTypeSpec {
+		fn := &funcTypeSpec{name: "Lookup", isCollectionGet: marked, returnSpec: str, argSpecs: []paramSpec{{name: "ctx", isContext: true}}}
+		for _, arg := range args {
+			fn.argSpecs = append(fn.argSpecs, paramSpec{name: arg, typeSpec: str})
+		}
+		return fn
+	}
+	collection := func(fields []*fieldSpec, methods ...*funcTypeSpec) *parsedObjectType {
+		return &parsedObjectType{name: "Items", isCollection: true, fields: fields, methods: methods}
+	}
+	_, err := renderDangObject(collection([]*fieldSpec{keys}, lookup(true, "name")))
+	require.NoError(t, err)
+	_, err = renderDangObject(collection([]*fieldSpec{keys}, lookup(false, "name")))
+	require.EqualError(t, err, `collection "Items" requires a stored keys field and a get function`)
+	_, err = renderDangObject(collection(nil, lookup(true, "name")))
+	require.EqualError(t, err, `collection "Items" requires a stored keys field and a get function`)
+	_, err = renderDangObject(collection([]*fieldSpec{keys}, lookup(true, "name", "other")))
+	require.EqualError(t, err, `collection "Items" get function requires one argument`)
+}
+
 // buildDispatchCommand builds the dispatch command of a module whose
 // DaggerDispatch is the fixture, and returns the binary's path.
 func buildDispatchCommand(t *testing.T, packageName, fixture string) string {
