@@ -48,6 +48,11 @@ func (m *NamingApp) Platform(arch Arch) string {
 type HttpFetcher interface {
 	dagger.DaggerObject
 	GetUrl(ctx context.Context, path string) (string, error)
+	// E2ETest is e2Etest by the strcase rules and e2eTest by the engine's:
+	// the bindings select it by that name.
+	E2ETest(ctx context.Context) (string, error)
+	// Peers loads each fetcher by its schema name.
+	Peers(ctx context.Context) ([]HttpFetcher, error)
 }
 
 func (m *NamingApp) Fetch(ctx context.Context, fetcher HttpFetcher, path string) (string, error) {

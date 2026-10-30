@@ -56,7 +56,7 @@ func runNormalizeSourceLinks(args []string) error {
 	// spells a schema past the cut as this generator does, and one before
 	// it with golint-style initialisms, which the catalog's keys match too
 	// (see linkKey).
-	names, err := sessionConnector().Names(ctx, response.SchemaVersion)
+	names, err := sessionNames(ctx, response.SchemaVersion)
 	if err != nil {
 		return err
 	}

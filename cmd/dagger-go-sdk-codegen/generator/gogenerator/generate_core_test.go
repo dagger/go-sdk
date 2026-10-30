@@ -3,23 +3,22 @@ package gogenerator
 import (
 	"encoding/json"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 // TestGenerateCore_Parity checks that the core bindings are the same as the
-// ones that dagger/dagger generates, but for the Go identifiers the engine
-// spells differently.
+// ones that dagger/dagger generates.
 //
 // testdata/core/schema.json is the introspection of a v1.0.0-beta.14 engine.
 // The golden files are the output of "cmd/codegen generate-library" in
@@ -27,10 +26,8 @@ import (
 // Update them the same way. Do not update them from the output of this
 // generator: then the test does not check parity.
 //
-// dagger/dagger's generator spells a schema before identifiers.CasingVersion
-// with golint-style initialisms; this one styles every schema through the
-// engine's formatIdentifiers. engineSpellings are the identifiers of the
-// golden files that differ, and how the engine spells them.
+// The engine names Go identifiers; the fake one here spells each name as the
+// golden files do, so the test checks the bindings around them.
 func TestGenerateCore_Parity(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "core", "schema.json"))
 	require.NoError(t, err)
@@ -38,33 +35,47 @@ func TestGenerateCore_Parity(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &resp))
 	generator.SetSchemaParents(resp.Schema)
 
-	gen := &GoGenerator{Config: generator.Config{Names: styled,
+	golden := map[string]string{}
+	// The golden files' spellings of identifiers, by spelling lowercased:
+	// the most frequent in code, outside comments and strings.
+	counts := map[string]map[string]int{}
+	code := regexp.MustCompile(`"(?:[^"\\]|\\.)*"|//.*`)
+	for _, file := range []string{CoreGenFile, DagGenFile} {
+		want, err := os.ReadFile(filepath.Join("testdata", "core", filepath.Base(file)+".golden"))
+		require.NoError(t, err)
+		golden[file] = string(want)
+		for _, ident := range regexp.MustCompile(`\b[A-Z][A-Za-z0-9]*\b`).FindAllString(code.ReplaceAllString(string(want), ""), -1) {
+			key := strings.ToLower(ident)
+			if counts[key] == nil {
+				counts[key] = map[string]int{}
+			}
+			counts[key][ident]++
+		}
+	}
+	format := func(name string) string {
+		spelled, most := identifierstest.Format(name), 0
+		for ident, n := range counts[strings.ToLower(strings.ReplaceAll(name, "_", ""))] {
+			if n > most || n == most && ident < spelled {
+				spelled, most = ident, n
+			}
+		}
+		return spelled
+	}
+
+	gen := &GoGenerator{Config: generator.Config{
 		OutputDir:     t.TempDir(),
 		PackageImport: "dagger.io/dagger/core",
 		CoreLibrary:   true,
+		Names:         identifiers.NewNames(t.Context(), identifierstest.Formatting(format), resp.SchemaVersion),
 	}}
 	state, err := gen.GenerateCore(t.Context(), resp.Schema, resp.SchemaVersion)
 	require.NoError(t, err)
 
-	engineSpellings := map[string]string{
-		"ParentShas":        "ParentSHAs",
-		"Sdks":              "SDKs",
-		"Sha":               "SHA",
-		"ShortSha":          "ShortSHA",
-		"SshfsVolume":       "SSHFSVolume",
-		"SshfsVolumeOpts":   "SSHFSVolumeOpts",
-		"VcsGeneratedPaths": "VCSGeneratedPaths",
-		"VcsIgnoredPaths":   "VCSIgnoredPaths",
-	}
-	respelled := regexp.MustCompile(`\b(` + strings.Join(slices.Collect(maps.Keys(engineSpellings)), "|") + `)\b`)
 	for _, file := range []string{CoreGenFile, DagGenFile} {
 		t.Run(file, func(t *testing.T) {
 			got, err := fs.ReadFile(state.Overlay, file)
 			require.NoError(t, err)
-			want, err := os.ReadFile(filepath.Join("testdata", "core", filepath.Base(file)+".golden"))
-			require.NoError(t, err)
-			want = respelled.ReplaceAllFunc(want, func(name []byte) []byte { return []byte(engineSpellings[string(name)]) })
-			require.Equal(t, string(want), string(got))
+			require.Equal(t, golden[file], string(got))
 		})
 	}
 	codecs, err := fs.ReadFile(state.Overlay, CoreCodecsGenFile)

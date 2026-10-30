@@ -45,12 +45,9 @@ type GenerateConfig struct {
 	// (ModuleSource.naming), while Go identifiers follow the schema's
 	// version.
 	ModuleSourceID string
-	// Connector reaches the engine that names identifiers; nil means the
-	// Dagger session the generator runs in.
-	Connector     *identifiers.Connector
-	DaggerVersion string
-	TargetVersion string
-	GoImage       string
+	DaggerVersion  string
+	TargetVersion  string
+	GoImage        string
 	// RuntimeImage is the image the module's process runs in; empty for the
 	// generator's default.
 	RuntimeImage string
@@ -214,10 +211,11 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if cfg.UnifiedClient && coreVersion != "" {
 		goVersion = coreVersion
 	}
-	names, naming, err := identifierNames(ctx, cfg, goVersion)
+	query, err := sessionQuery()
 	if err != nil {
 		return err
 	}
+	names := identifiers.NewNames(ctx, query, goVersion)
 
 	genCfg := generator.Config{
 		OutputDir:     root,
@@ -229,7 +227,6 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 			ModuleName:    cfg.ModuleName,
 			LibVersion:    cfg.DaggerVersion,
 			TargetVersion: cfg.TargetVersion,
-			Naming:        naming,
 		},
 	}
 	client := &clientgen.GoGenerator{Config: genCfg}
@@ -309,6 +306,13 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	if err := stdlibImportErrors(pkg); err != nil {
 		return fmt.Errorf("load module package: %w", err)
+	}
+	// The engine names the module's declarations the generated code spells,
+	// in one query.
+	typeNames, fieldNames, candidates := templates.ModuleDeclarations(pkg, fset)
+	genCfg.ModuleConfig.Naming, err = identifiers.NameModule(ctx, query, cfg.ModuleSourceID, typeNames, fieldNames, candidates)
+	if err != nil {
+		return err
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
 		ctx, resp.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, sourceSubpath(cfg), cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.GoCacheVolumes, cfg.TargetVersion, sources,
@@ -456,29 +460,9 @@ func removeStaleBindings(root string, overlay fs.FS) ([]string, error) {
 	return removed, nil
 }
 
-// sessionConnector returns the Connector generation names identifiers
-// through when GenerateConfig.Connector is nil: the Dagger session it runs in
-// (see identifiers.SessionFromEnv).
-var sessionConnector = identifiers.SessionConnector
-
-// identifierNames returns the names Go identifiers are styled through, at
-// goVersion (see identifiers.Connector), and the engine's naming of the
-// module's own declarations.
-func identifierNames(ctx context.Context, cfg GenerateConfig, goVersion string) (*identifiers.Names, *identifiers.ModuleNaming, error) {
-	connector := cfg.Connector
-	if connector == nil {
-		connector = sessionConnector()
-	}
-	names, err := connector.Names(ctx, goVersion)
-	if err != nil {
-		return nil, nil, err
-	}
-	naming, err := connector.ModuleNaming(ctx, cfg.ModuleSourceID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return names, naming, nil
-}
+// sessionQuery queries the engine generation names identifiers through: the
+// Dagger session it runs in.
+var sessionQuery = identifiers.SessionQuery
 
 func readSchema(path, version string) (*introspection.Response, error) {
 	data, err := os.ReadFile(path)

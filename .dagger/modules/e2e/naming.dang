@@ -57,8 +57,9 @@ type NamingChecks {
   }
 
   """
-  The interface bindings load a module interface by the name the engine gives
-  it, with and without a pinned version, and the module's functions answer
+  The interface bindings load a module interface and select its functions by
+  the names the engine gives them, with and
+  without a pinned version, and the module's functions answer
   by the engine's names, through the main object the entrypoint constructs.
   The bindings' Go identifiers are the engine's formatting either way
   (GitCommit.ShortSHA). The module calls itself only through a client added
@@ -67,13 +68,14 @@ type NamingChecks {
   """
   callsCheck(ws: Workspace!): Void {
     [
-      {{pinned: false, fetcher: "\"NamingAppHttpFetcher\"", e2e: "e2-etest", arch: "ARM_64"}},
-      {{pinned: true, fetcher: "\"NamingAppHTTPFetcher\"", e2e: "e2e-test", arch: "ARM64"}},
+      {{pinned: false, fetcher: "\"NamingAppHttpFetcher\"", field: "Select(\"e2Etest\")", peer: "InlineFragment(\"NamingAppHttpFetcher\")", e2e: "e2-etest", arch: "ARM_64"}},
+      {{pinned: true, fetcher: "\"NamingAppHTTPFetcher\"", field: "Select(\"e2eTest\")", peer: "InlineFragment(\"NamingAppHTTPFetcher\")", e2e: "e2e-test", arch: "ARM64"}},
     ].each { want =>
       let module = generated(ws, want.pinned)
       let label = if (want.pinned) { "the pinned module" } else { "the module without a version" }
-      assert(label + "'s interface bindings lack " + want.fetcher) {
-        module.file("dagger.gen.go").contents.contains(want.fetcher)
+      let bindings = module.file("dagger.gen.go").contents
+      [want.fetcher, want.field, want.peer].each { name =>
+        assert(label + "'s interface bindings lack " + name) { bindings.contains(name) }
       }
       assert(label + "'s core bindings are not styled by the engine") {
         module.file("internal/dagger/dagger.gen.go").contents.contains("func (r *GitCommit) ShortSHA(")
