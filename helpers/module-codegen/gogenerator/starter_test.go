@@ -28,7 +28,8 @@ func TestGenerateDefaultStarter(t *testing.T) {
 				require.NoError(t, err, string(out))
 				cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello-world", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", UnifiedClient: unified, GlobalClient: global, GoImage: "golang:1.26-alpine"}
 				if unified {
-					cfg.DaggerVersion = "v1.0.0-beta.16.0.20261008202843-134540fec551"
+					postCutLibrary(t, "v1.0.0-beta.22")
+					cfg.DaggerVersion = "v1.0.0-beta.22"
 				}
 				require.NoError(t, Generate(t.Context(), cfg))
 			})
