@@ -27,6 +27,7 @@ import (
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	clientgen "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/library"
 
@@ -38,6 +39,23 @@ type GenerateConfig struct {
 	ModuleName    string
 	SchemaPath    string
 	SchemaVersion string
+	// ModuleVersion is the engine version the engine names the module's own
+	// declarations by: that of the module it serves, which for a module with
+	// a Dang entrypoint is the version its dang.toml declares. It can differ
+	// from the schema's, which comes from a staged runtime manifest. The
+	// interface bindings and entrypoint predict the module's schema names by
+	// its rules, while Go identifiers follow the schema's (see
+	// generator.ModuleGeneratorConfig.Names). Empty means the schema's
+	// version.
+	ModuleVersion string
+	// ModuleVersionErr is why the caller couldn't read ModuleVersion.
+	// Generation fails with it on an engine that names modules by its
+	// identifier naming rules, where the version decides the module's names;
+	// older engines name every module by strcase.
+	ModuleVersionErr error
+	// Connector reaches the engine that names identifiers; nil means the
+	// Dagger session the generator runs in.
+	Connector     *identifiers.Connector
 	DaggerVersion string
 	TargetVersion string
 	GoImage       string
@@ -154,15 +172,21 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	cfg.SchemaVersion = resp.SchemaVersion
 	generator.SetSchemaParents(resp.Schema)
+	names, moduleNames, err := identifierNames(ctx, cfg)
+	if err != nil {
+		return err
+	}
 
 	genCfg := generator.Config{
 		OutputDir:     root,
 		UnifiedClient: cfg.UnifiedClient,
 		GlobalClient:  cfg.GlobalClient,
 		ClientConfig:  &generator.ClientGeneratorConfig{},
+		Names:         names,
 		ModuleConfig: &generator.ModuleGeneratorConfig{
 			ModuleName: cfg.ModuleName,
 			LibVersion: cfg.DaggerVersion,
+			Names:      moduleNames,
 		},
 	}
 	client := &clientgen.GoGenerator{Config: genCfg}
@@ -228,9 +252,13 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return fmt.Errorf("load module package: %w", err)
 	}
-	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, resp.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.TargetVersion, sources,
-	)
+	var artifacts *templates.V2Artifacts
+	err = identifiers.Run(ctx, func() (err error) {
+		artifacts, err = templates.GenerateV2Artifacts(
+			ctx, resp.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.TargetVersion, sources,
+		)
+		return err
+	}, names, moduleNames)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
 	}
@@ -357,6 +385,40 @@ func removeStaleBindings(root string, overlay fs.FS) ([]string, error) {
 		removed = append(removed, rel)
 	}
 	return removed, nil
+}
+
+// identifierNames returns the names Go identifiers are formatted through, at
+// the schema's version, and the names the module's own schema names are
+// predicted through, at the version the engine names the module by; either
+// is nil for the legacy rules (see identifiers.Connector).
+func identifierNames(ctx context.Context, cfg GenerateConfig) (names, moduleNames *identifiers.Names, _ error) {
+	connector := cfg.Connector
+	if connector == nil {
+		connector = identifiers.SessionConnector()
+	}
+	names, err := connector.Names(ctx, cfg.SchemaVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cfg.ModuleVersionErr != nil {
+		applies, err := connector.EngineApplies(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if applies {
+			return nil, nil, fmt.Errorf("the engine names the module by the version it declares, which couldn't be read: %w", cfg.ModuleVersionErr)
+		}
+		return names, nil, nil
+	}
+	moduleVersion := cfg.ModuleVersion
+	if moduleVersion == "" {
+		moduleVersion = cfg.SchemaVersion
+	}
+	moduleNames, err = connector.Names(ctx, moduleVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	return names, moduleNames, nil
 }
 
 func readSchema(path, version string) (*introspection.Response, error) {
