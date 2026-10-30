@@ -21,15 +21,18 @@ type Engine interface {
 
 // Connector applies the gate: it hands out Names for a version only when the
 // version and the engine are both past CasingVersion. It connects to the
-// engine, and asks for its release, at most once, and only when a version
-// past CasingVersion needs it.
+// engine, and asks for its release, at most once, and only when something
+// needs it.
 type Connector struct {
 	dial func() (Engine, error)
 
-	once    sync.Once
-	engine  Engine
-	applies bool
-	err     error
+	dialOnce sync.Once
+	engine   Engine
+	dialErr  error
+
+	releaseOnce sync.Once
+	release     string
+	releaseErr  error
 
 	mu    sync.Mutex
 	names map[string]*Names
@@ -47,57 +50,64 @@ func SessionConnector() *Connector {
 }
 
 // Names returns the Names for code generated at version: a schema's
-// __schemaVersion, or the engine version a module's declarations are named
-// by. It is nil, the legacy rules, when version is before CasingVersion,
-// without connecting, or when the engine's release is. Each version has one
-// Names, so everything generated at a version shares its formatted names.
+// __schemaVersion, or the version a runtime's Go identifiers follow. It is
+// nil, the legacy rules, when version is before CasingVersion, without
+// connecting, or when the engine's release is. Each version has one Names,
+// so everything generated at a version shares its formatted names.
 func (c *Connector) Names(ctx context.Context, version string) (*Names, error) {
 	if !Applies(version) {
 		return nil, nil
 	}
-	applies, err := c.EngineApplies(ctx)
+	release, err := c.engineRelease(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("naming identifiers at %s depends on the engine's release: %w", version, err)
 	}
-	if !applies {
+	if !Applies(release) {
 		// An older engine names every module by strcase, and its schemas
 		// report every v1.0.0 prerelease as v1.0.0, past CasingVersion.
 		return nil, nil
 	}
+	return c.namesAt(ctx, version), nil
+}
+
+// namesAt returns the one Names of version.
+func (c *Connector) namesAt(ctx context.Context, version string) *Names {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.names[version] == nil {
 		c.names[version] = NewNames(ctx, c.engine, version)
 	}
-	return c.names[version], nil
+	return c.names[version]
 }
 
-// EngineApplies reports whether the engine's release is at or past
-// CasingVersion: whether it names modules by its identifier naming rules at
-// all. It connects to the engine.
-func (c *Connector) EngineApplies(ctx context.Context) (bool, error) {
-	c.once.Do(func() {
-		c.engine, c.err = c.dial()
-		if c.err != nil {
-			c.err = fmt.Errorf("connect to the engine to name identifiers: %w", c.err)
-			return
+// connect connects to the engine, once.
+func (c *Connector) connect() (Engine, error) {
+	c.dialOnce.Do(func() {
+		c.engine, c.dialErr = c.dial()
+		if c.dialErr != nil {
+			c.dialErr = fmt.Errorf("connect to the engine to name identifiers: %w", c.dialErr)
 		}
-		var release string
-		release, c.err = EngineVersion(ctx, c.engine)
-		c.applies = Applies(release)
 	})
-	return c.applies, c.err
+	return c.engine, c.dialErr
 }
 
-// EngineVersion returns the engine's release: Query.version.
-func EngineVersion(ctx context.Context, engine Engine) (string, error) {
-	var data struct {
-		Version string `json:"version"`
+// engineRelease connects to the engine and returns its release:
+// Query.version.
+func (c *Connector) engineRelease(ctx context.Context) (string, error) {
+	engine, err := c.connect()
+	if err != nil {
+		return "", err
 	}
-	if err := engine.Query(ctx, "query EngineVersion { version }", nil, &data); err != nil {
-		return "", fmt.Errorf("query engine version: %w", err)
-	}
-	return data.Version, nil
+	c.releaseOnce.Do(func() {
+		var data struct {
+			Version string `json:"version"`
+		}
+		if err := engine.Query(ctx, "query EngineVersion { version }", nil, &data); err != nil {
+			c.releaseErr = fmt.Errorf("query engine version: %w", err)
+		}
+		c.release = data.Version
+	})
+	return c.release, c.releaseErr
 }
 
 // request is one formatIdentifiers call of a batch.

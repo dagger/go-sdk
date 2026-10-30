@@ -79,15 +79,19 @@ func GenerateV2Artifacts(
 	}
 
 	// Format the schema's names, styled as Go identifiers, in one query. The
-	// module's own names are formatted as they're looked up, so only names
-	// its declarations use reach the engine. A failure to format a name comes
-	// first: what was rendered with a fallback may be what failed.
-	moduleNames := funcs.moduleNamer().names
+	// module's own names are asked for as they're looked up, so only names
+	// its declarations use reach the engine. A failure to name something
+	// comes first: what was rendered with a fallback may be what failed.
+	naming := funcs.moduleNamer().naming
 	if err := cfg.Names.Prefetch(DeclaredNames(schema)); err != nil {
 		return nil, err
 	}
 	artifacts, err := funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, targetVersion, sources)
-	if nameErr := errors.Join(cfg.Names.Err(), moduleNames.Err()); nameErr != nil {
+	nameErr := cfg.Names.Err()
+	if naming != nil {
+		nameErr = errors.Join(nameErr, naming.Err())
+	}
+	if nameErr != nil {
 		return nil, nameErr
 	}
 	if err != nil {
@@ -349,7 +353,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 		}
 		// The entrypoint protocol needs an explicit constructor to expose the
 		// module's main object. Match the Go runtime's implicit zero-value New.
-		if obj.constructor == nil && mod.namer.isMainObject(obj.name, moduleName, objectNames) {
+		if obj.constructor == nil && mod.namer.isMainObject(obj.name, objectNames) {
 			def += "\n  .withConstructor(function(\"\", typeDef.withObject(" + strconv.Quote(obj.name) + ")))"
 		}
 		defs = append(defs, def)

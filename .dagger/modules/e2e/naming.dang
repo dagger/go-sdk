@@ -1,8 +1,8 @@
 """
 Generate and call a module whose schema names differ between the engine's
-identifier naming rules and the legacy strcase rules: wire-name predictions
-follow the version the engine names the module by, and Go identifier style
-follows the schema the bindings are generated from.
+identifier naming rules and the legacy strcase rules: the bindings take the
+module's schema names from the engine (ModuleSource.naming), and Go
+identifier style follows the schema the bindings are generated from.
 
 It needs an engine at v1.0.0-beta.22 or later, so no check runs it yet. cli
 is that engine's dagger CLI, which runs nested in this session:
@@ -56,15 +56,14 @@ type NamingChecks {
   }
 
   """
-  The interface bindings load a module interface by the name they predict
-  by the version the engine names the module by, with and without a pinned
-  version, and the module's functions answer by the engine's names, through
-  the main object the entrypoint constructs. The schema the bindings are
-  generated from is at the engine's version either way, so their Go
-  identifiers follow its rules in both (GitCommit.ShortSHA). The module
-  calls itself only through a client added with dagger module client add .,
-  generated from the schema the engine serves, so no bindings here predict
-  its functions.
+  The interface bindings load a module interface by the name the engine gives
+  it, with and without a pinned version, and the module's functions answer
+  by the engine's names, through the main object the entrypoint constructs.
+  The schema the bindings are generated from is at the engine's version
+  either way, so their Go identifiers follow its rules in both
+  (GitCommit.ShortSHA). The module calls itself only through a client added
+  with dagger module client add ., generated from the schema the engine
+  serves, so no bindings here predict its functions.
   """
   callsCheck(ws: Workspace!): Void {
     [

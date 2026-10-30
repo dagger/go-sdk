@@ -19,8 +19,13 @@ func TestMain(m *testing.M) {
 }
 
 // preCutEngine is an engine released before identifiers.CasingVersion. Its
-// schemas report every v1.0.0 prerelease as v1.0.0, and it names modules by
-// strcase.
+// schemas report every v1.0.0 prerelease as v1.0.0, so Go identifiers keep
+// the legacy rules. It names the module sources "hello", "hello-world" and
+// "app" by strcase, as the engine does a module served before the cut.
 func preCutEngine() *identifiers.Connector {
-	return (&identifierstest.Engine{Release: "v1.0.0-beta.21"}).Connector()
+	modules := map[string]*identifierstest.Module{}
+	for _, name := range []string{"hello", "hello-world", "app"} {
+		modules[name] = identifierstest.Strcase(name)
+	}
+	return (&identifierstest.Engine{Release: "v1.0.0-beta.21", Modules: modules}).Connector()
 }

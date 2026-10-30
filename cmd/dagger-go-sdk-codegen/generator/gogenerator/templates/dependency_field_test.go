@@ -13,6 +13,7 @@ import (
 	"golang.org/x/tools/go/packages"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 )
 
 // loadDependencyAliasModule loads a module whose global client aliases the
@@ -48,7 +49,7 @@ func loadDependencyAliasModule(t *testing.T, mainGo string) (*packages.Package, 
 func TestDependencyFieldTypeKeepsAuthorSpelling(t *testing.T) {
 	pkg, fset := loadDependencyAliasModule(t, "package main\n\nimport (\n\tmodule \"example.com/m/internal/dagger\"\n\tclient \"example.com/m/internal/dagger/clients/app\"\n)\n\n"+
 		"type M struct {\n\tGlobal *module.App\n\tMode   module.AppMode\n\tPet    module.Pet\n\tDirect *client.App\n\tPets   []module.Pet\n}\n\nfunc main() {}\n")
-	ps := &parseState{pkg: pkg, fset: fset, moduleName: "m"}
+	ps := &parseState{pkg: pkg, fset: fset, moduleName: "m", namer: moduleNamer{naming: identifierstest.Strcase("m")}}
 	fields := pkg.Types.Scope().Lookup("M").Type().Underlying().(*types.Struct)
 	for i, want := range []string{"*dagger.App", "dagger.AppMode", "*dagger.PetClient", "*client.App", "[]*dagger.PetClient"} {
 		parsed, err := ps.parseGoTypeReference(fields.Field(i).Type(), nil, false)
@@ -63,7 +64,7 @@ func TestDependencyTypeInModuleAPIIsRefused(t *testing.T) {
 	pkg, fset := loadDependencyAliasModule(t, "package main\n\nimport module \"example.com/m/internal/dagger\"\n\n"+
 		"type M struct{}\n\nfunc (m *M) Describe(app *module.App) string { return \"\" }\n\nfunc main() {}\n")
 	funcs := goTemplateFuncs{
-		cfg:        generator.Config{ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "m"}},
+		cfg:        generator.Config{ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "m", Naming: identifierstest.Strcase("m")}},
 		modulePkg:  pkg,
 		moduleFset: fset,
 	}

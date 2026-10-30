@@ -50,6 +50,9 @@ var table = identifierstest.Table{
 	},
 }
 
+// camel is a format besides GoName, for queries of several formats.
+var camel = identifiers.Format{Casing: identifiers.Camel, Acronyms: identifiers.Capitalized}
+
 // Before the cut, nothing connects: the legacy rules need no engine.
 func TestConnectorLegacySchemaDoesNotConnect(t *testing.T) {
 	c := identifiers.NewConnector(func() (identifiers.Engine, error) {
@@ -113,8 +116,8 @@ func TestPrefetch(t *testing.T) {
 	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table}
 	names := identifiers.NewNames(t.Context(), engine, "v1.0.0-beta.22")
 	require.NoError(t, names.Prefetch(map[identifiers.Format][]string{
-		identifiers.GoName:    {"commitSha", "shortSha", "commitSha", "JSONValue"},
-		identifiers.FieldName: {"HTTPClient", "GetURL"},
+		identifiers.GoName: {"commitSha", "shortSha", "commitSha", "JSONValue"},
+		camel:              {"HTTPClient", "GetURL"},
 	}))
 	require.Equal(t, 1, engine.FormatQueries())
 	query := engine.Queries()[0]
@@ -128,8 +131,8 @@ func TestPrefetch(t *testing.T) {
 		name string
 	}{
 		{identifiers.GoName, "commitSha"},
-		{identifiers.TypeName, "JSONValue"},
-		{identifiers.FieldName, "GetURL"},
+		{identifiers.GoName, "JSONValue"},
+		{camel, "GetURL"},
 	} {
 		formatted, ok := names.Lookup(lookup.f, lookup.name)
 		require.True(t, ok, lookup.name)
@@ -173,6 +176,43 @@ func TestFormatErrorsFailGeneration(t *testing.T) {
 	_, ok = names.Lookup(identifiers.GoName, "shortSha")
 	require.False(t, ok)
 	require.Equal(t, queries, engine.FormatQueries())
+}
+
+func TestConnectorModuleNamingNeedsASource(t *testing.T) {
+	_, err := (&identifierstest.Engine{}).Connector().ModuleNaming(t.Context(), "")
+	require.ErrorContains(t, err, "module source ID")
+}
+
+// The module's names are asked for with a direct call each when first looked
+// up, and kept: a name, or a set of main-object candidates, is asked once.
+func TestModuleNaming(t *testing.T) {
+	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Modules: map[string]*identifierstest.Module{
+		"src": {
+			Names: map[string]map[string]string{
+				"typeNames":  {"HttpClient": "MyModHTTPClient"},
+				"fieldNames": {"GetURL": "getUrl"},
+			},
+			Main: func(candidates []string) string { return candidates[0] },
+		},
+	}}
+	naming, err := engine.Connector().ModuleNaming(t.Context(), "src")
+	require.NoError(t, err)
+	for range 2 {
+		typ, _ := naming.TypeName("HttpClient")
+		field, _ := naming.FieldName("GetURL")
+		main, _ := naming.MainObject([]string{"MyMod", "HttpClient"})
+		require.Equal(t, []string{"MyModHTTPClient", "getUrl", "MyMod"}, []string{typ, field, main})
+	}
+	require.Equal(t, 3, engine.FormatQueries())
+	queries := engine.Queries()
+	require.Contains(t, queries[0], "m0: node(id: $m0) { ... on ModuleSource { naming { typeNames(names: $l0) } } }")
+	require.Contains(t, queries[2], "m0: node(id: $m0) { ... on ModuleSource { naming { main: mainObject(candidates: $c0) } } }")
+	require.NoError(t, naming.Err())
+
+	// A name the engine can't answer fails the lookup, and Err returns why.
+	_, ok := naming.FieldName("Unknown")
+	require.False(t, ok)
+	require.ErrorContains(t, naming.Err(), `no fieldNames answer for "Unknown"`)
 }
 
 // Session speaks the engine's GraphQL HTTP protocol: POST /query, the
