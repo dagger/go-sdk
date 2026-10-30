@@ -2,6 +2,7 @@ package identifiers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -89,29 +90,42 @@ func (n *Names) Run(ctx context.Context, render func() error) error {
 	return Run(ctx, render, n)
 }
 
-// Run is Names.Run for a render that looks names up in several Names, such as
-// a module's bindings, whose Go identifiers follow one version and whose
-// schema names another. Each round formats the names missing from all of
-// them in a single round trip. Nil Names are the legacy rules and are
-// skipped; with no others, render runs once.
-func Run(ctx context.Context, render func() error, names ...*Names) error {
-	var all []*Names
-	for _, n := range names {
-		if n != nil && !slices.Contains(all, n) {
-			all = append(all, n)
+// A Batch holds names a generator looks up while it renders, which Run
+// answers in batches: *Names (formatIdentifiers) or *ModuleNaming
+// (ModuleSource.naming). A nil one answers nothing.
+type Batch interface {
+	// session is the engine the batch asks; nil for a nil batch.
+	session() Engine
+	// add adds the pending lookups to q, and returns how to store their
+	// answers; nil when nothing is pending.
+	add(q *query) func(data map[string]json.RawMessage) error
+	// missing lists the pending lookups, sorted, for an error.
+	missing() []string
+}
+
+// Run is Names.Run for a render that looks names up in several batches, such
+// as a module's bindings, whose Go identifiers follow one version and whose
+// schema names come from the module's naming. Each round answers the lookups
+// missing from all of them in a single round trip. Nil batches are the legacy
+// rules and are skipped; with no others, render runs once.
+func Run(ctx context.Context, render func() error, batches ...Batch) error {
+	var all []Batch
+	for _, b := range batches {
+		if b != nil && b.session() != nil && !slices.Contains(all, b) {
+			all = append(all, b)
 		}
 	}
 	if len(all) == 0 {
 		return render()
 	}
 	for round := 1; ; round++ {
-		if err := format(ctx, all); err != nil {
+		if err := fetch(ctx, all); err != nil {
 			return err
 		}
 		err := render()
 		var missing []string
-		for _, n := range all {
-			missing = append(missing, n.missing()...)
+		for _, b := range all {
+			missing = append(missing, b.missing()...)
 		}
 		switch {
 		case len(missing) == 0:
@@ -123,6 +137,57 @@ func Run(ctx context.Context, render func() error, names ...*Names) error {
 			return fmt.Errorf("identifiers: names still unformatted after %d rounds: %s", maxRounds, strings.Join(missing, ", "))
 		}
 	}
+}
+
+// query is a batch query being built: its variables and fields.
+type query struct {
+	params []string
+	fields strings.Builder
+	vars   map[string]any
+	counts map[string]int
+}
+
+// param declares a variable of type typ holding value, named prefix and a
+// number, and returns its name.
+func (q *query) param(prefix, typ string, value any) string {
+	name := fmt.Sprintf("%s%d", prefix, q.counts[prefix])
+	q.counts[prefix]++
+	q.params = append(q.params, "$"+name+": "+typ)
+	q.vars[name] = value
+	return name
+}
+
+// fetch answers the pending lookups of every batch in a single query. Every
+// batch comes from the same engine.
+func fetch(ctx context.Context, all []Batch) error {
+	q := &query{vars: map[string]any{}, counts: map[string]int{}}
+	var stores []func(map[string]json.RawMessage) error
+	for _, b := range all {
+		if store := b.add(q); store != nil {
+			stores = append(stores, store)
+		}
+	}
+	if len(stores) == 0 {
+		return nil
+	}
+	text := fmt.Sprintf("query FormatIdentifiers(%s) {\n%s}", strings.Join(q.params, ", "), q.fields.String())
+	var data map[string]json.RawMessage
+	if err := all[0].session().Query(ctx, text, q.vars, &data); err != nil {
+		return fmt.Errorf("format identifiers: %w", err)
+	}
+	for _, store := range stores {
+		if err := store(data); err != nil {
+			return fmt.Errorf("format identifiers: %w", err)
+		}
+	}
+	return nil
+}
+
+func (n *Names) session() Engine {
+	if n == nil {
+		return nil
+	}
+	return n.engine
 }
 
 // missing lists the pending names, sorted, for an error.
@@ -139,29 +204,39 @@ func (n *Names) missing() []string {
 	return missing
 }
 
-// format formats the pending names of every Names in a single query: one
-// aliased formatIdentifiers field per Names and format, each at its Names'
-// version. Every Names comes from the same engine.
-func format(ctx context.Context, all []*Names) error {
-	var requests []request
-	var owners []*Names
-	for _, n := range all {
-		for _, r := range n.requests() {
-			requests = append(requests, r)
-			owners = append(owners, n)
-		}
-	}
+// request is one formatIdentifiers call of a batch.
+type request struct {
+	format Format
+	names  []string
+}
+
+// add adds an aliased formatIdentifiers field per format with pending names.
+func (n *Names) add(q *query) func(map[string]json.RawMessage) error {
+	requests := n.requests()
 	if len(requests) == 0 {
 		return nil
 	}
-	formatted, err := formatIdentifiers(ctx, all[0].engine, requests)
-	if err != nil {
-		return err
-	}
+	version := q.param("v", "String!", n.version)
+	aliases := make([]string, len(requests))
 	for i, r := range requests {
-		owners[i].store(r, formatted[i])
+		names := q.param("n", "[String!]!", r.names)
+		aliases[i] = "f" + strings.TrimPrefix(names, "n")
+		fmt.Fprintf(&q.fields, "  %s: formatIdentifiers(names: $%s, casing: %s, acronyms: %s, version: $%s)\n",
+			aliases[i], names, r.format.Casing, r.format.Acronyms, version)
 	}
-	return nil
+	return func(data map[string]json.RawMessage) error {
+		for i, r := range requests {
+			var formatted []string
+			if err := json.Unmarshal(data[aliases[i]], &formatted); err != nil {
+				return fmt.Errorf("decode %s: %w", aliases[i], err)
+			}
+			if len(formatted) != len(r.names) {
+				return fmt.Errorf("got %d names for %d", len(formatted), len(r.names))
+			}
+			n.store(r, formatted)
+		}
+		return nil
+	}
 }
 
 // requests returns the pending names as requests, one per format, sorted.
@@ -173,7 +248,7 @@ func (n *Names) requests() []request {
 		if len(names) == 0 {
 			continue
 		}
-		requests = append(requests, request{format: f, version: n.version, names: slices.Sorted(maps.Keys(names))})
+		requests = append(requests, request{format: f, names: slices.Sorted(maps.Keys(names))})
 	}
 	slices.SortFunc(requests, func(a, b request) int {
 		return strings.Compare(string(a.format.Casing)+" "+string(a.format.Acronyms), string(b.format.Casing)+" "+string(b.format.Acronyms))

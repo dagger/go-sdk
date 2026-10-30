@@ -36,11 +36,12 @@ func Load(path string) (Table, error) {
 	return table, nil
 }
 
-// Engine is a fake engine. It answers Query.version with Release and
+// Engine is a fake engine. It answers Query.version with Release,
 // Query.formatIdentifiers from its tables: a request's version's table in
 // Versions, then Table, then Fallback; without a Fallback, it fails on a name
 // no table has, so a test learns of every name its generator formats. It
-// records the queries it answers.
+// answers ModuleSource.naming from Modules, by module source ID. It records
+// the queries it answers.
 type Engine struct {
 	Release string
 	Table   Table
@@ -49,6 +50,8 @@ type Engine struct {
 	Versions map[string]Table
 	// Fallback formats a name no table has.
 	Fallback func(f identifiers.Format, name string) string
+	// Modules holds the naming of module sources, by ID.
+	Modules map[string]*Module
 
 	mu      sync.Mutex
 	queries []string
@@ -61,19 +64,24 @@ func (e *Engine) Queries() []string {
 	return append([]string(nil), e.queries...)
 }
 
-// FormatQueries returns how many formatIdentifiers queries the engine
-// answered: the generator's round trips for names.
+// FormatQueries returns how many batch queries (formatIdentifiers and
+// ModuleSource.naming lookups) the engine answered: the generator's round
+// trips for names.
 func (e *Engine) FormatQueries() int {
 	n := 0
 	for _, q := range e.Queries() {
-		if strings.Contains(q, "formatIdentifiers") {
+		if strings.HasPrefix(q, "query FormatIdentifiers(") {
 			n++
 		}
 	}
 	return n
 }
 
-var fieldPattern = regexp.MustCompile(`(f\d+): formatIdentifiers\(names: \$(n\d+), casing: (\w+), acronyms: (\w+), version: \$(v\d+)\)`)
+var (
+	fieldPattern  = regexp.MustCompile(`(f\d+): formatIdentifiers\(names: \$(n\d+), casing: (\w+), acronyms: (\w+), version: \$(v\d+)\)`)
+	nodePattern   = regexp.MustCompile(`(m\d+): node\(id: \$(m\d+)\) \{ \.\.\. on ModuleSource \{ naming \{([^}]*)\} \} \}`)
+	namingPattern = regexp.MustCompile(`(?:(\w+): )?(\w+)\((?:names|candidates): \$(\w+)\)`)
+)
 
 // Query implements identifiers.Engine for the queries the identifiers
 // package sends.
@@ -83,7 +91,7 @@ func (e *Engine) Query(_ context.Context, query string, variables map[string]any
 	e.mu.Unlock()
 	result := map[string]any{}
 	switch {
-	case strings.Contains(query, "formatIdentifiers"):
+	case strings.HasPrefix(query, "query FormatIdentifiers("):
 		for _, m := range fieldPattern.FindAllStringSubmatch(query, -1) {
 			version, _ := variables[m[5]].(string)
 			if version == "" {
@@ -111,6 +119,13 @@ func (e *Engine) Query(_ context.Context, query string, variables map[string]any
 			}
 			result[m[1]] = formatted
 		}
+		for _, m := range nodePattern.FindAllStringSubmatch(query, -1) {
+			naming, err := e.naming(variables[m[2]], m[3], variables)
+			if err != nil {
+				return err
+			}
+			result[m[1]] = map[string]any{"naming": naming}
+		}
 	case strings.Contains(query, "version"):
 		result["version"] = e.Release
 	default:
@@ -124,6 +139,43 @@ func (e *Engine) Query(_ context.Context, query string, variables map[string]any
 		return fmt.Errorf("data must be a pointer")
 	}
 	return json.Unmarshal(encoded, data)
+}
+
+// naming answers the selection of a ModuleSource.naming.
+func (e *Engine) naming(id any, selection string, variables map[string]any) (map[string]any, error) {
+	mod := e.Modules[fmt.Sprint(id)]
+	if mod == nil {
+		return nil, fmt.Errorf("fake engine: no module source %v", id)
+	}
+	answers := map[string]any{}
+	for _, m := range namingPattern.FindAllStringSubmatch(selection, -1) {
+		alias, field := m[1], m[2]
+		if alias == "" {
+			alias = field
+		}
+		names, ok := variables[m[3]].([]string)
+		if !ok {
+			return nil, fmt.Errorf("variable %s is %T, not []string", m[3], variables[m[3]])
+		}
+		if field == "mainObject" {
+			var main any
+			if name, _ := mod.MainObject(names); name != "" {
+				main = name
+			}
+			answers[alias] = main
+			continue
+		}
+		named := make([]string, len(names))
+		for i, name := range names {
+			answer, ok := mod.answer(field, name)
+			if !ok {
+				return nil, fmt.Errorf("fake engine: no %s answer for %q", field, name)
+			}
+			named[i] = answer
+		}
+		answers[alias] = named
+	}
+	return answers, nil
 }
 
 // Connector returns a Connector to e.

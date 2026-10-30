@@ -334,7 +334,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 		}
 		// The entrypoint protocol needs an explicit constructor to expose the
 		// module's main object. Match the Go runtime's implicit zero-value New.
-		if obj.constructor == nil && mod.namer.isMainObject(obj.name, moduleName, objectNames) {
+		if obj.constructor == nil && mod.namer.isMainObject(obj.name, objectNames) {
 			def += "\n  .withConstructor(function(\"\", typeDef.withObject(" + strconv.Quote(obj.name) + ")))"
 		}
 		defs = append(defs, def)

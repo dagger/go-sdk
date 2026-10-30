@@ -18,10 +18,14 @@
 //     engine asked is the session's, so a schema read from a file is taken
 //     to come from it: an older engine's schemas report v1.0.0, which only
 //     its release tells apart from a schema past the cut.
+//   - Modules: the engine names a module's own declarations itself, and
+//     answers for them through ModuleSource.naming (see ModuleNames), on
+//     either side of the cut. Generators don't predict them.
 //   - Batching: a generator looks names up while it renders. A name that isn't
-//     formatted yet is recorded, and Names.Run formats every recorded name in
-//     a single GraphQL query (one aliased formatIdentifiers field per Format),
-//     then renders again, until nothing is missing.
+//     formatted yet is recorded, and Run answers every recorded name in a
+//     single GraphQL query (one aliased formatIdentifiers field per Format,
+//     one node field per ModuleNaming), then renders again, until nothing is
+//     missing.
 //   - Versioning: every request passes the version its Names is for (a
 //     schema's, a module's, a runtime's), so names are parsed with that
 //     version's dictionary whatever version the session is served at.
@@ -65,22 +69,9 @@ type Format struct {
 	Acronyms AcronymStyle
 }
 
-// The formats Go codegen uses. GoName and TypeName are the same format, so
-// they share their formatted names.
-var (
-	// GoName is an exported Go identifier: a type, method, option struct or
-	// option field (CommitSHA, WithGPU, ParentSHAs).
-	GoName = Format{Pascal, Uppercase}
-	// TypeName is the schema name the engine gives a module's object,
-	// interface or enum (MyModHTTPClient).
-	TypeName = Format{Pascal, Uppercase}
-	// FieldName is the schema name the engine gives a module's field,
-	// function or argument (baseUrl, httpClient).
-	FieldName = Format{Camel, Capitalized}
-	// Words is a name's words, lowercase and joined by "-" (http-client):
-	// how a generator tells where the engine cuts a name into words.
-	Words = Format{Kebab, Uppercase}
-)
+// GoName is the format Go codegen uses: an exported Go identifier, a type,
+// method, option struct or option field (CommitSHA, WithGPU, ParentSHAs).
+var GoName = Format{Pascal, Uppercase}
 
 // maxLength is the longest name, in bytes, the engine parses.
 const maxLength = 256
