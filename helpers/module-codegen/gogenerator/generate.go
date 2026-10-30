@@ -168,9 +168,15 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	client := &clientgen.GoGenerator{Config: genCfg}
 	// Unified bindings are rendered against the module's sources, which must
 	// list cleanly first: an embedded bootstrap supplies the complete core
-	// surface author code may reference, and its tidy the go.sum.
+	// surface author code may reference, and its tidy the go.sum. Embedded
+	// bindings are that bootstrap.
+	//
+	// The module's own client is a client like any other (dagger module
+	// client add .), generated from the schema the engine serves for it, so
+	// these bindings hold no self-calls.
 	client.Config.UnifiedClient = false
-	if _, err := generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, false); err != nil {
+	removed, err := generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, !cfg.UnifiedClient)
+	if err != nil {
 		return fmt.Errorf("bootstrap module client: %w", err)
 	}
 	if err := writeBootstrap(root, packageName, packageImport, cfg.GlobalClient); err != nil {
@@ -180,13 +186,12 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return withWarnings(err, untidied.Warnings)
 	}
 
-	// The module's own client is a client like any other (dagger module
-	// client add .), generated from the schema the engine serves for it, so
-	// these bindings hold no self-calls.
-	client.Config.UnifiedClient = cfg.UnifiedClient
-	removed, err := generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, true)
-	if err != nil {
-		return fmt.Errorf("generate module client: %w", err)
+	if cfg.UnifiedClient {
+		client.Config.UnifiedClient = true
+		removed, err = generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, true)
+		if err != nil {
+			return fmt.Errorf("generate module client: %w", err)
+		}
 	}
 	// The bootstrap has no runtime SDK import, so its tidy may remove the
 	// requirement. Restore the caller's pin before unified bindings import core.

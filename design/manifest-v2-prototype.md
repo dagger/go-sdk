@@ -50,7 +50,6 @@ hello/
 └── internal/
     └── dagger/
         ├── dagger.gen.go
-        ├── hello.gen.go
         └── entrypoint/
             └── main.dang
 ```
@@ -62,7 +61,7 @@ hello/
 | `dagger.gen.go` | Go SDK | Codecs and the static `DaggerDispatch` function. |
 | `cmd/hello-dispatch/main.go` | Go SDK | Dispatch command for an importable package. |
 | `dagger.dispatch.gen.go` | Go SDK | Dispatch command for `package main`. |
-| `internal/dagger/*.gen.go` | Go SDK | Embedded Dagger client. A module calls itself through a client added with `dagger module client add .`. |
+| `internal/dagger/*.gen.go` | Go SDK | Embedded Dagger client. With `unifiedClients = true`, a module calls itself through a client added with `dagger module client add .`. |
 | `internal/dagger/entrypoint/main.dang` | Go SDK | Entrypoint that the engine loads. |
 
 The module may be an importable Go package or `package main`. A new module's
@@ -178,7 +177,7 @@ fails, the SDK raises that step's own error message.
 With `dangEntrypoint`, `generateScope` refuses these inputs before it writes
 anything:
 
-- Module clients. A manifest with an entrypoint has no dependency list.
+- Module clients with embedded bindings. Unified bindings take clients.
 - The `legacy` template for a new module.
 - `fat`. A fat `dagger.json` points older engines at the Go runtime, which
   cannot load an importable package.
@@ -218,9 +217,10 @@ The analyzer is a direct port of the hardened analyzer from
 - JSON codecs for Dagger values
 - static invocation cases
 
-It drops module self-introspection. A module calls itself through a client
-added with `dagger module client add .`, generated from the schema the engine
-serves, like any other client.
+It drops module self-introspection. With `unifiedClients = true`, a module
+calls itself through a client added with `dagger module client add .`,
+generated from the schema the engine serves, like any other client. Embedded
+bindings refuse clients, so a module with embedded bindings cannot call itself.
 
 `GenerateEmbeddedClient` writes the client below `internal/dagger` without a
 nested `go.mod`. The embedded client returns a nullable object with a context
