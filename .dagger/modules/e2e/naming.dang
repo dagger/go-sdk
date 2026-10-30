@@ -1,8 +1,8 @@
 """
 Generate and call a module whose schema names differ between the engine's
-identifier naming rules and the legacy strcase rules: wire-name predictions
-follow the version the engine names the module by, and Go identifier style
-follows the schema the bindings are generated from.
+identifier naming rules and the legacy strcase rules: the bindings take the
+module's schema names from the engine (ModuleSource.naming), and Go
+identifier style follows the schema the bindings are generated from.
 
 It needs an engine at v1.0.0-beta.22 or later, so no check runs it yet. cli
 is that engine's dagger CLI, which runs nested in this session:

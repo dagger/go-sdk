@@ -1,7 +1,6 @@
 package gogenerator
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,19 +15,19 @@ import (
 
 // approximateEngine is an engine past identifiers.CasingVersion that formats
 // the names versions pins as recorded there, and every other name roughly
-// as the engine would: generated code only needs to compile with them.
-func approximateEngine(versions map[string]identifierstest.Table) *identifierstest.Engine {
+// as the engine would: generated code only needs to compile with them. It
+// serves the naming of module source "src" from module.
+func approximateEngine(versions map[string]identifierstest.Table, module *identifierstest.Module) *identifierstest.Engine {
 	return &identifierstest.Engine{
 		Release:  "v1.0.0-beta.22",
 		Versions: versions,
+		Modules:  map[string]*identifierstest.Module{"src": module},
 		Fallback: func(f identifiers.Format, name string) string {
 			switch f.Casing {
 			case identifiers.Camel:
 				return strcase.ToLowerCamel(name)
 			case identifiers.ScreamingSnake:
 				return strcase.ToScreamingSnake(name)
-			case identifiers.Kebab:
-				return strcase.ToKebab(name)
 			}
 			if strings.ContainsAny(name, "-_") {
 				return strcase.ToCamel(name)
@@ -38,10 +37,19 @@ func approximateEngine(versions map[string]identifierstest.Table) *identifierste
 	}
 }
 
+// helloModule is how the engine would answer ModuleSource.naming for module
+// hello: the names pins records, and strcase for the rest, which the
+// generated code only needs to compile with.
+func helloModule(pins map[string]map[string]string) *identifierstest.Module {
+	mod := identifierstest.Strcase("hello")
+	mod.Names = pins
+	return mod
+}
+
 // The schema's Go identifiers follow the generated schema's version, and the
-// module's predicted schema names follow the version the engine names it by,
-// whichever of the two is past the cut. The engine's spellings below are
-// what dagger/dagger 441d95c2 formats at v1.0.0-beta.22.
+// module's schema names are the engine's naming of it, whichever side of the
+// cut either is on. The engine's spellings below are what dagger/dagger
+// 441d95c2 names at v1.0.0-beta.22.
 func TestGenerateSplitsNamingVersions(t *testing.T) {
 	const source = `package hello
 
@@ -57,37 +65,43 @@ func (h *Hello) Platform(arch Arch) string { return string(arch) }
 `
 	pinned := map[string]identifierstest.Table{
 		"v1.0.0-beta.22": {
-			identifierstest.Key(identifiers.FieldName): {"E2ETest": "e2eTest"},
-			// The member's name is its constant's, less the type's name.
-			identifierstest.Key(identifiers.EnumMemberName): {"Arm64": "ARM64"},
-			identifierstest.Key(identifiers.GoName):         {"id": "ID", "e2eTest": "E2ETest", "e2Etest": "E2ETest", "shortSha": "ShortSHA"},
+			identifierstest.Key(identifiers.GoName): {"id": "ID", "e2eTest": "E2ETest", "e2Etest": "E2ETest", "shortSha": "ShortSHA"},
 		},
 	}
+	modules := map[bool]*identifierstest.Module{
+		true: helloModule(nil),
+		false: helloModule(map[string]map[string]string{
+			"fieldNames": {"E2ETest": "e2eTest"},
+			// The member's name is its constant's, less the type's name.
+			"enumMemberNames": {"Arm64": "ARM64"},
+		}),
+	}
 	for _, test := range []struct {
-		name           string
-		schema, module string
-		want, wantNot  []string
-		self           []string
+		name          string
+		schema        string
+		legacy        bool
+		want, wantNot []string
+		self          []string
 	}{
 		{
 			// A Dang entrypoint without a dang.toml, generated on an engine
 			// past the cut.
 			name:   "schema past the cut, module before",
-			schema: "v1.0.0-beta.22", module: "v1.0.0-beta.20",
+			schema: "v1.0.0-beta.22", legacy: true,
 			self:    []string{`Select("e2Etest")`, `= "ARM_64"`, "func (r *Hello) E2ETest("},
 			want:    []string{"func (r *GitCommit) ShortSHA("},
 			wantNot: []string{"func (r *GitCommit) ShortSha("},
 		},
 		{
 			name:   "schema before the cut, module past",
-			schema: "v1.0.0-beta.20", module: "v1.0.0-beta.22",
+			schema: "v1.0.0-beta.20", legacy: false,
 			self:    []string{`Select("e2eTest")`, `= "ARM64"`, "func (r *Hello) E2eTest("},
 			want:    []string{"func (r *GitCommit) ShortSha("},
 			wantNot: []string{"func (r *GitCommit) ShortSHA("},
 		},
 		{
 			name:   "both past the cut",
-			schema: "v1.0.0-beta.22", module: "v1.0.0-beta.22",
+			schema: "v1.0.0-beta.22", legacy: false,
 			self: []string{`Select("e2eTest")`, `= "ARM64"`, "func (r *Hello) E2ETest("},
 			want: []string{"func (r *GitCommit) ShortSHA("},
 		},
@@ -95,10 +109,10 @@ func (h *Hello) Platform(arch Arch) string { return string(arch) }
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
-			engine := approximateEngine(pinned)
+			engine := approximateEngine(pinned, modules[test.legacy])
 			cfg := GenerateConfig{
 				ModuleRoot: root, ModuleName: "hello", SchemaPath: moduleContextSchema(t),
-				SchemaVersion: test.schema, ModuleVersion: test.module, Connector: engine.Connector(),
+				SchemaVersion: test.schema, ModuleSourceID: "src", Connector: engine.Connector(),
 				DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26-alpine",
 			}
 			require.NoError(t, Generate(t.Context(), cfg))
@@ -122,8 +136,8 @@ func (h *Hello) Platform(arch Arch) string { return string(arch) }
 // Unified bindings alias the core of the published runtime, whose Go
 // identifiers follow its own version, not the schema's: before the cut, the
 // option struct of Query.sshfsVolume is SshfsVolumeOpts, however the schema
-// past the cut would spell it. The module's schema names still follow the
-// version the engine names it by.
+// past the cut would spell it. The module's schema names are still the
+// engine's naming of it.
 func TestGenerateUnifiedFollowsRuntimeNames(t *testing.T) {
 	const runtimeVersion = "v1.0.0-beta.17"
 	root := t.TempDir()
@@ -136,13 +150,12 @@ func (h *Hello) E2ETest() string { _ = dagger.SshfsVolumeOpts{}; return "e2e" }
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26.1\n"), 0644))
 	engine := approximateEngine(map[string]identifierstest.Table{
 		"v1.0.0-beta.22": {
-			identifierstest.Key(identifiers.FieldName): {"E2ETest": "e2eTest"},
-			identifierstest.Key(identifiers.GoName):    {"id": "ID", "sshfsVolume": "SSHFSVolume"},
+			identifierstest.Key(identifiers.GoName): {"id": "ID", "sshfsVolume": "SSHFSVolume"},
 		},
-	})
+	}, helloModule(map[string]map[string]string{"fieldNames": {"E2ETest": "e2eTest"}}))
 	cfg := GenerateConfig{
 		ModuleRoot: root, ModuleName: "hello", SchemaPath: moduleContextSchema(t),
-		SchemaVersion: "v1.0.0-beta.22", Connector: engine.Connector(),
+		SchemaVersion: "v1.0.0-beta.22", ModuleSourceID: "src", Connector: engine.Connector(),
 		DaggerVersion: runtimeVersion, UnifiedClient: true, GoImage: "golang:1.26-alpine",
 	}
 	require.NoError(t, Generate(t.Context(), cfg))
@@ -152,45 +165,4 @@ func (h *Hello) E2ETest() string { _ = dagger.SshfsVolumeOpts{}; return "e2e" }
 	self, err := os.ReadFile(filepath.Join(root, "internal/dagger/hello.gen.go"))
 	require.NoError(t, err)
 	require.Contains(t, string(self), `Select("e2eTest")`)
-}
-
-// Which Names each side gets, and what an unreadable module version means:
-// nothing on an engine that names every module by strcase, an error on one
-// that names modules by their version.
-func TestIdentifierNames(t *testing.T) {
-	version := func(n *identifiers.Names) string {
-		if n == nil {
-			return "legacy"
-		}
-		return n.Version()
-	}
-	for _, test := range []struct {
-		name                   string
-		release                string
-		schema, module         string
-		moduleErr              error
-		wantSchema, wantModule string
-		wantErr                string
-	}{
-		{name: "module version defaults to the schema's", release: "v1.0.0-beta.22", schema: "v1.0.0-beta.22", wantSchema: "v1.0.0-beta.22", wantModule: "v1.0.0-beta.22"},
-		{name: "each its own version", release: "v1.0.0-beta.22", schema: "v1.0.0-beta.23", module: "v1.0.0-beta.22", wantSchema: "v1.0.0-beta.23", wantModule: "v1.0.0-beta.22"},
-		{name: "module before the cut", release: "v1.0.0-beta.22", schema: "v1.0.0-beta.22", module: "v1.0.0-beta.20", wantSchema: "v1.0.0-beta.22", wantModule: "legacy"},
-		{name: "older engine", release: "v1.0.0-beta.21", schema: "v1.0.0", module: "v1.0.0", wantSchema: "legacy", wantModule: "legacy"},
-		{name: "unreadable on an older engine", release: "v1.0.0-beta.21", schema: "v1.0.0", moduleErr: errors.New("no such field"), wantSchema: "legacy", wantModule: "legacy"},
-		{name: "unreadable past the cut", release: "v1.0.0-beta.22", schema: "v1.0.0-beta.22", moduleErr: errors.New("no such field"), wantErr: "the engine names the module by the version it declares, which couldn't be read: no such field"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			engine := &identifierstest.Engine{Release: test.release}
-			names, moduleNames, err := identifierNames(t.Context(), GenerateConfig{
-				SchemaVersion: test.schema, ModuleVersion: test.module, ModuleVersionErr: test.moduleErr, Connector: engine.Connector(),
-			}, test.schema)
-			if test.wantErr != "" {
-				require.EqualError(t, err, test.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, test.wantSchema, version(names))
-			require.Equal(t, test.wantModule, version(moduleNames))
-		})
-	}
 }

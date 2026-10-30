@@ -60,12 +60,10 @@ type ModuleGeneratorConfig struct {
 	// LibVersion is the dagger.io/dagger version used by the generated module.
 	LibVersion string
 
-	// Names are the names formatted by the rules the engine names the
-	// module's own declarations by: those of the engine version it's served
-	// at, which can differ from the generated schema's (see Config.Names).
-	// The module's self-call schema and bindings predict its schema names
-	// through them; nil for the legacy (strcase) rules.
-	Names *identifiers.Names
+	// Naming is the engine's naming of the module's own declarations
+	// (ModuleSource.naming), which the module's self-call schema and
+	// bindings follow.
+	Naming identifiers.ModuleNames
 }
 
 // ModuleSourceDependency describes one dependency in a module schema.

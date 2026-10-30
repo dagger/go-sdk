@@ -82,7 +82,7 @@ func mergeQueryConstructor(target, module *introspection.Schema, moduleName stri
 			return nil
 		}
 	}
-	mainObject := target.Types.Get(namer.ObjectName(moduleName))
+	mainObject := target.Types.Get(namer.MainObjectName())
 	if mainObject == nil {
 		return nil
 	}

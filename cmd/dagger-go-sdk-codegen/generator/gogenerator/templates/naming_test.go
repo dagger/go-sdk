@@ -31,15 +31,15 @@ func recordedNames(t *testing.T, fallback func(identifiers.Format, string) strin
 	return names
 }
 
-// formatted runs f until every name it looks up is formatted (see
-// identifiers.Names.Run), and returns what it returned last.
-func formatted[T any](t *testing.T, names *identifiers.Names, f func() T) T {
+// formatted runs f until every name it looks up in batches is answered (see
+// identifiers.Run), and returns what it returned last.
+func formatted[T any](t *testing.T, f func() T, batches ...identifiers.Batch) T {
 	t.Helper()
 	var got T
-	require.NoError(t, names.Run(t.Context(), func() error {
+	require.NoError(t, identifiers.Run(t.Context(), func() error {
 		got = f()
 		return nil
-	}))
+	}, batches...))
 	return got
 }
 
@@ -64,7 +64,7 @@ func TestGoNamer(t *testing.T) {
 		{"", "", ""},
 	} {
 		require.Equal(t, test.legacy, goNamer{}.formatName(test.name), "legacy %q", test.name)
-		got := formatted(t, names, func() string { return goNamer{names: names}.formatName(test.name) })
+		got := formatted(t, func() string { return goNamer{names: names}.formatName(test.name) }, names)
 		require.Equal(t, test.engine, got, "engine %q", test.name)
 	}
 }
@@ -92,11 +92,11 @@ func TestObjectFollowsEngineNames(t *testing.T) {
 	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.22", generator.Config{Names: names})
 	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(filepath.Join("src", "_types/object.go.tmpl"))
 	require.NoError(t, err)
-	got := formatted(t, names, func() string {
+	got := formatted(t, func() string {
 		var buf bytes.Buffer
 		require.NoError(t, tmpl.Execute(&buf, object))
 		return buf.String()
-	})
+	}, names)
 	source, err := format.Source([]byte("package main\n\n" + got))
 	require.NoError(t, err, got)
 	got = string(source)
@@ -135,73 +135,53 @@ func TestNullableObjectLoadsBySchemaName(t *testing.T) {
 	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.22", generator.Config{Names: names})
 	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(filepath.Join("src", "_types/object.go.tmpl"))
 	require.NoError(t, err)
-	got := formatted(t, names, func() string {
+	got := formatted(t, func() string {
 		var buf bytes.Buffer
 		require.NoError(t, tmpl.Execute(&buf, &foo))
 		return buf.String()
-	})
+	}, names)
 	require.Contains(t, got, "func (r *Foo) Maybe(ctx context.Context) (*DepGPUThing, error)")
 	require.Contains(t, got, `selectNode(q.Root(), *objectID, "DepGpuThing")`)
 }
 
-// The module namer predicts the names the engine gives a module's
-// declarations: by its rules past the cut, by strcase before.
-func TestModuleNamer(t *testing.T) {
-	names := recordedNames(t, nil)
-	engine := moduleNamer{names: names}
-	legacy := moduleNamer{}
-	type prediction struct{ legacy, engine string }
-	predict := func(t *testing.T, f func(moduleNamer) string) prediction {
-		return prediction{
-			legacy: f(legacy),
-			engine: formatted(t, names, func() string { return f(engine) }),
-		}
-	}
-	for _, test := range []struct {
-		what string
-		f    func(moduleNamer) string
-		want prediction
-	}{
-		{"object HttpClient", func(n moduleNamer) string { return n.ObjectName("HttpClient") }, prediction{"HttpClient", "HTTPClient"}},
-		{"object JsonValue", func(n moduleNamer) string { return n.ObjectName("JsonValue") }, prediction{"JsonValue", "JSONValue"}},
-		{"field E2ETest", func(n moduleNamer) string { return n.FieldName("E2ETest") }, prediction{"e2Etest", "e2eTest"}},
-		{"field GetUrl", func(n moduleNamer) string { return n.FieldName("GetUrl") }, prediction{"getUrl", "getUrl"}},
-		{"constructor naming-app", func(n moduleNamer) string { return n.FieldName("naming-app") }, prediction{"namingApp", "namingApp"}},
-		{"member arm64", func(n moduleNamer) string { return n.enumMemberName("arm64") }, prediction{"ARM_64", "ARM64"}},
-		{"member inProgress", func(n moduleNamer) string { return n.enumMemberName("inProgress") }, prediction{"IN_PROGRESS", "IN_PROGRESS"}},
-		// Names already in GraphQL's member convention are kept.
-		{"member HTTP2", func(n moduleNamer) string { return n.enumMemberName("HTTP2") }, prediction{"HTTP2", "HTTP2"}},
-		{"member P_256", func(n moduleNamer) string { return n.enumMemberName("P_256") }, prediction{"P_256", "P_256"}},
-		// The module's name prefixes a type on a word boundary only.
-		{"type Postman of post", func(n moduleNamer) string { return n.namespaceObject("Postman", "post") }, prediction{"PostPostman", "PostPostman"}},
-		{"type PostMan of post", func(n moduleNamer) string { return n.namespaceObject("PostMan", "post") }, prediction{"PostMan", "PostMan"}},
-		{"type HttpClient of naming-app", func(n moduleNamer) string { return n.namespaceObject("HttpClient", "naming-app") }, prediction{"NamingAppHttpClient", "NamingAppHTTPClient"}},
-		{"type NamingAppHttpClient of naming-app", func(n moduleNamer) string { return n.namespaceObject("NamingAppHttpClient", "naming-app") }, prediction{"NamingAppHttpClient", "NamingAppHTTPClient"}},
-		{"type Tools of k8s-tools", func(n moduleNamer) string { return n.namespaceObject("Tools", "k8s-tools") }, prediction{"K8StoolsTools", "K8sToolsTools"}},
-		// The engine cuts words around digits and acronyms by the module's
-		// spelling too: a flat prefix still counts as the module's name.
-		{"type K8STools of k8s-tools", func(n moduleNamer) string { return n.namespaceObject("K8STools", "k8s-tools") }, prediction{"K8StoolsK8Stools", "K8sTools"}},
-		{"type My2Go of my2go", func(n moduleNamer) string { return n.namespaceObject("My2Go", "my2go") }, prediction{"My2Go", "My2go"}},
-		{"type Go of my2go", func(n moduleNamer) string { return n.namespaceObject("Go", "my2go") }, prediction{"My2GoGo", "My2goGo"}},
-	} {
-		t.Run(test.what, func(t *testing.T) {
-			require.Equal(t, test.want, predict(t, test.f))
-		})
-	}
+// namingApp is how the engine at v1.0.0-beta.22 would answer
+// ModuleSource.naming for a module naming-app (Namer.NamespaceObject,
+// FieldName and EnumMemberName and Module.depTypeReference in dagger/dagger
+// 441d95c2).
+var namingApp = &identifierstest.Module{
+	Names: map[string]map[string]string{
+		"typeNames":       {"HttpClient": "NamingAppHTTPClient"},
+		"fieldNames":      {"E2ETest": "e2eTest"},
+		"enumMemberNames": {"arm64": "ARM64"},
+		"typeReferences":  {"JsonValue": "JSONValue"},
+	},
+	Main:     func(candidates []string) string { return "NamingApp" },
+	MainName: "NamingApp",
 }
 
-// The module's main object is the object named like the module, or else the
-// only one named like it once flattened (K8STools for k8s-tools).
-func TestModuleNamerMainObject(t *testing.T) {
-	names := recordedNames(t, nil)
-	engine := moduleNamer{names: names}
-	isMain := func(n moduleNamer, name, module string, objects ...string) bool {
-		return formatted(t, names, func() bool { return n.isMainObject(name, module, objects) })
-	}
-	require.True(t, isMain(engine, "K8STools", "k8s-tools", "K8STools", "Tools"))
-	require.True(t, isMain(engine, "My2Go", "my2go", "My2Go"))
-	require.False(t, isMain(engine, "My2Go", "my2go", "My2Go", "My2go"), "an exact match wins over a flat one")
-	require.False(t, isMain(engine, "Tools", "k8s-tools", "K8STools", "Tools"))
-	require.False(t, moduleNamer{}.isMainObject("K8STools", "k8s-tools", []string{"K8STools"}), "strcase has no flat match")
-	require.True(t, moduleNamer{}.isMainObject("K8sTools", "k8s-tools", []string{"K8sTools"}))
+// The module namer gives the engine's names for the module.
+func TestModuleNamer(t *testing.T) {
+	n := moduleNamer{naming: namingApp}
+	require.Equal(t, "NamingAppHTTPClient", n.typeName("HttpClient", "naming-app"))
+	require.Equal(t, "JSONValue", n.typeName("JsonValue", ""), "a reference to a core type")
+	require.Equal(t, "e2eTest", n.FieldName("E2ETest"))
+	require.Equal(t, "ARM64", n.enumMemberName("arm64"))
+	require.Equal(t, "NamingApp", n.MainObjectName())
+	require.True(t, n.isMainObject("NamingApp", []string{"NamingApp", "HttpClient"}))
+	require.False(t, n.isMainObject("HttpClient", []string{"NamingApp", "HttpClient"}))
+}
+
+// Until the engine answers, a name is a placeholder no schema has, and the
+// render runs again with the answer.
+func TestModuleNamerPlaceholders(t *testing.T) {
+	engine := &identifierstest.Engine{Modules: map[string]*identifierstest.Module{"src": namingApp}}
+	naming, err := engine.Connector().ModuleNaming("src")
+	require.NoError(t, err)
+	n := moduleNamer{naming: naming}
+	var rendered []string
+	require.NoError(t, identifiers.Run(t.Context(), func() error {
+		rendered = append(rendered, n.FieldName("E2ETest"))
+		return nil
+	}, naming))
+	require.Equal(t, []string{"<pending E2ETest>", "e2eTest"}, rendered)
 }

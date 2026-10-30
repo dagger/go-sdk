@@ -322,7 +322,7 @@ type GoSdk {
           "--scope", scopePath,
           "--workspace-repo-url", source.htmlRepoURL,
           "--workspace-pin", source.pin,
-        ], experimentalPrivilegedNesting: true)
+        ])
         .directory("/out")
     } else {
       generated
@@ -505,7 +505,7 @@ type GoSdk {
       .generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
-    let moduleVersion = entrypointModuleVersion(ws, name, scopePath)
+    let moduleSourceID = toString(entrypointModuleSource(ws, name, scopePath).id)
 
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
@@ -525,9 +525,11 @@ type GoSdk {
     # anchor, beside the paths it includes.
     let buildRoot = if (included) { "/src/" + includes.file("module").contents } else { "/src" }
     let tree = if (included) { includedTree(ws, moduleSource, includes) } else { moduleSource }
+    # The module source ID can outgrow an exec argument: it's passed in a file.
     let inputs = builder
       .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJSON)
+      .withNewFile("/module-source-id", moduleSourceID)
     let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
       "module-codegen",
@@ -536,7 +538,7 @@ type GoSdk {
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
-      "--module-version", moduleVersion,
+      "--module-source-id-file", "/module-source-id",
       "--go-image", goImage,
       "--dagger-version", if (unified) { runtimeVersion(true) } else { schemaVersion },
       "--unified=" + JSON.encode(unified),
@@ -576,26 +578,20 @@ type GoSdk {
   }
 
   """
-  The engine version the engine names the module's own declarations by: that
-  of the module with the generated entrypoint, which the dang.toml governing
-  the entrypoint declares (v1.0.0-beta.20 without one). It isn't the staged
-  schema's version, which the staged runtime manifest declares: the bindings'
-  Go identifiers follow the schema, but their predictions of the module's
-  schema names must follow this. Reading it needs no generated entrypoint.
-
-  An engine before v1.0.0-beta.22 can fail to read it, and doesn't need it:
-  it names every module by strcase. So a failure is passed on as
-  "error: <reason>", for module-codegen to fail with only on an engine that
-  names modules by the version.
+  The module source the engine serves the module as: the module with the
+  generated entrypoint, whose dang.toml decides the version the engine names
+  its declarations by. The staged schema's source isn't it: the bindings' Go
+  identifiers follow the schema, but the module's schema names come from this
+  source's naming (ModuleSource.naming). Loading it needs no generated
+  entrypoint.
   """
-  let entrypointModuleVersion(ws: Workspace!, name: String!, scopePath: String!): String! {
+  let entrypointModuleSource(ws: Workspace!, name: String!, scopePath: String!): ModuleSource! {
     sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
       .generate(ws, lock: false, legacyJson: false)
       .withWorkdir(".")
       .moduleSource(rootedPath(scopePath))
-      .engineVersion rescue { err: Error => "error: " + err.message }
   }
 
   """
@@ -683,12 +679,11 @@ type GoSdk {
   error reports only the exit code, and the message is what tells the user
   how to fix the module.
 
-  The tool runs as a nested client of the session: the generators ask the
-  engine to name identifiers (Query.formatIdentifiers). The v1 API nests by
-  default; older engines need the argument.
+  The tool runs as a nested client of the session, as every v1 exec does:
+  the generators ask the engine to name identifiers.
   """
   let runTool(ctr: Container!, args: [String!]!): Container! {
-    let ran = ctr.withExec(args, expect: ReturnType.ANY, experimentalPrivilegedNesting: true)
+    let ran = ctr.withExec(args, expect: ReturnType.ANY)
     if (ran.exitCode != 0) {
       # Each tool prints its error last, after its name.
       let prefix = (args[0] ?? "") + ": "
@@ -820,7 +815,7 @@ type GoSdk {
         "--module-root", "/out",
         "--unified=" + JSON.encode(unified),
         "--removed-list", "/removed-clients.txt",
-      ], experimentalPrivilegedNesting: true)
+      ])
   }
 
   """

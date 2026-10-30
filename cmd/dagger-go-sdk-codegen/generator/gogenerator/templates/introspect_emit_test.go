@@ -9,14 +9,15 @@ import (
 	"testing"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/packages"
 )
 
-// legacyNamer names a module by strcase, as engines do before
-// identifiers.CasingVersion.
-var legacyNamer moduleNamer
+// legacyNamer names module "test" as the engine names a module by the legacy
+// strcase rules.
+var legacyNamer = moduleNamer{naming: identifierstest.Strcase("test")}
 
 // buildTestFuncs builds a minimal goTemplateFuncs from in-memory Go source.
 func buildTestFuncs(t *testing.T, moduleName string, sources map[string]string) goTemplateFuncs {
@@ -46,6 +47,7 @@ func buildTestFuncs(t *testing.T, moduleName string, sources map[string]string) 
 		cfg: generator.Config{
 			ModuleConfig: &generator.ModuleGeneratorConfig{
 				ModuleName: moduleName,
+				Naming:     identifierstest.Strcase(moduleName),
 			},
 		},
 		modulePkg:  pkg,
@@ -292,26 +294,6 @@ func TestIntrospectObject_SkipsReservedID(t *testing.T) {
 		"the remaining id is the synthetic engine one")
 }
 
-// TestNamespaceTypeName verifies the mirror of the engine's namespaceObject:
-// module types are installed prefixed with the module name (main object
-// exempt), so the emitted schema must use the same names or a module type
-// shadowing a core/dependency type name would collide at merge time.
-func TestNamespaceTypeName(t *testing.T) {
-	for _, tc := range []struct {
-		typeName, moduleName, want string
-	}{
-		{"Test", "test", "Test"},               // main object keeps the module name
-		{"Color", "test", "TestColor"},         // plain type gets prefixed
-		{"Container", "test", "TestContainer"}, // shadowing a core name is namespaced away
-		{"TestWorker", "test", "TestWorker"},   // already prefixed on a word boundary
-		{"Postman", "post", "PostPostman"},     // prefix without word boundary still namespaces
-		{"my-type", "my-mod", "MyModMyType"},   // kebab inputs camelize like the engine
-	} {
-		require.Equal(t, tc.want, legacyNamespaceObject(tc.typeName, tc.moduleName),
-			"legacyNamespaceObject(%q, %q)", tc.typeName, tc.moduleName)
-	}
-}
-
 // TestIntrospectTypeName_LocalVsForeign verifies only module-local types are
 // namespaced: refs to core/dependency types (moduleName == "") already carry
 // their final schema name.
@@ -329,28 +311,6 @@ func TestIntrospectTypeName_LocalVsForeign(t *testing.T) {
 
 	localObj := legacyNamer.introspectObject(&parsedObjectType{name: "Worker", moduleName: "test"})
 	require.Equal(t, "TestWorker", localObj.Name)
-}
-
-// TestIntrospectEnum_ConventionalMemberNames verifies member naming matches the
-// engine's gqlEnumMemberName: already-conventional names (HTTP2, TLS13) are
-// kept as-is, everything else becomes SCREAMING_SNAKE. Divergence here makes
-// self-call bindings send unknown enum values.
-func TestIntrospectEnum_ConventionalMemberNames(t *testing.T) {
-	enum := &parsedEnumType{
-		name: "Proto",
-		values: []*parsedEnumMember{
-			{name: "HTTP2", value: "http/2"},
-			{name: "TLS13", value: "tls/1.3"},
-			{name: "PlainText", value: "plain"},
-		},
-	}
-
-	it := legacyNamer.introspectEnum(enum)
-	require.Len(t, it.EnumValues, 3)
-	require.Equal(t, "HTTP2", it.EnumValues[0].Name,
-		"conventional names must be kept as-is, like the engine does")
-	require.Equal(t, "TLS13", it.EnumValues[1].Name)
-	require.Equal(t, "PLAIN_TEXT", it.EnumValues[2].Name)
 }
 
 // buildTestFuncsForRoundTrip creates a goTemplateFuncs from Go source that

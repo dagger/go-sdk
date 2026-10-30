@@ -61,6 +61,9 @@ var table = identifierstest.Table{
 	},
 }
 
+// camel is a format besides GoName, for batches of several formats.
+var camel = identifiers.Format{Casing: identifiers.Camel, Acronyms: identifiers.Capitalized}
+
 // Before the cut, nothing connects: the legacy rules need no engine.
 func TestConnectorLegacySchemaDoesNotConnect(t *testing.T) {
 	c := identifiers.NewConnector(func() (identifiers.Engine, error) {
@@ -134,9 +137,9 @@ func TestRunBatchesLookups(t *testing.T) {
 			{identifiers.GoName, "commitSha"},
 			{identifiers.GoName, "shortSha"},
 			{identifiers.GoName, "commitSha"},
-			{identifiers.TypeName, "JSONValue"},
-			{identifiers.FieldName, "HTTPClient"},
-			{identifiers.FieldName, "GetURL"},
+			{identifiers.GoName, "JSONValue"},
+			{camel, "HTTPClient"},
+			{camel, "GetURL"},
 			{identifiers.GoName, "naïve"}, // never sent
 		} {
 			got, ok := names.Lookup(lookup.f, lookup.name)
@@ -172,7 +175,7 @@ func TestRunSeveralNames(t *testing.T) {
 	var got []string
 	require.NoError(t, identifiers.Run(t.Context(), func() error {
 		goName, _ := schemaNames.Lookup(identifiers.GoName, "commitSha")
-		field, _ := moduleNames.Lookup(identifiers.FieldName, "HTTPClient")
+		field, _ := moduleNames.Lookup(camel, "HTTPClient")
 		got = []string{goName, field}
 		return nil
 	}, schemaNames, nil, moduleNames, schemaNames))
@@ -180,6 +183,49 @@ func TestRunSeveralNames(t *testing.T) {
 	require.Equal(t, 1, engine.FormatQueries())
 	query := engine.Queries()[1]
 	require.Contains(t, query, "query FormatIdentifiers($v0: String!, $n0: [String!]!, $v1: String!, $n1: [String!]!)")
+}
+
+func TestConnectorModuleNamingNeedsASource(t *testing.T) {
+	_, err := (&identifierstest.Engine{}).Connector().ModuleNaming("")
+	require.ErrorContains(t, err, "module source ID")
+}
+
+// The module's names are looked up in the same round trip as formatted names:
+// one node field per ModuleNaming beside the formatIdentifiers fields.
+func TestRunBatchesModuleNaming(t *testing.T) {
+	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table, Modules: map[string]*identifierstest.Module{
+		"src": {
+			Names: map[string]map[string]string{
+				"typeNames":      {"HttpClient": "MyModHTTPClient"},
+				"fieldNames":     {"GetURL": "getUrl"},
+				"typeReferences": {"JsonValue": "JSONValue"},
+			},
+			Main:     func(candidates []string) string { return candidates[0] },
+			MainName: "MyMod",
+		},
+	}}
+	c := engine.Connector()
+	names, err := c.Names(t.Context(), "v1.0.0-beta.22")
+	require.NoError(t, err)
+	naming, err := c.ModuleNaming("src")
+	require.NoError(t, err)
+
+	var got []string
+	require.NoError(t, identifiers.Run(t.Context(), func() error {
+		goName, _ := names.Lookup(identifiers.GoName, "commitSha")
+		typ, _ := naming.TypeName("HttpClient")
+		field, _ := naming.FieldName("GetURL")
+		ref, _ := naming.TypeReference("JsonValue")
+		main, _ := naming.MainObject([]string{"MyMod", "HttpClient"})
+		mainName, _ := naming.MainObjectName()
+		got = []string{goName, typ, field, ref, main, mainName}
+		return nil
+	}, names, naming))
+	require.Equal(t, []string{"CommitSHA", "MyModHTTPClient", "getUrl", "JSONValue", "MyMod", "MyMod"}, got)
+	require.Equal(t, 1, engine.FormatQueries())
+	queries := engine.Queries()
+	require.Contains(t, queries[len(queries)-1],
+		"m0: node(id: $m0) { ... on ModuleSource { naming { typeNames(names: $l0) fieldNames(names: $l1) typeReferences(names: $l2) main0: mainObject(candidates: $c0) mainObjectName } } }")
 }
 
 // Prefetched names are formatted before the first render, so a render that
@@ -209,7 +255,7 @@ func TestRunChainedLookups(t *testing.T) {
 	names := identifiers.NewNames(engine, "v1.0.0-beta.22")
 	var got string
 	require.NoError(t, names.Run(t.Context(), func() error {
-		field, ok := names.Lookup(identifiers.FieldName, "GetURL")
+		field, ok := names.Lookup(camel, "GetURL")
 		if !ok {
 			field = "getURL" // the legacy spelling stands in until formatted
 		}

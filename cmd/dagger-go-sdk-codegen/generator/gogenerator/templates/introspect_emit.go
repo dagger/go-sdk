@@ -377,26 +377,6 @@ func (n moduleNamer) introspectEnum(spec *parsedEnumType) *introspection.Type {
 	return t
 }
 
-// isConventionalGraphQLEnumMemberName reports whether name is already in
-// GraphQL's enum member convention (HTTP2, P_256), which the engine keeps as
-// it is (see moduleNamer.enumMemberName).
-func isConventionalGraphQLEnumMemberName(name string) bool {
-	if name == "" || strings.HasPrefix(name, "__") {
-		return false
-	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if c >= 'A' && c <= 'Z' {
-			continue
-		}
-		if i > 0 && ((c >= '0' && c <= '9') || c == '_') {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
 // ModuleIntrospectionJSON walks the module's parsed types (via the same
 // visitor the dispatcher uses) and emits a minimal introspection Response
 // containing the module's object/interface/enum types plus a Query type
@@ -453,7 +433,7 @@ func (funcs goTemplateFuncs) ModuleIntrospectionJSON(moduleName string) ([]byte,
 		objectNames[i] = obj.name
 	}
 	for _, obj := range objects {
-		if n.isMainObject(obj.name, moduleName, objectNames) {
+		if n.isMainObject(obj.name, objectNames) {
 			mainObject = obj
 		}
 	}
