@@ -32,7 +32,7 @@ func (g *GoGenerator) GenerateCore(ctx context.Context, schema *introspection.Sc
 		return nil, fmt.Errorf("schema contains module types from %v: core bindings need the core API only", deps)
 	}
 	generator.SetSchema(schema)
-	return g.withNames(ctx, schema, func() (*generator.GeneratedState, error) {
+	return g.withNames(schema, func() (*generator.GeneratedState, error) {
 		return g.generateCore(ctx, schema, schemaVersion)
 	})
 }

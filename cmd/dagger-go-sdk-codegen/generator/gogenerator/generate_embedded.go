@@ -40,7 +40,7 @@ func (g *GoGenerator) GenerateEmbeddedClient(
 		return &generator.GeneratedState{Overlay: mfs}, nil
 	}
 	generator.SetSchema(schema)
-	return g.withNames(ctx, schema, func() (*generator.GeneratedState, error) {
+	return g.withNames(schema, func() (*generator.GeneratedState, error) {
 		return g.generateEmbeddedClient(ctx, schema, schemaVersion, packageImport)
 	})
 }
