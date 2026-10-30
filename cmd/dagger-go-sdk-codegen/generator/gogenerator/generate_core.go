@@ -32,7 +32,12 @@ func (g *GoGenerator) GenerateCore(ctx context.Context, schema *introspection.Sc
 		return nil, fmt.Errorf("schema contains module types from %v: core bindings need the core API only", deps)
 	}
 	generator.SetSchema(schema)
+	return g.withNames(ctx, schema, func() (*generator.GeneratedState, error) {
+		return g.generateCore(ctx, schema, schemaVersion)
+	})
+}
 
+func (g *GoGenerator) generateCore(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	mfs := memfs.New()
 	if err := generateCode(ctx, g.Config, schema, schemaVersion, mfs, &PackageInfo{
 		PackageName:   "core",
@@ -40,7 +45,7 @@ func (g *GoGenerator) GenerateCore(ctx context.Context, schema *introspection.Sc
 	}); err != nil {
 		return nil, fmt.Errorf("generate code: %w", err)
 	}
-	codecs, err := templates.GenerateCoreJSONCodecs(schema, schemaVersion)
+	codecs, err := templates.GenerateCoreJSONCodecs(schema, schemaVersion, g.Config.Names)
 	if err != nil {
 		return nil, err
 	}

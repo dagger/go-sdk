@@ -40,7 +40,12 @@ func (g *GoGenerator) GenerateEmbeddedClient(
 		return &generator.GeneratedState{Overlay: mfs}, nil
 	}
 	generator.SetSchema(schema)
+	return g.withNames(ctx, schema, func() (*generator.GeneratedState, error) {
+		return g.generateEmbeddedClient(ctx, schema, schemaVersion, packageImport)
+	})
+}
 
+func (g *GoGenerator) generateEmbeddedClient(ctx context.Context, schema *introspection.Schema, schemaVersion, packageImport string) (*generator.GeneratedState, error) {
 	mfs := memfs.New()
 	if err := mfs.MkdirAll("internal/dagger", 0o755); err != nil {
 		return nil, fmt.Errorf("create embedded client directory: %w", err)

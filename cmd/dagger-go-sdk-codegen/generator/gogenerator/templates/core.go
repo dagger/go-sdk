@@ -4,7 +4,6 @@ import (
 	"slices"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
-	"github.com/iancoleman/strcase"
 )
 
 // isCoreLibrary is true when generating the core bindings of dagger.io/dagger
@@ -32,7 +31,7 @@ func (funcs goTemplateFuncs) isUnifiedClient() bool {
 // still declared in that package; the method on Query remains available.
 // The main constructor of a bound module is named New instead of New<Object>.
 func (funcs goTemplateFuncs) coreConstructorName(f introspection.Field) string {
-	name := formatName(f.Name)
+	name := funcs.formatName(f.Name)
 	if !funcs.isUnifiedClient() {
 		if funcs.schema.Types.Get(name) != nil {
 			return "New" + name
@@ -40,8 +39,11 @@ func (funcs goTemplateFuncs) coreConstructorName(f introspection.Field) string {
 		return name
 	}
 	source := f.Directives.SourceMap()
+	// The module's constructor field is its name as a field, by whichever
+	// naming rules named the module (k8sTools or k8STools for k8s-tools):
+	// they spell it alike once flattened.
 	if funcs.isStandaloneClient() && source != nil && source.Module != "" &&
-		formatName(strcase.ToLowerCamel(source.Module)) == name && f.TypeRef.IsObject() {
+		flatName(source.Module) == flatName(f.Name) && f.TypeRef.IsObject() {
 		if funcs.unifiedClientSchemaDeclares("New") {
 			return ""
 		}
@@ -74,7 +76,7 @@ func (funcs goTemplateFuncs) unifiedClientDeclares(name string) bool {
 
 func (funcs goTemplateFuncs) unifiedClientSchemaDeclares(name string) bool {
 	for _, t := range funcs.fullSchema.Types {
-		typeName := formatName(t.Name)
+		typeName := funcs.formatName(t.Name)
 		if name == typeName || name == typeName+"Client" || name == "With"+typeName+"Func" {
 			return true
 		}

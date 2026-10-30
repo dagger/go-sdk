@@ -16,6 +16,7 @@ import (
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
@@ -26,6 +27,35 @@ const (
 
 type GoGenerator struct {
 	Config generator.Config
+}
+
+// withNames runs generate until every name it formats is formatted by the
+// engine (see identifiers.Names.Run), and returns its last result. The names
+// the schema declares are formatted before the first run: the bindings
+// format each of them, so one run usually finds every name it needs. With
+// the legacy rules (nil Config.Names), generate runs once.
+func (g *GoGenerator) withNames(ctx context.Context, schema *introspection.Schema, generate func() (*generator.GeneratedState, error)) (*generator.GeneratedState, error) {
+	names := g.Config.Names
+	if names != nil {
+		for _, typ := range schema.Types {
+			names.Prefetch(identifiers.GoName, typ.Name)
+			for _, field := range typ.Fields {
+				names.Prefetch(identifiers.GoName, field.Name)
+				for _, arg := range field.Args {
+					names.Prefetch(identifiers.GoName, arg.Name)
+				}
+			}
+			for _, field := range typ.InputFields {
+				names.Prefetch(identifiers.GoName, field.Name)
+			}
+		}
+	}
+	var state *generator.GeneratedState
+	err := names.Run(ctx, func() (err error) {
+		state, err = generate()
+		return err
+	})
+	return state, err
 }
 
 // PackageInfo describes the Go package the generated files belong to.
