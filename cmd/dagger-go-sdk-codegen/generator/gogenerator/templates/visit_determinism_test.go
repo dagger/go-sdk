@@ -65,6 +65,7 @@ func newVisitDeterminismTemplateFuncs(testPkg *packages.Package) goTemplateFuncs
 				ModuleName: "git-repo",
 			},
 		},
+		namer:      goNamer{names: styled},
 		modulePkg:  testPkg,
 		moduleFset: testPkg.Fset,
 	}

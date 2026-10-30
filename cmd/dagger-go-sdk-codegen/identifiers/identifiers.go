@@ -1,23 +1,23 @@
 // Package identifiers names identifiers by the engine's identifier naming
-// rules, through the engine's own Query.formatIdentifiers, for code generated
-// from schemas at or past CasingVersion.
+// rules, through the engine's own Query.formatIdentifiers.
 //
-// From CasingVersion on, the engine parses a name into words with a versioned
-// dictionary of acronyms and terms (engine/naming in dagger/dagger), both to
-// name a module's declarations and to answer formatIdentifiers. A generator
-// that formats names itself, or with another copy of those rules, eventually
-// disagrees with the engine, so generators ask the engine instead:
+// The engine parses a name into words with a versioned dictionary of acronyms
+// and terms (engine/naming in dagger/dagger), both to name a module's
+// declarations (from CasingVersion on) and to answer formatIdentifiers (on
+// every v1 view). A generator that formats names itself, or with another copy
+// of those rules, eventually disagrees with the engine, so generators ask the
+// engine instead:
 //
-//   - Gate: Connector.Names returns nil, the legacy rules, unless both the
-//     generated schema's version and the engine's release are at or past
-//     CasingVersion. Older engines name every module by strcase, and older
-//     schemas keep the names they shipped with, so nil means the generator
-//     produces exactly what it did before the rules existed. Nothing gates on
-//     whether formatIdentifiers is in the schema: engines serve it on every
-//     v1 view, including the views whose modules keep the legacy rules. The
-//     engine asked is the session's, so a schema read from a file is taken
-//     to come from it: an older engine's schemas report v1.0.0, which only
-//     its release tells apart from a schema past the cut.
+//   - Styling: Go identifiers are always the engine's formatting
+//     (Connector.Names), whatever the schema's version, so generation needs
+//     the engine's session.
+//   - Gate: the names the engine gives a module's own declarations follow its
+//     rules only from CasingVersion on. Connector.ModuleNames returns nil, the
+//     legacy strcase rules, unless both the module's version and the
+//     engine's release are at or past it: older engines name every module by
+//     strcase. The engine asked is the session's, so a schema read from a
+//     file is taken to come from it: an older engine's schemas report
+//     v1.0.0, which only its release tells apart from a schema past the cut.
 //   - Lookups: a generator formats the names it knows up front (a schema's
 //     types, fields and arguments) in a single GraphQL query, one aliased
 //     formatIdentifiers field per Format, and keeps them in a map. A name it
@@ -89,7 +89,7 @@ var (
 // module's engine version. Build metadata is dropped, and a development
 // build counts as its release (v1.0.0-dev-<commit> is v1.0.0), as the engine
 // maps versions to API views; other prereleases order as semver says, so
-// every v1.0.0 beta before CasingVersion keeps the legacy rules. An invalid
+// every v1.0.0 beta before CasingVersion is before the cut. An invalid
 // version doesn't apply.
 func Applies(version string) bool {
 	v := release(version)

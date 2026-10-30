@@ -1,6 +1,7 @@
 package gogenerator
 
 import (
+	"context"
 	"encoding/json"
 	"go/types"
 	"io/fs"
@@ -12,9 +13,20 @@ import (
 	"golang.org/x/tools/go/packages"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
+
+// styled styles Go identifiers as the engine does, from its recorded
+// formatting (identifierstest.Recorded).
+var styled = func() *identifiers.Names {
+	names, err := identifierstest.Styled("v1.0.0-beta.22").Connector().Names(context.Background(), "v1.0.0-beta.22")
+	if err != nil {
+		panic(err)
+	}
+	return names
+}()
 
 // newSourceMapDirective builds the @sourceMap directive the engine attaches to
 // module-contributed types and fields (values are JSON-encoded).
@@ -81,7 +93,7 @@ func generateClient(t *testing.T, clientConfig *generator.ClientGeneratorConfig,
 
 func generateClientForVersion(t *testing.T, clientConfig *generator.ClientGeneratorConfig, outputDir, schemaVersion string) *generator.GeneratedState {
 	t.Helper()
-	gen := &GoGenerator{Config: generator.Config{
+	gen := &GoGenerator{Config: generator.Config{Names: styled,
 		OutputDir:     outputDir,
 		PackageImport: "example.com/client",
 		PackageName:   "client",
@@ -99,8 +111,8 @@ func readOverlay(t *testing.T, state *generator.GeneratedState, path string) str
 	return string(data)
 }
 
-// Past the cut, a name the engine can't format fails generation rather than
-// falling back to its legacy spelling.
+// A name the engine can't format fails generation: there is no other
+// spelling to fall back to.
 func TestGenerateClientFailsOnUnformattableName(t *testing.T) {
 	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: identifierstest.Table{}}
 	names, err := engine.Connector().Names(t.Context(), "v1.0.0-beta.22")
@@ -209,7 +221,7 @@ func TestGenerateClientAnnouncesVersion(t *testing.T) {
 func TestGenerateClientPackageFollowsOutputDirectory(t *testing.T) {
 	for _, unified := range []bool{false, true} {
 		t.Run(map[bool]string{false: "embedded types", true: "shared types"}[unified], func(t *testing.T) {
-			gen := &GoGenerator{Config: generator.Config{
+			gen := &GoGenerator{Config: generator.Config{Names: styled,
 				OutputDir:     "internal/dagger/engine-dev",
 				PackageImport: "example.com/app/internal/dagger/engine-dev",
 				UnifiedClient: unified,
@@ -231,7 +243,7 @@ func TestGenerateClientPackageFollowsOutputDirectory(t *testing.T) {
 
 func TestGenerateClient_PackageMode(t *testing.T) {
 	outputDir := t.TempDir()
-	gen := &GoGenerator{Config: generator.Config{
+	gen := &GoGenerator{Config: generator.Config{Names: styled,
 		OutputDir:     outputDir,
 		PackageImport: "example.com/app/internal/dagger/clients/hello",
 		ClientConfig: &generator.ClientGeneratorConfig{
@@ -265,7 +277,7 @@ func TestGenerateClient_DoesNotCallDaggerClientQueryBuilder(t *testing.T) {
 	// go/packages resolves dagger.io/dagger from this module's go.mod.
 	wd, err := os.Getwd()
 	require.NoError(t, err)
-	gen := &GoGenerator{Config: generator.Config{
+	gen := &GoGenerator{Config: generator.Config{Names: styled,
 		OutputDir:     t.TempDir(),
 		PackageImport: "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/generatedclient",
 		ClientConfig:  &generator.ClientGeneratorConfig{},
