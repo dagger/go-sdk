@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -35,6 +36,7 @@ func run() error {
 	flag.StringVar(&cfg.ModuleName, "module-name", "", "Dagger module name")
 	flag.StringVar(&cfg.SchemaPath, "introspection-json-path", "", "path to the module-facing introspection JSON")
 	flag.StringVar(&cfg.SchemaVersion, "schema-version", "", "engine schema version")
+	moduleVersion := flag.String("module-version", "", "engine version the engine names the module's declarations by (default: the schema version); \""+moduleVersionErrorPrefix+"<reason>\" when the caller couldn't read it")
 	flag.StringVar(&cfg.DaggerVersion, "dagger-version", "", "dagger.io/dagger version")
 	flag.StringVar(&cfg.TargetVersion, "target-version", "", "Dagger release the generated code targets, which the entrypoint declares to the module's process")
 	flag.StringVar(&cfg.GoImage, "go-image", "golang:1.26-alpine", "Go image used by the generated entrypoint")
@@ -53,8 +55,20 @@ func run() error {
 	if cfg.SchemaPath == "" {
 		return fmt.Errorf("--introspection-json-path is required")
 	}
+	if reason, ok := strings.CutPrefix(*moduleVersion, moduleVersionErrorPrefix); ok {
+		cfg.ModuleVersionErr = errors.New(reason)
+	} else {
+		cfg.ModuleVersion = *moduleVersion
+	}
 	return gogenerator.Generate(context.Background(), cfg)
 }
+
+// moduleVersionErrorPrefix marks a --module-version that holds why the
+// caller couldn't read the version, rather than the version: go-sdk.dang
+// reads it from the engine and passes what failed, and only the generator
+// knows whether the engine needs the version (see
+// gogenerator.GenerateConfig.ModuleVersionErr).
+const moduleVersionErrorPrefix = "error: "
 
 type includeEntry struct {
 	Position string `json:"position"`
