@@ -7,9 +7,11 @@ type Config struct {
 	OutputDir string
 
 	// Names are the names formatted by the engine's naming rules for the
-	// generated schema's version, which Go identifiers follow; nil for the
-	// legacy rules (see identifiers.Connector). The generator formats the
-	// names it renders through them, in batches (identifiers.Names.Run).
+	// version Go identifiers follow, nil for the legacy rules (see
+	// identifiers.Connector): the generated schema's, or for unified module
+	// bindings, which alias dagger.io/dagger/core, that runtime's. The
+	// generator formats the names it renders through them, in batches
+	// (identifiers.Names.Run).
 	Names *identifiers.Names
 
 	// PackageImport is the import path for the generated package inside its Go
