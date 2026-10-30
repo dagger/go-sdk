@@ -100,9 +100,10 @@ Its generated entrypoint declares the release to the engine, in the
 `DAGGER_CLIENT_VERSION` variable of the process that runs the module; a
 generated standalone client with a target announces it when it starts a
 session.
-The engine ignores `DAGGER_CLIENT_VERSION` today and serves the module at
-its own version; a later engine release reads it and serves the declared
-release instead.
+The engine ignores `DAGGER_CLIENT_VERSION` today and serves the module at a
+version of its own choosing, v1.0.0-beta.20 for a module without a
+`dang.toml`, which predates the identifier renames of v1.0.0-beta.22; a
+later engine release reads it and serves the declared release instead.
 The fixed core library and the module's own bindings depend on the SDK
 release, the target setting and the module's sources.
 An engine update leaves them unchanged.
@@ -128,10 +129,19 @@ A `replace` directive for the selected `dagger.io/dagger` is a development
 exception: generation keeps it, reports it, and the generated code follows
 the replacement instead of the targeted release.
 
-A module with embedded bindings or on the Go runtime targets the running
-engine instead: an engine update can change its generated files, and the
-`targetVersion` setting is refused there.
-Stable targeting needs the Dang entrypoint with unified clients; see
+A module with the Dang entrypoint and embedded bindings targets the same
+release: its bindings are generated from that release's schema, and its
+entrypoint declares that release.
+`targetVersion` pins its release the same way.
+Its bindings come from the running engine's view of that release, so an
+engine update can still change them.
+
+A module on the Go runtime refuses `targetVersion`.
+A new manifest declares the SDK's release as its `engineVersion`; an
+existing manifest keeps the `engineVersion` it declares, or gets the running
+engine's when it declares none, and the engine generates the module's code
+for that version.
+Fully pinned targeting needs the Dang entrypoint with unified clients; see
 Migration.
 
 ## When to generate again
@@ -189,7 +199,8 @@ globalClient = true
 ```
 
 `unifiedClients = true` moves the bindings to the shared core library, so
-the module targets one release instead of the running engine.
+the module's core types come from one fixed library release instead of the
+running engine's schema.
 `globalClient = true` keeps the global `dag` that the module's code may use;
 without it, generation fails with `undefined: dag`.
 The same settings under `[modules.go-sdk.settings]` apply to every Go module

@@ -132,10 +132,59 @@ type TargetChecks {
   }
 
   """
+  A Dang entrypoint with embedded bindings targets the SDK's release
+  whatever engine runs it, as unified bindings do, and declares it to the
+  module's process; generating again changes nothing. The targetVersion
+  setting pins an older release the same way. The generated module loads.
+  """
+  embeddedCheck(ws: Workspace!): Void @check {
+    let name = "target-embedded"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+    let first = goSdk(unifiedClients: false).generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the bindings are not embedded") {
+      first.file("internal/dagger/dagger.gen.go").contents.contains("GraphQLClient() graphql.Client")
+    }
+    assert("the embedded entrypoint does not declare the SDK's release:\n" + first.file("internal/dagger/entrypoint/main.dang").contents) {
+      declares(first, sdkTarget)
+    }
+    let again = goSdk(unifiedClients: false).generateScope(ws: first, isModule: true, name: name, clients: [])
+    assert("generating again changed files") { again.changes(first).isEmpty }
+    let loaded = first.withWorkdir(".").moduleSource("/" + scopePath).introspectionSchemaJSON.contents
+    assert("the generated module did not load") { loaded.contains("\"__schema\"") }
+    let pinned = goSdk(unifiedClients: false, targetVersion: "v1.0.0-beta.20").generateScope(ws: first, isModule: true, name: name, clients: [])
+    assert("the embedded entrypoint does not declare the setting:\n" + pinned.file("internal/dagger/entrypoint/main.dang").contents) {
+      declares(pinned, "v1.0.0-beta.20")
+    }
+    null
+  }
+
+  """
+  A new Go runtime manifest declares the SDK's release, not the running
+  engine's; an existing manifest keeps the engineVersion it declares.
+  """
+  runtimeCheck(ws: Workspace!): Void @check {
+    let name = "target-runtime"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+    let sdk = goSdk(dangEntrypoint: false, unifiedClients: false)
+    let first = sdk.generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("a new manifest does not declare the SDK's release:\n" + first.file("dagger-module.toml").contents) {
+      first.file("dagger-module.toml").contents.contains("engineVersion = \"" + sdkTarget + "\"\n")
+    }
+    let declared = "name = \"" + name + "\"\nengineVersion = \"v1.0.0-beta.20\"\n\n[runtime]\n  source = \"go\"\n"
+    let kept = sdk.generateScope(ws: first.withNewFile("dagger-module.toml", declared), isModule: true, name: name, clients: [])
+    assert("an existing manifest did not keep its engineVersion:\n" + kept.file("dagger-module.toml").contents) {
+      kept.file("dagger-module.toml").contents == declared
+    }
+    null
+  }
+
+  """
   Generation refuses a target the SDK cannot generate for and says how to
   fix it: a setting below the floor, above the SDK's release, or not a
-  release; a setting on a module whose bindings follow the running engine;
-  and the clientVersion setting the target replaced.
+  release; a setting on a Go runtime module; and the clientVersion setting
+  the target replaced.
   """
   refusalsCheck(ws: Workspace!): Void @check {
     let name = "target-refusals"
@@ -152,9 +201,8 @@ type TargetChecks {
     expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta..1"), input, name, subject + "\"v1.0.0-beta..1\"" + malformed)
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.21+???"), input, name, subject + "\"v1.0.0-beta.21+???\"" + malformed)
-    let embedded = "targetVersion applies to a module with a Dang entrypoint and unified clients; this module's generated code follows the running engine: set dangEntrypoint = true and unifiedClients = true in the module's dagger.toml settings to migrate, or remove targetVersion"
-    expectRefusal(goSdk(targetVersion: sdkTarget, unifiedClients: false), input, name, embedded)
-    expectRefusal(goSdk(targetVersion: sdkTarget, dangEntrypoint: false), input, name, embedded)
+    expectRefusal(goSdk(targetVersion: sdkTarget, dangEntrypoint: false), input, name,
+      "targetVersion applies to a module with a Dang entrypoint; the Go runtime generates this module's code for the engineVersion of its manifest: set dangEntrypoint = true in the module's dagger.toml settings to migrate, or remove targetVersion")
     expectRefusal(goSdk(clientVersion: "v1.0.0-beta.20"), input, name,
       "clientVersion was renamed to targetVersion: replace clientVersion = \"v1.0.0-beta.20\" with targetVersion = \"v1.0.0-beta.20\" in the dagger.toml settings and run dagger generate")
     null
