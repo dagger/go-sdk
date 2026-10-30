@@ -873,7 +873,11 @@ type GoSdk {
   """
   let minimumGoVersion: String! = "1.26.1"
 
-  """Build the engine-free standalone client generator."""
+  """
+  Build the standalone client generator. It runs nested in the session, to
+  format identifiers through the engine for schemas at or past
+  v1.0.0-beta.22.
+  """
   let codegenBuilder: Container! {
     container
       .from("golang:" + minimumGoVersion + "-alpine")
