@@ -3,7 +3,6 @@ package templates
 import (
 	"bytes"
 	"encoding/json"
-	"go/format"
 	"path/filepath"
 	"testing"
 	"text/template"
@@ -11,103 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
-
-// recordedNames are formatted as the engine at v1.0.0-beta.22 (dagger/dagger
-// 441d95c2) formats them: testdata/identifiers-v1.0.0-beta.22.json records its
-// formatIdentifiers results, beside the names every test formats
-// (identifierstest.Recorded). A name neither has fails the test, unless
-// fallback formats it.
-func recordedNames(t *testing.T, fallback func(identifiers.Format, string) string) *identifiers.Names {
-	t.Helper()
-	table, err := identifierstest.Load("testdata/identifiers-v1.0.0-beta.22.json")
-	require.NoError(t, err)
-	merged := identifierstest.Recorded()
-	for key, names := range table {
-		if merged[key] == nil {
-			merged[key] = map[string]string{}
-		}
-		for name, formatted := range names {
-			merged[key][name] = formatted
-		}
-	}
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: merged, Fallback: fallback}
-	names, err := engine.Connector().Names(t.Context(), "v1.0.0-beta.22")
-	require.NoError(t, err)
-	require.NotNil(t, names)
-	return names
-}
-
-// formatted returns what f returns, and checks every name it looked up in
-// lookups was answered (their Err).
-func formatted[T any](t *testing.T, f func() T, lookups ...interface{ Err() error }) T {
-	t.Helper()
-	got := f()
-	for _, l := range lookups {
-		require.NoError(t, l.Err())
-	}
-	return got
-}
-
-// Go identifiers are the engine's PascalCase with uppercase acronyms, whatever
-// the schema's version. Internal names stay as they are.
-func TestGoNamer(t *testing.T) {
-	names := recordedNames(t, nil)
-	for _, test := range []struct{ name, engine string }{
-		{"shortSha", "ShortSHA"},
-		{"parentShas", "ParentSHAs"},
-		{"withGpu", "WithGPU"},
-		{"sdks", "SDKs"},
-		{"sshfsVolume", "SSHFSVolume"},
-		{"asJson", "AsJSON"},
-		{"htmlUrl", "HTMLURL"},
-		{"httpClient", "HTTPClient"},
-		{"e2eTest", "E2ETest"},
-		{"LlmMessage", "LLMMessage"},
-		{"JsonValue", "JSONValue"},
-		{"__typename", "__typename"},
-		{"", ""},
-	} {
-		got := formatted(t, func() string { return goNamer{names: names}.formatName(test.name) }, names)
-		require.Equal(t, test.engine, got, "engine %q", test.name)
-	}
-}
-
-// The bindings spell a field's method and option struct as Go identifiers by
-// the engine's rules, and keep its wire name and parameters.
-func TestObjectFollowsEngineNames(t *testing.T) {
-	schema, object := loadSchemaFromTypeJSON(t, `{
-  "kind": "OBJECT",
-  "name": "GitCommit",
-  "fields": [
-    {
-      "name": "shortSha",
-      "args": [{"name": "length", "type": {"kind": "SCALAR", "name": "Int"}, "defaultValue": null}],
-      "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "String"}}
-    }
-  ]
-}`)
-	names := recordedNames(t, nil)
-	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.22", generator.Config{Names: names})
-	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(filepath.Join("src", "_types/object.go.tmpl"))
-	require.NoError(t, err)
-	got := formatted(t, func() string {
-		var buf bytes.Buffer
-		require.NoError(t, tmpl.Execute(&buf, object))
-		return buf.String()
-	}, names)
-	source, err := format.Source([]byte("package main\n\n" + got))
-	require.NoError(t, err, got)
-	got = string(source)
-	require.Contains(t, got, "func (r *GitCommit) ShortSHA(ctx context.Context, opts ...GitCommitShortSHAOpts) (string, error)")
-	require.Contains(t, got, "type GitCommitShortSHAOpts struct")
-	require.Contains(t, got, `Select("shortSha")`)
-	require.Contains(t, got, `Arg("length", opts[i].Length)`)
-	require.NotContains(t, got, "ShortSha(")
-}
 
 // A nullable object is loaded by its schema name, which its Go name can
 // spell differently: a dependency named by strcase keeps DepGpuThing, which
@@ -128,59 +32,13 @@ func TestNullableObjectLoadsBySchemaName(t *testing.T) {
 	generator.SetSchemaParents(schema)
 	generator.SetSchema(schema)
 	t.Cleanup(func() { generator.SetSchema(nil) })
-	names := recordedNames(t, nil)
-	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.22", generator.Config{Names: names})
+	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.22", generator.Config{Names: styled})
 	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(filepath.Join("src", "_types/object.go.tmpl"))
 	require.NoError(t, err)
-	got := formatted(t, func() string {
-		var buf bytes.Buffer
-		require.NoError(t, tmpl.Execute(&buf, &foo))
-		return buf.String()
-	}, names)
+	var buf bytes.Buffer
+	require.NoError(t, tmpl.Execute(&buf, &foo))
+	require.NoError(t, styled.Err())
+	got := buf.String()
 	require.Contains(t, got, "func (r *Foo) Maybe(ctx context.Context) (*DepGPUThing, error)")
 	require.Contains(t, got, `selectNode(q.Root(), *objectID, "DepGpuThing")`)
-}
-
-// namingApp is how the engine at v1.0.0-beta.22 would answer
-// ModuleSource.naming for a module naming-app (Namer.NamespaceObject and
-// FieldName in dagger/dagger 441d95c2).
-var namingApp = &identifierstest.Module{
-	Names: map[string]map[string]string{
-		"typeNames":  {"HttpFetcher": "NamingAppHTTPFetcher"},
-		"fieldNames": {"GetUrl": "getUrl"},
-	},
-	Main: func(candidates []string) string { return "NamingApp" },
-}
-
-// The module namer gives the engine's names for the module.
-func TestModuleNamer(t *testing.T) {
-	n := moduleNamer{naming: namingApp}
-	require.Equal(t, "NamingAppHTTPFetcher", n.namespaceObject("HttpFetcher"))
-	require.Equal(t, "getUrl", n.FieldName("GetUrl"))
-	require.True(t, n.isMainObject("NamingApp", []string{"NamingApp", "HttpClient"}))
-	require.False(t, n.isMainObject("HttpClient", []string{"NamingApp", "HttpClient"}))
-}
-
-// A name not asked for up front is asked for with a direct call when first
-// looked up, and kept.
-func TestModuleNamerAsksDirectly(t *testing.T) {
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Modules: map[string]*identifierstest.Module{"src": namingApp}}
-	naming, err := engine.Connector().ModuleNaming(t.Context(), "src")
-	require.NoError(t, err)
-	n := moduleNamer{naming: naming}
-	require.Equal(t, "getUrl", n.FieldName("GetUrl"))
-	require.Equal(t, "getUrl", n.FieldName("GetUrl"))
-	require.Equal(t, 1, engine.FormatQueries())
-	require.NoError(t, naming.Err())
-}
-
-// A name the engine can't answer fails generation: the lookup falls back to
-// the Go name, and Err returns why.
-func TestModuleNamerFailsOnUnanswered(t *testing.T) {
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Modules: map[string]*identifierstest.Module{"src": namingApp}}
-	naming, err := engine.Connector().ModuleNaming(t.Context(), "src")
-	require.NoError(t, err)
-	n := moduleNamer{naming: naming}
-	require.Equal(t, "Unknown", n.FieldName("Unknown"))
-	require.ErrorContains(t, naming.Err(), `no fieldNames answer for "Unknown"`)
 }

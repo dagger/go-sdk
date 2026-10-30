@@ -779,14 +779,9 @@ type parseState struct {
 }
 
 // isMainModuleObject reports whether the object named name is the module's
-// main object, which the engine finds by its name (see
-// moduleNamer.isMainObject).
+// main object, as the engine finds it (see moduleNamer.isMainObject).
 func (ps *parseState) isMainModuleObject(name string) bool {
-	var objects []string
-	if ps.pkg != nil {
-		objects = packageObjectNames(ps.pkg.Types)
-	}
-	return ps.namer.isMainObject(name, objects)
+	return ps.namer.isMainObject(name)
 }
 
 // pkgDoc returns the package level documentation comment, if any,

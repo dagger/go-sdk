@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/packages"
 )
@@ -19,7 +19,10 @@ func TestLegacyModuleInterfaceIDSurface(t *testing.T) {
 		name:              "CustomIface",
 		moduleName:        "test",
 		legacyGoSDKCompat: true,
-		namer:             moduleNamer{naming: identifierstest.Strcase("test")},
+		namer: moduleNamer{names: identifiers.ModuleNames{
+			Types:  map[string]string{"CustomIface": "TestCustomIface"},
+			Fields: map[string]string{"ID": "id"},
+		}},
 	}
 
 	code, err := spec.ImplementationCode()
@@ -118,7 +121,7 @@ type LocalOtherIface interface {
 		cfg: generator.Config{
 			ModuleConfig: &generator.ModuleGeneratorConfig{
 				ModuleName: "test",
-				Naming:     identifierstest.Strcase("test"),
+				Naming:     identifiers.ModuleNames{Main: "Test"},
 			},
 		},
 		namer:      goNamer{names: styled},

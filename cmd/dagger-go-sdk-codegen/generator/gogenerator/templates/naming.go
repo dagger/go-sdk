@@ -16,9 +16,9 @@ import (
 // schema's spelling.
 type goNamer struct {
 	// names are the names formatted by the engine's naming rules at the
-	// version Go identifiers follow (see identifiers.Connector): PascalCase
-	// with uppercase acronyms, so commitSha and commitSHA are both CommitSHA,
-	// and withGpu is WithGPU, whatever the schema's version.
+	// version Go identifiers follow: PascalCase with uppercase acronyms, so
+	// commitSha and commitSHA are both CommitSHA, and withGpu is WithGPU,
+	// whatever the schema's version.
 	names *identifiers.Names
 }
 
@@ -36,7 +36,7 @@ func (n goNamer) formatName(s string) string {
 	if n.names == nil {
 		panic(fmt.Sprintf("format Go identifier %q: no engine to name it (generator.Config.Names)", s))
 	}
-	if name, ok := n.names.Lookup(identifiers.GoName, s); ok {
+	if name, ok := n.names.Lookup(s); ok {
 		return name
 	}
 	return s
@@ -46,7 +46,7 @@ func (n goNamer) formatName(s string) string {
 // identifiers: its types, fields, arguments and input fields, less internal
 // names (__typename), which stay as they are. Generators format
 // them up front, in one query (identifiers.Names.Prefetch).
-func DeclaredNames(schema *introspection.Schema) map[identifiers.Format][]string {
+func DeclaredNames(schema *introspection.Schema) []string {
 	var declared []string
 	for _, typ := range schema.Types {
 		declared = append(declared, typ.Name)
@@ -60,8 +60,7 @@ func DeclaredNames(schema *introspection.Schema) map[identifiers.Format][]string
 			declared = append(declared, field.Name)
 		}
 	}
-	declared = slices.DeleteFunc(declared, func(name string) bool { return name == "" || strings.HasPrefix(name, "_") })
-	return map[identifiers.Format][]string{identifiers.GoName: declared}
+	return slices.DeleteFunc(declared, func(name string) bool { return name == "" || strings.HasPrefix(name, "_") })
 }
 
 // flatName is name lowercased, with everything but ASCII letters and digits

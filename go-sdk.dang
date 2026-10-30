@@ -1048,8 +1048,8 @@ type GoSdk {
 type Versions {
   """
   The oldest release the generated code targets: the first whose Go library
-  spells its identifiers as the engine names them (identifiers.CasingVersion),
-  which the generated code follows. It is sourcesFloor in
+  spells its identifiers as the engine names them, which the generated code
+  follows. It is sourcesFloor in
   cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/v2.go; a test
   there keeps this literal equal to it.
   """
