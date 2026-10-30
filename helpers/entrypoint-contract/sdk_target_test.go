@@ -81,11 +81,9 @@ type CurrentModule { source: Directory! }
 
 func TestSdkTargetRelease(t *testing.T) {
 	for _, c := range []struct{ setting, want string }{
-		{"", "v1.0.0-beta.21"},
-		{"v1.0.0-beta.21", "v1.0.0-beta.21"},
-		{"1.0.0-beta.21+abc", "v1.0.0-beta.21"},
-		{"v1.0.0-beta.20", "v1.0.0-beta.20"},
-		{"1.0.0-beta.18", "v1.0.0-beta.18"},
+		{"", "v1.0.0-beta.22"},
+		{"v1.0.0-beta.22", "v1.0.0-beta.22"},
+		{"1.0.0-beta.22+abc", "v1.0.0-beta.22"},
 	} {
 		require.NoError(t, resolveSdkTarget(t, c.setting, c.want), "%+v", c)
 	}
@@ -93,28 +91,31 @@ func TestSdkTargetRelease(t *testing.T) {
 
 // A wrong expectation fails, so the assertions above run.
 func TestSdkTargetReleaseAsserts(t *testing.T) {
-	err := resolveSdkTarget(t, "", "v1.0.0-beta.20")
-	require.ErrorContains(t, err, "resolved v1.0.0-beta.20")
+	err := resolveSdkTarget(t, "", "v1.0.0-beta.21")
+	require.ErrorContains(t, err, "resolved v1.0.0-beta.21")
 }
 
 func TestSdkTargetReleaseRefusals(t *testing.T) {
-	const fix = "Set targetVersion between v1.0.0-beta.18 and v1.0.0-beta.21 in the scope's settings in dagger.toml, or remove it"
-	const below = `module "probe" pins targetVersion v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below v1.0.0-beta.18, the oldest engine the generated entrypoint loads on. ` + fix
+	const fix = "Set targetVersion between v1.0.0-beta.22 and v1.0.0-beta.22 in the scope's settings in dagger.toml, or remove it"
+	below := func(v string) string {
+		return `module "probe" pins targetVersion ` + v + `, which this release of the Go SDK cannot generate for: it is below v1.0.0-beta.22, the first release whose Go library spells its identifiers as the engine names them, which the generated code follows. ` + fix
+	}
 	above := func(v string) string {
-		return `module "probe" pins targetVersion ` + v + ", which this release of the Go SDK cannot generate for: it targets v1.0.0-beta.21 at most. " + fix + ", or install the SDK release built for " + v
+		return `module "probe" pins targetVersion ` + v + ", which this release of the Go SDK cannot generate for: it targets v1.0.0-beta.22 at most. " + fix + ", or install the SDK release built for " + v
 	}
 	malformed := func(v string) string {
-		return `module "probe" pins targetVersion "` + v + `", which is not a Dagger release such as v1.0.0-beta.21. ` + fix
+		return `module "probe" pins targetVersion "` + v + `", which is not a Dagger release such as v1.0.0-beta.22. ` + fix
 	}
 	for _, c := range []struct{ setting, want string }{
-		{"v1.0.0-beta.17", below},
-		{"1.0.0-beta.17+abc", below},
-		{"v1.0.0-beta.22", above("v1.0.0-beta.22")},
+		{"v1.0.0-beta.21", below("v1.0.0-beta.21")},
+		{"1.0.0-beta.21+abc", below("v1.0.0-beta.21")},
+		{"v1.0.0-beta.18", below("v1.0.0-beta.18")},
+		{"v1.0.0-beta.23", above("v1.0.0-beta.23")},
 		{"99.0.0", above("v99.0.0")},
 		{"v1.0.0", above("v1.0.0")},
 		{"latest", malformed("latest")},
 		{"v1.0.0-beta..1", malformed("v1.0.0-beta..1")},
-		{"v1.0.0-beta.21+???", malformed("v1.0.0-beta.21+???")},
+		{"v1.0.0-beta.22+???", malformed("v1.0.0-beta.22+???")},
 	} {
 		require.ErrorContains(t, resolveSdkTarget(t, c.setting, ""), c.want, "%+v", c)
 	}

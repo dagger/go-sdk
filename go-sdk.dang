@@ -4,8 +4,8 @@ Manage Dagger modules and module clients that use the Go SDK.
 type GoSdk {
   """
   The Dagger release the module's generated code targets, such as
-  v1.0.0-beta.20; the v prefix and build metadata are optional. Empty means
-  the release this Go SDK is built for, v1.0.0-beta.21. A module with a
+  v1.0.0-beta.22; the v prefix and build metadata are optional. Empty means
+  the release this Go SDK is built for, v1.0.0-beta.22. A module with a
   Dang entrypoint and unified clients pins dagger.io/dagger to exactly the
   targeted release. An engine update leaves that core library and the
   module's own bindings unchanged. Dependency clients read the running
@@ -16,11 +16,12 @@ type GoSdk {
   A go.mod requirement that needs a later release is refused until the
   target is raised; a replace directive for dagger.io/dagger is a
   development exception that generation reports. The setting pins an older
-  release, from v1.0.0-beta.18, the oldest engine the entrypoint loads on,
-  up to the SDK's; outside that range, generation refuses it. Embedded
-  bindings and the Go runtime follow the running engine instead and refuse
-  this setting. In a scope without a module, it pins the library of the
-  standalone clients the same way, by default for unified clients only.
+  release, from v1.0.0-beta.22, the first whose Go library spells its
+  identifiers as the engine names them, up to the SDK's; outside that range,
+  generation refuses it. Embedded bindings and the Go runtime follow the
+  running engine instead and refuse this setting. In a scope without a
+  module, it pins the library of the standalone clients the same way, by
+  default for unified clients only.
   """
   targetVersion: String! = ""
 
@@ -73,7 +74,8 @@ type GoSdk {
   Generate a Dang entrypoint and a static dispatch command, so the engine
   loads the module's types without running it. Supports package main and
   importable packages with a go.mod in the module directory. The entrypoint
-  needs Dagger v1.0.0-beta.18 or later; older engines refuse it at load with
+  needs Dagger v1.0.0-beta.22 or later; engines before v1.0.0-beta.18 refuse
+  it at load with
   `field "types": missing argument "workspace" required by interface`.
   Unset enables entrypoints for new modules and keeps existing runtimes and
   local entrypoints. A remote entrypoint is replaced with the generated one,
@@ -307,7 +309,7 @@ type GoSdk {
     }
     let target = release(targetVersion)
     if (releasePrecedes(target, versions.sourcesFloor)) {
-      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it is below " + versions.sourcesFloor + ", the oldest engine the generated entrypoint loads on. " + fix
+      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it is below " + versions.sourcesFloor + ", the first release whose Go library spells its identifiers as the engine names them, which the generated code follows. " + fix
     }
     if (releasePrecedes(versions.defaultTarget, target)) {
       raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it targets " + versions.defaultTarget + " at most. " + fix + ", or install the SDK release built for " + target
@@ -1050,7 +1052,9 @@ type GoSdk {
 
 type Versions {
   """
-  The oldest engine the generated entrypoint loads on: sourcesFloor in
+  The oldest release the generated code targets: the first whose Go library
+  spells its identifiers as the engine names them (identifiers.CasingVersion),
+  which the generated code follows. It is sourcesFloor in
   cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/v2.go; a test
   there keeps this literal equal to it.
   """

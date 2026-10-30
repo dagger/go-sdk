@@ -64,6 +64,7 @@ func TestDependencyTypeInModuleAPIIsRefused(t *testing.T) {
 		"type M struct{}\n\nfunc (m *M) Describe(app *module.App) string { return \"\" }\n\nfunc main() {}\n")
 	funcs := goTemplateFuncs{
 		cfg:        generator.Config{ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "m"}},
+		namer:      goNamer{names: styled},
 		modulePkg:  pkg,
 		moduleFset: fset,
 	}

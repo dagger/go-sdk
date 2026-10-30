@@ -83,17 +83,20 @@ A function can therefore read `../lib/greet/greeting.txt` when it runs.
 
 ## Engine versions
 
-Every Dang entrypoint that go-sdk generates needs Dagger v1.0.0-beta.18 or
-later, with or without files outside the module directory.
+Every Dang entrypoint that go-sdk generates needs Dagger v1.0.0-beta.22 or
+later, with or without files outside the module directory: the first release
+whose Go library spells its identifiers as the engine names them, which the
+generated code follows.
 On v1.0.0-beta.17 and older, loading the module fails with
 `field "types": missing argument "workspace" required by interface`.
 The error prints the line above the entrypoint type, which reads
-`# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing "workspace" argument.`
-Generation refuses on v1.0.0-beta.16 and older.
+`# Needs Dagger v1.0.0-beta.22 or later; engines before v1.0.0-beta.18 report a missing "workspace" argument.`
+Generation fails on v1.0.0-beta.18 and older: it names Go identifiers through
+the engine's `formatIdentifiers`, which those releases don't serve.
 
 ## The release the generated code targets
 
-Each go-sdk release targets one Dagger release, v1.0.0-beta.21 today.
+Each go-sdk release targets one Dagger release, v1.0.0-beta.22 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to exactly that release.
 Its generated entrypoint declares the release to the engine, in the
@@ -110,7 +113,7 @@ Dependency clients still read the running engine's schema.
 An engine update can change a dependency client if the engine's view of
 that dependency changes.
 An SDK update changes the targeted release unless `targetVersion` pins it.
-The `targetVersion` setting pins an older release, between v1.0.0-beta.18
+The `targetVersion` setting pins an older release, between v1.0.0-beta.22
 and the SDK's release; generation refuses a setting outside that range.
 An engine older than the targeted release is not refused: a call to a
 function that engine lacks fails when the module runs.
@@ -127,6 +130,9 @@ A client of another module aliases the core types of the targeted release.
 A `replace` directive for the selected `dagger.io/dagger` is a development
 exception: generation keeps it, reports it, and the generated code follows
 the replacement instead of the targeted release.
+Generation refuses a module's unified clients whose `dagger.io/dagger`,
+required or replaced, is a release before v1.0.0-beta.22: that library spells
+its identifiers by older rules, such as `SshfsVolume` for `SSHFSVolume`.
 
 A module with embedded bindings or on the Go runtime targets the running
 engine instead: an engine update can change its generated files, and the
@@ -174,7 +180,7 @@ A module whose manifest names a remote `[entrypoint]` source, a module or
 git reference, gets the generated entrypoint at its next `dagger generate`,
 which reports the replacement.
 This replacement also applies when `dangEntrypoint = false`.
-The module then needs Dagger v1.0.0-beta.18 or later.
+The module then needs Dagger v1.0.0-beta.22 or later.
 Before generating again, remove `dangEntrypoint = false` or set it to `true`;
 the Go runtime cannot load a module with a generated entrypoint.
 A local `[entrypoint]` path and a custom `[runtime]` stay the author's.
@@ -226,3 +232,10 @@ It removes `dependencies` when the scope's `clients` in `dagger.toml` list
 every dependency by module name: the entrypoint reaches them through the
 generated clients.
 It refuses a dependency that the scope's `clients` do not list, and names it.
+
+Generation names every Go identifier as the engine formats it, whatever the
+engine's release or the schema's version.
+Bindings generated before from a schema older than v1.0.0-beta.22 used
+golint-style initialisms, so the next `dagger generate` renames a few core
+identifiers, such as `ShortSha` to `ShortSHA`, `SshfsVolume` to `SSHFSVolume`
+and `Sdks` to `SDKs`: code that uses the old names needs the new ones.

@@ -118,6 +118,7 @@ type LocalOtherIface interface {
 				ModuleName: "test",
 			},
 		},
+		namer:      goNamer{names: styled},
 		modulePkg:  pkgs[0],
 		moduleFset: fset,
 	}

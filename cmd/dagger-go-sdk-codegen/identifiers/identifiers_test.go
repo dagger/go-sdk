@@ -50,24 +50,57 @@ var table = identifierstest.Table{
 	},
 }
 
-// Before the cut, nothing connects: the legacy rules need no engine.
-func TestConnectorLegacySchemaDoesNotConnect(t *testing.T) {
+// Every version is styled by the engine, whatever its release: before the
+// cut too, with that version's dictionary.
+func TestConnectorStylesEveryVersion(t *testing.T) {
+	for _, release := range []string{"v1.0.0-beta.21", "v1.0.0-beta.22"} {
+		engine := &identifierstest.Engine{Release: release, Table: table}
+		c := engine.Connector()
+		for _, version := range []string{"v0.21.9", "v1.0.0-beta.21", "v1.0.0-beta.22", "v1.0.0"} {
+			names, err := c.Names(t.Context(), version)
+			require.NoError(t, err)
+			require.NotNil(t, names, version)
+			require.Equal(t, version, names.Version())
+			got, ok := names.Lookup(identifiers.GoName, "shortSha")
+			require.True(t, ok)
+			require.Equal(t, "ShortSHA", got)
+		}
+	}
+}
+
+// An engine released before the cut may not serve formatIdentifiers: its
+// failures name the release generation needs. A later engine's don't.
+func TestConnectorOlderEngineFailuresNameTheRelease(t *testing.T) {
+	const hint = "(the engine is Dagger v1.0.0-beta.18; the Go SDK names Go identifiers through its formatIdentifiers: use Dagger v1.0.0-beta.22 or later)"
+	for release, wantHint := range map[string]bool{"v1.0.0-beta.18": true, "v1.0.0-beta.22": false} {
+		engine := &identifierstest.Engine{Release: release, Table: table}
+		names, err := engine.Connector().Names(t.Context(), "v1.0.0")
+		require.NoError(t, err)
+		err = names.Prefetch(map[identifiers.Format][]string{identifiers.GoName: {"unknownName"}})
+		require.ErrorContains(t, err, `no PASCAL/UPPERCASE formatting of "unknownName"`)
+		require.Equal(t, wantHint, strings.Contains(err.Error(), hint), release)
+	}
+}
+
+// Before the cut, the engine names a module's declarations by strcase:
+// predicting them connects to nothing.
+func TestConnectorLegacyModuleDoesNotConnect(t *testing.T) {
 	c := identifiers.NewConnector(func() (identifiers.Engine, error) {
 		return nil, errors.New("must not connect")
 	})
 	for _, version := range []string{"", "v0.21.9", "v1.0.0-beta.21"} {
-		names, err := c.Names(t.Context(), version)
+		names, err := c.ModuleNames(t.Context(), version)
 		require.NoError(t, err)
 		require.Nil(t, names)
 	}
 }
 
 // Engines before the cut name modules by strcase, and report every v1.0.0
-// prerelease view as v1.0.0: the schema's version alone can't tell.
-func TestConnectorOlderEngineKeepsLegacyRules(t *testing.T) {
+// prerelease view as v1.0.0: the module's version alone can't tell.
+func TestConnectorOlderEngineNamesModulesByStrcase(t *testing.T) {
 	for _, release := range []string{"v1.0.0-beta.19", "v1.0.0-beta.21+abc", "v0.21.9"} {
 		engine := &identifierstest.Engine{Release: release, Table: table}
-		names, err := engine.Connector().Names(t.Context(), "v1.0.0")
+		names, err := engine.Connector().ModuleNames(t.Context(), "v1.0.0")
 		require.NoError(t, err)
 		require.Nil(t, names, release)
 		require.Equal(t, 0, engine.FormatQueries())
@@ -78,7 +111,7 @@ func TestConnectorAppliesPastTheCut(t *testing.T) {
 	for _, release := range []string{"v1.0.0-beta.22", "v1.0.0-beta.22+441d95c2", "v1.0.0-dev-0123456789ab"} {
 		engine := &identifierstest.Engine{Release: release, Table: table}
 		c := engine.Connector()
-		names, err := c.Names(t.Context(), "v1.0.0-beta.22")
+		names, err := c.ModuleNames(t.Context(), "v1.0.0-beta.22")
 		require.NoError(t, err)
 		require.NotNil(t, names, release)
 		require.Equal(t, "v1.0.0-beta.22", names.Version())
@@ -89,16 +122,19 @@ func TestConnectorAppliesPastTheCut(t *testing.T) {
 	}
 }
 
-// A schema past the cut can't be generated without the engine: silently
-// keeping the legacy rules would produce bindings the engine doesn't match.
-func TestConnectorPastTheCutNeedsAnEngine(t *testing.T) {
+// Nothing is generated without the engine: there are no rules to fall back
+// to.
+func TestConnectorNeedsAnEngine(t *testing.T) {
 	t.Setenv("DAGGER_SESSION_PORT", "")
 	t.Setenv("DAGGER_SESSION_TOKEN", "")
-	_, err := identifiers.SessionConnector().Names(t.Context(), "v1.0.0-beta.22")
-	require.ErrorContains(t, err, "DAGGER_SESSION_PORT")
+	for _, version := range []string{"v1.0.0-beta.21", "v1.0.0-beta.22"} {
+		_, err := identifiers.SessionConnector().Names(t.Context(), version)
+		require.ErrorContains(t, err, "DAGGER_SESSION_PORT")
+	}
 }
 
-func TestNilNamesAreTheLegacyRules(t *testing.T) {
+// Nil Names, a module named by strcase, format nothing.
+func TestNilNamesFormatNothing(t *testing.T) {
 	var names *identifiers.Names
 	_, ok := names.Lookup(identifiers.GoName, "commitSha")
 	require.False(t, ok)

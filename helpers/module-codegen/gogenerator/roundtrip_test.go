@@ -36,7 +36,8 @@ func TestGenerateFreshEmbeddedModuleWithoutLocalSDK(t *testing.T) {
 }
 
 func TestGenerateFreshUnifiedModuleWithoutLocalSDK(t *testing.T) {
-	const runtimeVersion = "v1.0.0-beta.17"
+	const runtimeVersion, laterVersion = "v1.0.0-beta.22", "v1.0.0-beta.23"
+	postCutLibrary(t, runtimeVersion, laterVersion)
 	root := t.TempDir()
 	// These private/body-only references are absent from the public module
 	// schema, but the default starter still needs their shared core aliases.
@@ -105,11 +106,11 @@ func main() { _ = dagger.ContainerWithEnvVariableOpts{} }
 	require.Equal(t, string(mod), string(regenerated))
 	// The library follows the target in both directions, even while the
 	// bootstrap tidy temporarily removes its requirement.
-	cfg.DaggerVersion = "v1.0.0-beta.18"
+	cfg.DaggerVersion = laterVersion
 	require.NoError(t, Generate(t.Context(), cfg), "raise the target")
 	regenerated, err = os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
-	require.Contains(t, string(regenerated), "dagger.io/dagger v1.0.0-beta.18")
+	require.Contains(t, string(regenerated), "dagger.io/dagger "+laterVersion)
 	cfg.DaggerVersion = runtimeVersion
 	require.NoError(t, Generate(t.Context(), cfg), "lower the target")
 	regenerated, err = os.ReadFile(filepath.Join(root, "go.mod"))
@@ -361,6 +362,7 @@ func TestGenerateCollectionModuleWithSources(t *testing.T) {
 // Unified bindings do not import otel-go, so its requirement is gone when the
 // collection runtime loads package main, whose dispatcher imports it.
 func TestGenerateUnifiedCollectionModule(t *testing.T) {
+	postCutLibrary(t, "v1.0.0-beta.22")
 	root := t.TempDir()
 	writeModuleFiles(t, root, map[string]string{
 		"go.mod": "module example.com/app\n\ngo 1.26.1\n",
@@ -370,7 +372,7 @@ func TestGenerateUnifiedCollectionModule(t *testing.T) {
 			"// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
 			"type Item struct{ Name string }\n",
 	})
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", Connector: preCutEngine(), DaggerVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26-alpine"}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", Connector: preCutEngine(), DaggerVersion: "v1.0.0-beta.22", UnifiedClient: true, GoImage: "golang:1.26-alpine"}
 	require.NoError(t, Generate(t.Context(), cfg))
 	dispatcher, err := os.ReadFile(filepath.Join(root, "dagger.dispatch.gen.go"))
 	require.NoError(t, err)
@@ -425,7 +427,7 @@ func TestGenerateRefusesEngineWithoutModuleContext(t *testing.T) {
 	schema, err := filepath.Abs("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
 	require.NoError(t, err)
 	err = Generate(t.Context(), GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"})
-	require.ErrorContains(t, err, "the generated Dang entrypoint needs Dagger v1.0.0-beta.18 or later")
+	require.ErrorContains(t, err, "the generated Dang entrypoint needs Dagger v1.0.0-beta.22 or later")
 }
 
 // moduleContextSchema is the core schema with the CurrentModule fields of an
@@ -499,17 +501,18 @@ func TestGenerateEntrypointDeclaresClientVersion(t *testing.T) {
 // A go.mod requirement that needs a later library than the target is
 // refused with the requirement named, before anything is compiled.
 func TestGenerateUnifiedRefusesLibraryRaisedByRequirement(t *testing.T) {
+	postCutLibrary(t, "v1.0.0-beta.22", "v1.0.0-beta.23")
 	buildRoot := t.TempDir()
 	root := filepath.Join(buildRoot, "app")
 	writeModuleFiles(t, buildRoot, map[string]string{
 		"app/go.mod":         "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n",
 		"app/main.go":        "package app\n\nimport \"example.com/lib/greet\"\n\ntype App struct{}\n\nfunc (*App) Greeting() string { return greet.Greeting() }\n",
-		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.18\n",
+		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.23\n",
 		"lib/greet/greet.go": "package greet\n\nfunc Greeting() string { return \"hello\" }\n",
 	})
-	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", Connector: preCutEngine(), DaggerVersion: "v1.0.0-beta.17", TargetVersion: "v1.0.0-beta.17", UnifiedClient: true, GoImage: "golang:1.26.1-alpine"}
+	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", Connector: preCutEngine(), DaggerVersion: "v1.0.0-beta.22", TargetVersion: "v1.0.0-beta.22", UnifiedClient: true, GoImage: "golang:1.26.1-alpine"}
 	err := Generate(t.Context(), cfg)
-	const refusal = `module "app" targets Dagger v1.0.0-beta.17, and example.com/lib v0.0.0 requires dagger.io/dagger v1.0.0-beta.18: set targetVersion to v1.0.0-beta.18 or later in the scope's settings in dagger.toml, or require a version of example.com/lib that needs dagger.io/dagger v1.0.0-beta.17 or earlier`
+	const refusal = `module "app" targets Dagger v1.0.0-beta.22, and example.com/lib v0.0.0 requires dagger.io/dagger v1.0.0-beta.23: set targetVersion to v1.0.0-beta.23 or later in the scope's settings in dagger.toml, or require a version of example.com/lib that needs dagger.io/dagger v1.0.0-beta.22 or earlier`
 	require.EqualError(t, err, refusal)
 	require.NoFileExists(t, filepath.Join(root, "dagger.gen.go"), "a refused module changed")
 
@@ -518,14 +521,14 @@ func TestGenerateUnifiedRefusesLibraryRaisedByRequirement(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace dagger.io/dagger v1.0.0-beta.16 => dagger.io/dagger v1.0.0-beta.15\n")
 	require.EqualError(t, Generate(t.Context(), cfg), refusal)
 
-	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace dagger.io/dagger v1.0.0-beta.17 => dagger.io/dagger v1.0.0-beta.17\n")
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n\nreplace dagger.io/dagger v1.0.0-beta.22 => dagger.io/dagger v1.0.0-beta.22\n")
 	require.EqualError(t, Generate(t.Context(), cfg), refusal)
 
-	cfg.DaggerVersion, cfg.TargetVersion = "v1.0.0-beta.18", "v1.0.0-beta.18"
+	cfg.DaggerVersion, cfg.TargetVersion = "v1.0.0-beta.23", "v1.0.0-beta.23"
 	require.NoError(t, Generate(t.Context(), cfg))
 	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
-	require.Contains(t, string(goMod), "dagger.io/dagger v1.0.0-beta.18")
+	require.Contains(t, string(goMod), "dagger.io/dagger v1.0.0-beta.23")
 }
 
 func TestGenerateUnifiedRefusesUnpublishedTarget(t *testing.T) {
@@ -552,21 +555,23 @@ func TestGenerateUnifiedRefusesUnpublishedTarget(t *testing.T) {
 // A replaced library is a development exception: generation reports it,
 // keeps the replace directive, and does not pin the library to the target.
 func TestGenerateUnifiedReportsReplacedLibrary(t *testing.T) {
+	postCutLibrary(t, "v1.0.0-beta.22")
 	root := t.TempDir()
-	const goMod = "module example.com/app\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.16\n\nreplace dagger.io/dagger => dagger.io/dagger v1.0.0-beta.17\n"
+	const goMod = "module example.com/app\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.16\n\nreplace dagger.io/dagger => dagger.io/dagger v1.0.0-beta.22\n"
 	writeModuleFiles(t, root, map[string]string{
 		"go.mod":  goMod,
 		"main.go": "package app\n\ntype App struct{}\n\nfunc (*App) Hello() string { return \"hello\" }\n",
 	})
 	var notes strings.Builder
-	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", Connector: preCutEngine(), DaggerVersion: "v1.0.0-beta.20", TargetVersion: "v1.0.0-beta.20", UnifiedClient: true, GoImage: "golang:1.26.1-alpine", Notes: &notes}
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0", Connector: preCutEngine(), DaggerVersion: "v1.0.0-beta.22", TargetVersion: "v1.0.0-beta.22", UnifiedClient: true, GoImage: "golang:1.26.1-alpine", Notes: &notes}
 	require.NoError(t, Generate(t.Context(), cfg))
-	require.Equal(t, `warning: module "app" targets Dagger v1.0.0-beta.20, and go.mod replaces dagger.io/dagger: the generated code uses the replacement's API, which that release does not guarantee; this is a development exception, so remove the replace directive before publishing`+"\n", notes.String())
+	require.Equal(t, `warning: module "app" targets Dagger v1.0.0-beta.22, and go.mod replaces dagger.io/dagger: the generated code uses the replacement's API, which that release does not guarantee; this is a development exception, so remove the replace directive before publishing`+"\n", notes.String())
 	regenerated, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
-	require.NotContains(t, string(regenerated), "dagger.io/dagger v1.0.0-beta.20")
-	require.Contains(t, string(regenerated), "replace dagger.io/dagger => dagger.io/dagger v1.0.0-beta.17")
+	require.NotContains(t, string(regenerated), "\tdagger.io/dagger v1.0.0-beta.22\n", "the library was pinned to the target")
+	require.NotContains(t, string(regenerated), "require dagger.io/dagger v1.0.0-beta.22\n", "the library was pinned to the target")
+	require.Contains(t, string(regenerated), "replace dagger.io/dagger => dagger.io/dagger v1.0.0-beta.22")
 	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
 	require.NoError(t, err)
-	require.Contains(t, string(entrypoint), "\n      .withEnvVariable(\"DAGGER_CLIENT_VERSION\", \"v1.0.0-beta.20\")\n")
+	require.Contains(t, string(entrypoint), "\n      .withEnvVariable(\"DAGGER_CLIENT_VERSION\", \"v1.0.0-beta.22\")\n")
 }

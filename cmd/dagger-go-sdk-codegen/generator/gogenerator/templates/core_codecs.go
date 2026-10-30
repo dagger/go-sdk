@@ -13,8 +13,7 @@ import (
 
 // GenerateCoreJSONCodecs lets shared core handles decode the ID strings the
 // engine passes to module functions. Constructing a decoded handle stays lazy.
-// Type names are formatted through formatted, as for the core bindings (nil
-// for the legacy rules).
+// Type names are formatted through formatted, as for the core bindings.
 func GenerateCoreJSONCodecs(schema *introspection.Schema, schemaVersion string, formatted *identifiers.Names) ([]byte, error) {
 	namer := goNamer{names: formatted}
 	funcs := goTemplateFuncs{

@@ -39,7 +39,7 @@ var helloMethod = regexp.MustCompile(`(?s)func \(r \*Hello\) (Build|Lint|Test)\(
 func TestUnifiedClientProjectsChecks(t *testing.T) {
 	for name, v1 := range map[string]bool{"target-before-v1": false, "target-on-v1": true} {
 		t.Run(name, func(t *testing.T) {
-			gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: t.TempDir(), PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
+			gen := &GoGenerator{Config: generator.Config{Names: styled, UnifiedClient: true, OutputDir: t.TempDir(), PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
 			schema := checksSchema(v1)
 			state, err := gen.GenerateClient(t.Context(), schema, "v0.20.6")
 			require.NoError(t, err)

@@ -52,9 +52,10 @@ func runNormalizeSourceLinks(args []string) error {
 		return fmt.Errorf("introspection JSON has no __schema")
 	}
 	ctx := context.Background()
-	// The engine's built-in Go runtime codegen generated the bindings, and
-	// it formats Go identifiers like this generator does for the schema's
-	// version.
+	// The engine's built-in Go runtime codegen generated the bindings. It
+	// spells a schema past the cut as this generator does, and one before
+	// it with golint-style initialisms, which the catalog's keys match too
+	// (see linkKey).
 	names, err := sessionConnector().Names(ctx, response.SchemaVersion)
 	if err != nil {
 		return err
@@ -124,6 +125,8 @@ func workspaceSourceLinkAnchor(repo, pin string) (string, error) {
 	}
 }
 
+// sourceLinkCatalog holds source maps by the Go identifiers of their
+// declarations, each part keyed by linkKey.
 type sourceLinkCatalog struct {
 	types   map[string]*introspection.SourceMap
 	methods map[string]*introspection.SourceMap
@@ -131,9 +134,29 @@ type sourceLinkCatalog struct {
 	values  map[string]*introspection.SourceMap
 }
 
+// linkKey is the key of a declaration's Go identifier, and of its receiver
+// or struct: each lowercased, with everything but ASCII letters and digits
+// dropped, so every spelling of a name matches. The engine's built-in Go
+// codegen, whose bindings the normalize-source-links subcommand rewrites,
+// spells a schema before the cut with golint-style initialisms (ShortSha),
+// and this generator as the engine formats it (ShortSHA).
+func linkKey(parts ...string) string {
+	for i, part := range parts {
+		parts[i] = strings.Map(func(r rune) rune {
+			switch {
+			case 'a' <= r && r <= 'z', '0' <= r && r <= '9':
+				return r
+			case 'A' <= r && r <= 'Z':
+				return r + 'a' - 'A'
+			}
+			return -1
+		}, part)
+	}
+	return strings.Join(parts, ".")
+}
+
 // newSourceLinkCatalog indexes the source maps of schema's declarations by
-// the Go identifiers the bindings declare them as, formatted through names
-// (nil for the legacy rules).
+// the Go identifiers the bindings declare them as, formatted through names.
 func newSourceLinkCatalog(ctx context.Context, schema *introspection.Schema, version string, names *identifiers.Names) (sourceLinkCatalog, error) {
 	generator.SetSchemaParents(schema)
 	funcs := templates.GoTemplateFuncs(schema, schema, version, generator.Config{Names: names})
@@ -155,11 +178,11 @@ func buildSourceLinkCatalog(schema *introspection.Schema, funcs template.FuncMap
 		fields: map[string]*introspection.SourceMap{}, values: map[string]*introspection.SourceMap{},
 	}
 	for _, typ := range schema.Types {
-		catalog.types[name(typ.Name)] = typ.Directives.SourceMap()
+		catalog.types[linkKey(name(typ.Name))] = typ.Directives.SourceMap()
 		if typ.Kind == introspection.TypeKindEnum {
 			// Enum declarations use the schema name without Go initialism
 			// formatting; their values use FormatEnum below.
-			catalog.types[typ.Name] = typ.Directives.SourceMap()
+			catalog.types[linkKey(typ.Name)] = typ.Directives.SourceMap()
 		}
 		for _, field := range typ.Fields {
 			receiver := name(typ.Name)
@@ -168,22 +191,22 @@ func buildSourceLinkCatalog(schema *introspection.Schema, funcs template.FuncMap
 			} else if typ.Kind == introspection.TypeKindInterface {
 				receiver = iface(typ.Name)
 			}
-			catalog.methods[receiver+"."+name(field.Name)] = field.Directives.SourceMap()
+			catalog.methods[linkKey(receiver, name(field.Name))] = field.Directives.SourceMap()
 			if typ.Name == generator.QueryStructName {
 				// Module bindings use Query; standalone clients use Client.
-				catalog.methods["Query."+name(field.Name)] = field.Directives.SourceMap()
+				catalog.methods[linkKey("Query", name(field.Name))] = field.Directives.SourceMap()
 			}
 			for _, arg := range field.Args {
-				catalog.fields[opts(*field)+"."+name(arg.Name)] = arg.Directives.SourceMap()
+				catalog.fields[linkKey(opts(*field), name(arg.Name))] = arg.Directives.SourceMap()
 			}
 		}
 		for _, field := range typ.InputFields {
-			catalog.fields[name(typ.Name)+"."+name(field.Name)] = field.Directives.SourceMap()
+			catalog.fields[linkKey(name(typ.Name), name(field.Name))] = field.Directives.SourceMap()
 		}
 		for _, group := range groupEnums(typ.EnumValues) {
 			for _, value := range group {
-				catalog.values[enum(typ.Name, value.Name)] = value.Directives.SourceMap()
-				catalog.values[enum("", value.Name)] = value.Directives.SourceMap()
+				catalog.values[linkKey(enum(typ.Name, value.Name))] = value.Directives.SourceMap()
+				catalog.values[linkKey(enum("", value.Name))] = value.Directives.SourceMap()
 			}
 		}
 	}
@@ -218,23 +241,23 @@ func normalizeGeneratedSourceLinks(filename string, data []byte, catalog sourceL
 				receiver = pointer.X
 			}
 			if ident, ok := receiver.(*ast.Ident); ok {
-				add(decl.Body.Lbrace, catalog.methods[ident.Name+"."+decl.Name.Name])
+				add(decl.Body.Lbrace, catalog.methods[linkKey(ident.Name, decl.Name.Name)])
 			}
 		case *ast.GenDecl:
 			for _, spec := range decl.Specs {
 				switch spec := spec.(type) {
 				case *ast.TypeSpec:
-					add(spec.Type.Pos(), catalog.types[spec.Name.Name])
+					add(spec.Type.Pos(), catalog.types[linkKey(spec.Name.Name)])
 					if structure, ok := spec.Type.(*ast.StructType); ok {
 						for _, field := range structure.Fields.List {
 							for _, ident := range field.Names {
-								add(field.Pos(), catalog.fields[spec.Name.Name+"."+ident.Name])
+								add(field.Pos(), catalog.fields[linkKey(spec.Name.Name, ident.Name)])
 							}
 						}
 					}
 				case *ast.ValueSpec:
 					for _, ident := range spec.Names {
-						add(spec.Pos(), catalog.values[ident.Name])
+						add(spec.Pos(), catalog.values[linkKey(ident.Name)])
 					}
 				}
 			}

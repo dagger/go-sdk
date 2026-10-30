@@ -128,6 +128,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	// the targeted release; embedded bindings take core from the engine and
 	// only need a library at least as new as the engine.
 	subject := fmt.Sprintf("module %q", cfg.ModuleName)
+	if err := checkUnifiedCore(cfg, goModPath, subject); err != nil {
+		return err
+	}
 	replaced, err := library.Replaced(goModPath, cfg.DaggerVersion)
 	if err != nil {
 		return err
@@ -192,9 +195,8 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	// Embedded bindings carry their own core client, whose Go identifiers
 	// follow the schema's version. Unified bindings alias the core types,
 	// option structs and With functions of the runtime's dagger.io/dagger/core
-	// instead, which spells them by the rules of its own version: the
-	// bindings must spell them alike (SshfsVolumeOpts before the cut,
-	// SSHFSVolumeOpts after).
+	// instead, which spells them by the dictionary of its own version: the
+	// bindings must spell them alike.
 	goVersion := cfg.SchemaVersion
 	if cfg.UnifiedClient && coreVersion != "" {
 		goVersion = coreVersion
@@ -410,14 +412,55 @@ func removeStaleBindings(root string, overlay fs.FS) ([]string, error) {
 	return removed, nil
 }
 
-// identifierNames returns the names Go identifiers are formatted through, at
+// checkUnifiedCore refuses unified bindings whose library spells its core
+// identifiers by the rules before identifiers.CasingVersion. Unified bindings
+// alias the core types, option structs and With functions of the library's
+// dagger.io/dagger/core, which a release before the cut spells with
+// golint-style initialisms (SshfsVolumeOpts), and this generator, which
+// styles every name through the engine, spells as the engine does
+// (SSHFSVolumeOpts). The library is the targeted release, or the version a
+// replace directive that applies to it selects; a local replacement has no
+// version, and is an SDK developer's.
+func checkUnifiedCore(cfg GenerateConfig, goModPath, subject string) error {
+	if !cfg.UnifiedClient || cfg.DaggerVersion == "" {
+		return nil
+	}
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(goModPath, data, nil)
+	if err != nil {
+		return err
+	}
+	version, replacement := cfg.DaggerVersion, ""
+	for _, replace := range mod.Replace {
+		if replace.Old.Path == library.Path && (replace.Old.Version == "" || replace.Old.Version == cfg.DaggerVersion) {
+			version, replacement = replace.New.Version, replace.New.Path+" "+replace.New.Version
+		}
+	}
+	if version == "" || identifiers.Applies(version) {
+		return nil
+	}
+	if replacement != "" {
+		return fmt.Errorf("%s replaces %s with %s, whose core spells its Go identifiers by the rules before %s, so unified bindings can't alias them: replace it with %s or later, or a local checkout past it", subject, library.Path, replacement, identifiers.CasingVersion, identifiers.CasingVersion)
+	}
+	return fmt.Errorf("%s targets Dagger %s, whose Go library spells its core identifiers by the rules before %s, so unified bindings can't alias them: set targetVersion to %s or later in the scope's settings in dagger.toml", subject, version, identifiers.CasingVersion, identifiers.CasingVersion)
+}
+
+// sessionConnector returns the Connector generation names identifiers
+// through when GenerateConfig.Connector is nil: the Dagger session it runs in
+// (see identifiers.SessionFromEnv).
+var sessionConnector = identifiers.SessionConnector
+
+// identifierNames returns the names Go identifiers are styled through, at
 // goVersion, and the names the module's own schema names are predicted
-// through, at the version the engine names the module by; either is nil for
-// the legacy rules (see identifiers.Connector).
+// through, at the version the engine names the module by, nil for the legacy
+// strcase rules (see identifiers.Connector).
 func identifierNames(ctx context.Context, cfg GenerateConfig, goVersion string) (names, moduleNames *identifiers.Names, _ error) {
 	connector := cfg.Connector
 	if connector == nil {
-		connector = identifiers.SessionConnector()
+		connector = sessionConnector()
 	}
 	names, err := connector.Names(ctx, goVersion)
 	if err != nil {
@@ -437,7 +480,7 @@ func identifierNames(ctx context.Context, cfg GenerateConfig, goVersion string) 
 	if moduleVersion == "" {
 		moduleVersion = cfg.SchemaVersion
 	}
-	moduleNames, err = connector.Names(ctx, moduleVersion)
+	moduleNames, err = connector.ModuleNames(ctx, moduleVersion)
 	if err != nil {
 		return nil, nil, err
 	}

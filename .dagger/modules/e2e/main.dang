@@ -295,19 +295,19 @@ type E2e {
 
     # With a target, the clients pin the library to it and announce it when
     # they start a session.
-    let targeted = goSdk(targetVersion: "v1.0.0-beta.20", dangEntrypoint: false, unifiedClients: false).generateScope(
+    let targeted = goSdk(targetVersion: "v1.0.0-beta.22", dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: generated,
       isModule: false,
       name: "standalone-client",
       clients: [target, secondTarget],
     ).withWorkdir(scopePath)
     assert("the target did not raise the scope go.mod:\n" + targeted.file("go.mod").contents) {
-      targeted.file("go.mod").contents.contains("dagger.io/dagger v1.0.0-beta.20")
+      targeted.file("go.mod").contents.contains("dagger.io/dagger v1.0.0-beta.22")
     }
     assert("the clients do not announce the target") {
-      targeted.file(targetPath + "/dagger.gen.go").contents.contains("WithVersionOverride(\"v1.0.0-beta.20\")") and
-        targeted.file(targetPath + "/dag/dag.gen.go").contents.contains("WithVersionOverride(\"v1.0.0-beta.20\")") and
-        targeted.file(secondTargetPath + "/dagger.gen.go").contents.contains("WithVersionOverride(\"v1.0.0-beta.20\")")
+      targeted.file(targetPath + "/dagger.gen.go").contents.contains("WithVersionOverride(\"v1.0.0-beta.22\")") and
+        targeted.file(targetPath + "/dag/dag.gen.go").contents.contains("WithVersionOverride(\"v1.0.0-beta.22\")") and
+        targeted.file(secondTargetPath + "/dagger.gen.go").contents.contains("WithVersionOverride(\"v1.0.0-beta.22\")")
     }
     null
   }

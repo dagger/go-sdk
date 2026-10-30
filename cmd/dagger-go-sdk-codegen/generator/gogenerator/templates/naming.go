@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -14,34 +15,36 @@ import (
 // formatted: selections, argument keys, input fields and enum values keep the
 // schema's spelling.
 type goNamer struct {
-	// names are the names formatted by the engine's naming rules of the
-	// generated schema's version (see identifiers.Connector): PascalCase with
-	// uppercase acronyms, so commitSha and commitSHA are both CommitSHA, and
-	// withGpu is WithGPU. Nil for the legacy rules, whose identifiers keep
-	// the golint-style initialisms (lintName) byte for byte.
+	// names are the names formatted by the engine's naming rules at the
+	// version Go identifiers follow (see identifiers.Connector): PascalCase
+	// with uppercase acronyms, so commitSha and commitSHA are both CommitSHA,
+	// and withGpu is WithGPU, whatever the schema's version.
 	names *identifiers.Names
 }
 
 // formatName formats a GraphQL name (e.g. object, field, arg) into a Go
-// identifier. Example: `fooId` -> `FooID`
+// identifier, as the engine formats it: `fooId` -> `FooID`.
 //
-// With the engine's rules, a name the schema doesn't declare (FooID) is
-// formatted with a direct call when first looked up; if that fails, the
-// legacy spelling stands in and the generator returns the error
-// (identifiers.Names.Err). Internal names (__typename) keep the legacy
-// spelling, as in dagger/dagger.
+// A name the schema doesn't declare (FooID) is formatted with a direct call
+// when first looked up; if that fails, the name stands in as it is and the
+// generator returns the error (identifiers.Names.Err). Internal names
+// (__typename) are never declared in the bindings and stay as they are.
 func (n goNamer) formatName(s string) string {
-	if n.names != nil && s != "" && !strings.HasPrefix(s, "_") {
-		if name, ok := n.names.Lookup(identifiers.GoName, s); ok {
-			return name
-		}
+	if s == "" || strings.HasPrefix(s, "_") {
+		return s
 	}
-	return legacyFormatName(s)
+	if n.names == nil {
+		panic(fmt.Sprintf("format Go identifier %q: no engine to name it (generator.Config.Names)", s))
+	}
+	if name, ok := n.names.Lookup(identifiers.GoName, s); ok {
+		return name
+	}
+	return s
 }
 
 // DeclaredNames lists the names schema declares that bindings format as Go
 // identifiers: its types, fields, arguments and input fields, less internal
-// names (__typename), which keep their legacy spelling. Generators format
+// names (__typename), which stay as they are. Generators format
 // them up front, in one query (identifiers.Names.Prefetch).
 func DeclaredNames(schema *introspection.Schema) map[identifiers.Format][]string {
 	var declared []string
@@ -59,16 +62,6 @@ func DeclaredNames(schema *introspection.Schema) map[identifiers.Format][]string
 	}
 	declared = slices.DeleteFunc(declared, func(name string) bool { return name == "" || strings.HasPrefix(name, "_") })
 	return map[identifiers.Format][]string{identifiers.GoName: declared}
-}
-
-// legacyFormatName formats a GraphQL name into a Go identifier with
-// golint-style initialisms, as for schemas before identifiers.CasingVersion.
-// Example: `fooId` -> `FooID`
-func legacyFormatName(s string) string {
-	if len(s) > 0 {
-		s = strings.ToUpper(string(s[0])) + s[1:]
-	}
-	return lintName(s)
 }
 
 // flatName is name lowercased, with everything but ASCII letters and digits

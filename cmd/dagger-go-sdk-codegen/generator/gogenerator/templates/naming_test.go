@@ -18,13 +18,23 @@ import (
 
 // recordedNames are formatted as the engine at v1.0.0-beta.22 (dagger/dagger
 // 441d95c2) formats them: testdata/identifiers-v1.0.0-beta.22.json records its
-// formatIdentifiers results. A name the table lacks fails the test, unless
+// formatIdentifiers results, beside the names every test formats
+// (identifierstest.Recorded). A name neither has fails the test, unless
 // fallback formats it.
 func recordedNames(t *testing.T, fallback func(identifiers.Format, string) string) *identifiers.Names {
 	t.Helper()
 	table, err := identifierstest.Load("testdata/identifiers-v1.0.0-beta.22.json")
 	require.NoError(t, err)
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table, Fallback: fallback}
+	merged := identifierstest.Recorded()
+	for key, names := range table {
+		if merged[key] == nil {
+			merged[key] = map[string]string{}
+		}
+		for name, formatted := range names {
+			merged[key][name] = formatted
+		}
+	}
+	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: merged, Fallback: fallback}
 	names, err := engine.Connector().Names(t.Context(), "v1.0.0-beta.22")
 	require.NoError(t, err)
 	require.NotNil(t, names)
@@ -40,27 +50,25 @@ func formatted[T any](t *testing.T, names *identifiers.Names, f func() T) T {
 	return got
 }
 
-// Past the cut, Go identifiers are the engine's PascalCase with uppercase
-// acronyms; before it, the golint-style initialisms stay as they were.
-// Internal names keep the legacy spelling either way.
+// Go identifiers are the engine's PascalCase with uppercase acronyms, whatever
+// the schema's version. Internal names stay as they are.
 func TestGoNamer(t *testing.T) {
 	names := recordedNames(t, nil)
-	for _, test := range []struct{ name, legacy, engine string }{
-		{"shortSha", "ShortSha", "ShortSHA"},
-		{"parentShas", "ParentShas", "ParentSHAs"},
-		{"withGpu", "WithGpu", "WithGPU"},
-		{"sdks", "Sdks", "SDKs"},
-		{"sshfsVolume", "SshfsVolume", "SSHFSVolume"},
-		{"asJson", "AsJSON", "AsJSON"},
-		{"htmlUrl", "HTMLURL", "HTMLURL"},
-		{"httpClient", "HTTPClient", "HTTPClient"},
-		{"e2eTest", "E2eTest", "E2ETest"},
-		{"LlmMessage", "LLMMessage", "LLMMessage"},
-		{"JsonValue", "JSONValue", "JSONValue"},
-		{"__typename", "_Typename", "_Typename"},
-		{"", "", ""},
+	for _, test := range []struct{ name, engine string }{
+		{"shortSha", "ShortSHA"},
+		{"parentShas", "ParentSHAs"},
+		{"withGpu", "WithGPU"},
+		{"sdks", "SDKs"},
+		{"sshfsVolume", "SSHFSVolume"},
+		{"asJson", "AsJSON"},
+		{"htmlUrl", "HTMLURL"},
+		{"httpClient", "HTTPClient"},
+		{"e2eTest", "E2ETest"},
+		{"LlmMessage", "LLMMessage"},
+		{"JsonValue", "JSONValue"},
+		{"__typename", "__typename"},
+		{"", ""},
 	} {
-		require.Equal(t, test.legacy, goNamer{}.formatName(test.name), "legacy %q", test.name)
 		got := formatted(t, names, func() string { return goNamer{names: names}.formatName(test.name) })
 		require.Equal(t, test.engine, got, "engine %q", test.name)
 	}
@@ -80,12 +88,7 @@ func TestObjectFollowsEngineNames(t *testing.T) {
     }
   ]
 }`)
-	// The table records the names that change; the rest keep their legacy
-	// spelling, as the engine leaves them.
-	names := recordedNames(t, func(f identifiers.Format, name string) string {
-		require.Equal(t, identifiers.GoName, f)
-		return legacyFormatName(name)
-	})
+	names := recordedNames(t, nil)
 	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.22", generator.Config{Names: names})
 	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(filepath.Join("src", "_types/object.go.tmpl"))
 	require.NoError(t, err)
@@ -123,12 +126,7 @@ func TestNullableObjectLoadsBySchemaName(t *testing.T) {
 	generator.SetSchemaParents(schema)
 	generator.SetSchema(schema)
 	t.Cleanup(func() { generator.SetSchema(nil) })
-	names := recordedNames(t, func(f identifiers.Format, name string) string {
-		if name == "DepGpuThing" {
-			return "DepGPUThing"
-		}
-		return legacyFormatName(name)
-	})
+	names := recordedNames(t, nil)
 	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.22", generator.Config{Names: names})
 	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(filepath.Join("src", "_types/object.go.tmpl"))
 	require.NoError(t, err)
