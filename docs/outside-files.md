@@ -104,12 +104,14 @@ The generated `internal/dagger/entrypoint/dang.toml` declares the same
 release as its `Dagger` import; see the [README](../README.md#the-generated-dangtoml).
 Released engines up to v1.0.0-beta.21 ignore both declarations and serve the
 module at their own version.
-Engines with dagger/dagger#14881, which no release contains yet, read
-`DAGGER_CLIENT_VERSION`, which moves the core API view of the module's process.
+v1.0.0-beta.22 reads `DAGGER_CLIENT_VERSION`, which moves the core API view of
+the module's process; it ignores `dang.toml` and serves the module at its own
+version.
 dagger/dagger#14902, which is not merged, reads `dang.toml` for the module's
 own version.
 With that change, a module without a declared version gets v1.0.0-beta.20,
-which predates the identifier renames of v1.0.0-beta.22.
+which predates the identifier-casing cut.
+The release of that cut is not decided.
 The fixed core library and the module's own bindings depend on the SDK
 release, the target setting and the module's sources.
 An engine update leaves them unchanged.

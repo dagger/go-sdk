@@ -60,8 +60,8 @@ A generated entrypoint that replaces a remote one follows the rules above.
 
 ### Engines and tools
 
-Engines v1.0.0-beta.18 to v1.0.0-beta.21, the releases this entrypoint loads
-on, copy only `.dang` files to evaluate an entrypoint, so they ignore this file.
+Released engines from v1.0.0-beta.18 to v1.0.0-beta.22 copy only `.dang` files
+to evaluate an entrypoint, so they ignore this file.
 [dagger/dagger#14902](https://github.com/dagger/dagger/pull/14902), which is not
 merged, makes the engine read it to select the module's API view and naming
 rules.
