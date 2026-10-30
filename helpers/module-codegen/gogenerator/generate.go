@@ -172,7 +172,17 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	cfg.SchemaVersion = resp.SchemaVersion
 	generator.SetSchemaParents(resp.Schema)
-	names, moduleNames, err := identifierNames(ctx, cfg)
+	// Embedded bindings carry their own core client, whose Go identifiers
+	// follow the schema's version. Unified bindings alias the core types,
+	// option structs and With functions of the runtime's dagger.io/dagger/core
+	// instead, which spells them by the rules of its own version: the
+	// bindings must spell them alike (SshfsVolumeOpts before the cut,
+	// SSHFSVolumeOpts after).
+	goVersion := cfg.SchemaVersion
+	if cfg.UnifiedClient {
+		goVersion = runtimeVersion
+	}
+	names, moduleNames, err := identifierNames(ctx, cfg, goVersion)
 	if err != nil {
 		return err
 	}
@@ -388,15 +398,15 @@ func removeStaleBindings(root string, overlay fs.FS) ([]string, error) {
 }
 
 // identifierNames returns the names Go identifiers are formatted through, at
-// the schema's version, and the names the module's own schema names are
-// predicted through, at the version the engine names the module by; either
-// is nil for the legacy rules (see identifiers.Connector).
-func identifierNames(ctx context.Context, cfg GenerateConfig) (names, moduleNames *identifiers.Names, _ error) {
+// goVersion, and the names the module's own schema names are predicted
+// through, at the version the engine names the module by; either is nil for
+// the legacy rules (see identifiers.Connector).
+func identifierNames(ctx context.Context, cfg GenerateConfig, goVersion string) (names, moduleNames *identifiers.Names, _ error) {
 	connector := cfg.Connector
 	if connector == nil {
 		connector = identifiers.SessionConnector()
 	}
-	names, err := connector.Names(ctx, cfg.SchemaVersion)
+	names, err := connector.Names(ctx, goVersion)
 	if err != nil {
 		return nil, nil, err
 	}
