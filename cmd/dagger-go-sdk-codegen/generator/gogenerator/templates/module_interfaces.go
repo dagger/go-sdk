@@ -112,7 +112,7 @@ type parsedIfaceType struct {
 	goType            *types.Interface
 	moduleName        string
 	legacyGoSDKCompat bool
-	// namer predicts the schema names the bindings select (see moduleNamer).
+	// namer gives the schema names the bindings select (see moduleNamer).
 	namer moduleNamer
 }
 
@@ -168,8 +168,8 @@ func (spec *parsedIfaceType) ModuleName() string {
 
 // schemaName returns the namespaced GraphQL type name for this interface as it
 // appears in the engine's schema.  Module-defined types are prefixed with the
-// module name (e.g. module "test", interface "CustomIface" → "TestCustomIface").
-// This mirrors the engine's namespaceObject() logic in core/gqlformat.go.
+// module name (e.g. module "test", interface "CustomIface" → "TestCustomIface"),
+// as the engine names them (see moduleNamer.namespaceObject).
 func (spec *parsedIfaceType) schemaName() string {
 	return spec.gqlSchemaName(spec.name, spec.moduleName)
 }
@@ -181,7 +181,7 @@ func (spec *parsedIfaceType) gqlSchemaName(name, moduleName string) string {
 	if moduleName == "" {
 		return name
 	}
-	return spec.namer.namespaceObject(name, moduleName)
+	return spec.namer.namespaceObject(name)
 }
 
 // The code implementing the concrete struct that implements the interface and associated methods.

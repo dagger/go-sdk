@@ -11,6 +11,7 @@ import (
 	"golang.org/x/tools/go/packages"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 )
 
 // Keep GitRepo methods in separate files to emulate non-deterministic package file load order.
@@ -63,6 +64,7 @@ func newVisitDeterminismTemplateFuncs(testPkg *packages.Package) goTemplateFuncs
 		cfg: generator.Config{
 			ModuleConfig: &generator.ModuleGeneratorConfig{
 				ModuleName: "git-repo",
+				Naming:     identifierstest.Strcase("git-repo"),
 			},
 		},
 		namer:      goNamer{names: styled},

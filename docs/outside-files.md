@@ -91,8 +91,9 @@ On v1.0.0-beta.17 and older, loading the module fails with
 `field "types": missing argument "workspace" required by interface`.
 The error prints the line above the entrypoint type, which reads
 `# Needs Dagger v1.0.0-beta.22 or later; engines before v1.0.0-beta.18 report a missing "workspace" argument.`
-Generation fails on v1.0.0-beta.18 and older: it names Go identifiers through
-the engine's `formatIdentifiers`, which those releases don't serve.
+Generation refuses an engine before v1.0.0-beta.22: it asks the engine for
+the module's schema names (`ModuleSource.naming`) and its Go identifiers
+(`formatIdentifiers`).
 
 ## The release the generated code targets
 

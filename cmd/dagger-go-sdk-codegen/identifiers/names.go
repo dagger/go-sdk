@@ -13,9 +13,7 @@ import (
 // query; Lookup finds them, and formats any other name with a direct call,
 // which it caches.
 //
-// A nil *Names, a module's names before the cut (Connector.ModuleNames), is
-// the engine's legacy strcase rules: Lookup finds nothing, so a generator
-// falls back to its strcase conversions.
+// A nil *Names formats nothing: Lookup finds nothing.
 type Names struct {
 	// ctx is the generation's: Lookup is called while rendering, which
 	// has none of its own.
@@ -42,8 +40,7 @@ func NewNames(ctx context.Context, engine Engine, version string) *Names {
 	}
 }
 
-// Version is the version whose dictionary names are parsed with, or "" for
-// the legacy strcase rules.
+// Version is the version whose dictionary names are parsed with.
 func (n *Names) Version() string {
 	if n == nil {
 		return ""
