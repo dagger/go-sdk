@@ -137,12 +137,11 @@ type sourceLinkCatalog struct {
 func newSourceLinkCatalog(ctx context.Context, schema *introspection.Schema, version string, names *identifiers.Names) (sourceLinkCatalog, error) {
 	generator.SetSchemaParents(schema)
 	funcs := templates.GoTemplateFuncs(schema, schema, version, generator.Config{Names: names})
-	var catalog sourceLinkCatalog
-	err := names.Run(ctx, func() error {
-		catalog = buildSourceLinkCatalog(schema, funcs)
-		return nil
-	})
-	return catalog, err
+	if err := names.Prefetch(templates.DeclaredNames(schema)); err != nil {
+		return sourceLinkCatalog{}, err
+	}
+	catalog := buildSourceLinkCatalog(schema, funcs)
+	return catalog, names.Err()
 }
 
 func buildSourceLinkCatalog(schema *introspection.Schema, funcs template.FuncMap) sourceLinkCatalog {

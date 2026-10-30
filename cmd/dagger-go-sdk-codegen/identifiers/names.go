@@ -2,38 +2,42 @@ package identifiers
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"sync"
 )
 
-// Names are names formatted by the engine's naming rules of one version,
-// looked up while a generator renders, and formatted in batches by Run.
+// Names are names formatted by the engine's naming rules of one version.
+// Prefetch formats the names a generator knows it will look up, in one
+// query; Lookup finds them, and formats any other name with a direct call,
+// which it caches.
 //
-// A nil *Names is the legacy rules: Lookup finds nothing and Run renders
-// once, so a generator falls back to its legacy conversions everywhere.
+// A nil *Names is the legacy rules: Lookup finds nothing, so a generator
+// falls back to its legacy conversions everywhere.
 type Names struct {
+	// ctx is the generation's: Lookup is called while rendering, which
+	// has none of its own.
+	ctx     context.Context
 	engine  Engine
 	version string
 
 	mu sync.Mutex
 	// formatted holds the formatted names, by format and name.
 	formatted map[Format]map[string]string
-	// pending holds the names looked up but not formatted yet.
-	pending map[Format]map[string]bool
+	// err is the first formatIdentifiers failure of a Lookup.
+	err error
 }
 
 // NewNames returns empty Names that formats names with the dictionary of
-// version, through engine. Most generators get theirs from a Connector, which
-// applies the gate first.
-func NewNames(engine Engine, version string) *Names {
+// version, through engine, within ctx. Most generators get theirs from a
+// Connector, which applies the gate first.
+func NewNames(ctx context.Context, engine Engine, version string) *Names {
 	return &Names{
+		ctx:       ctx,
 		engine:    engine,
 		version:   version,
 		formatted: map[Format]map[string]string{},
-		pending:   map[Format]map[string]bool{},
 	}
 }
 
@@ -46,12 +50,51 @@ func (n *Names) Version() string {
 	return n.version
 }
 
-// Lookup returns name formatted in f. When it isn't formatted yet, Lookup
-// records it for the next batch and returns false, and so it does for a name
-// the engine can't parse (see Valid), which no batch formats: either way the
-// caller uses its fallback. A nil *Names always returns false.
+// Prefetch formats names, by format, in a single formatIdentifiers query
+// (one aliased field per format), and keeps them for Lookup. Names already
+// formatted aren't sent again. A name the engine can't parse fails the
+// query, and Prefetch returns that error.
+func (n *Names) Prefetch(names map[Format][]string) error {
+	if n == nil {
+		return nil
+	}
+	n.mu.Lock()
+	var requests []request
+	for _, f := range sortedFormats(names) {
+		var missing []string
+		for _, name := range names[f] {
+			if _, ok := n.formatted[f][name]; !ok && !slices.Contains(missing, name) {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			slices.Sort(missing)
+			requests = append(requests, request{format: f, version: n.version, names: missing})
+		}
+	}
+	n.mu.Unlock()
+	if len(requests) == 0 {
+		return nil
+	}
+	formatted, err := formatIdentifiers(n.ctx, n.engine, requests)
+	if err != nil {
+		return err
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for i, r := range requests {
+		n.store(r.format, r.names, formatted[i])
+	}
+	return nil
+}
+
+// Lookup returns name formatted in f: a prefetched name from memory, any
+// other with a direct formatIdentifiers call, whose result it keeps. When
+// that call fails, Lookup returns false and keeps the error for Err; the
+// caller's fallback stands in until the generator returns it. A nil *Names
+// always returns false.
 func (n *Names) Lookup(f Format, name string) (string, bool) {
-	if n == nil || !Valid(name) {
+	if n == nil {
 		return "", false
 	}
 	n.mu.Lock()
@@ -59,137 +102,44 @@ func (n *Names) Lookup(f Format, name string) (string, bool) {
 	if formatted, ok := n.formatted[f][name]; ok {
 		return formatted, true
 	}
-	if n.pending[f] == nil {
-		n.pending[f] = map[string]bool{}
+	if n.err != nil {
+		return "", false
 	}
-	n.pending[f][name] = true
-	return "", false
+	formatted, err := formatIdentifiers(n.ctx, n.engine, []request{{format: f, version: n.version, names: []string{name}}})
+	if err != nil {
+		n.err = err
+		return "", false
+	}
+	n.store(f, []string{name}, formatted[0])
+	return formatted[0][0], true
 }
 
-// Prefetch records names to format in the next batch, so that the first
-// render can find them.
-func (n *Names) Prefetch(f Format, names ...string) {
-	for _, name := range names {
-		n.Lookup(f, name)
-	}
-}
-
-// maxRounds bounds Run. A render only looks up names derived from what it
-// rendered before, so it settles in a round or two; more means a bug.
-const maxRounds = 4
-
-// Run calls render until every name it looks up is formatted. Before each
-// render, the names recorded since the last batch are formatted in one
-// round trip; a render that recorded nothing new is final. A render that
-// fails while names were still missing is retried with them formatted, since
-// a fallback name may be what it failed on.
-//
-// With a nil *Names, Run calls render once.
-func (n *Names) Run(ctx context.Context, render func() error) error {
-	return Run(ctx, render, n)
-}
-
-// Run is Names.Run for a render that looks names up in several Names, such as
-// a module's bindings, whose Go identifiers follow one version and whose
-// schema names another. Each round formats the names missing from all of
-// them in a single round trip. Nil Names are the legacy rules and are
-// skipped; with no others, render runs once.
-func Run(ctx context.Context, render func() error, names ...*Names) error {
-	var all []*Names
-	for _, n := range names {
-		if n != nil && !slices.Contains(all, n) {
-			all = append(all, n)
-		}
-	}
-	if len(all) == 0 {
-		return render()
-	}
-	for round := 1; ; round++ {
-		if err := format(ctx, all); err != nil {
-			return err
-		}
-		err := render()
-		var missing []string
-		for _, n := range all {
-			missing = append(missing, n.missing()...)
-		}
-		switch {
-		case len(missing) == 0:
-			return err
-		case round == maxRounds:
-			if err != nil {
-				return err
-			}
-			return fmt.Errorf("identifiers: names still unformatted after %d rounds: %s", maxRounds, strings.Join(missing, ", "))
-		}
-	}
-}
-
-// missing lists the pending names, sorted, for an error.
-func (n *Names) missing() []string {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	var missing []string
-	for f, names := range n.pending {
-		for name := range names {
-			missing = append(missing, fmt.Sprintf("%q (%s, %s)", name, f.Casing, n.version))
-		}
-	}
-	slices.Sort(missing)
-	return missing
-}
-
-// format formats the pending names of every Names in a single query: one
-// aliased formatIdentifiers field per Names and format, each at its Names'
-// version. Every Names comes from the same engine.
-func format(ctx context.Context, all []*Names) error {
-	var requests []request
-	var owners []*Names
-	for _, n := range all {
-		for _, r := range n.requests() {
-			requests = append(requests, r)
-			owners = append(owners, n)
-		}
-	}
-	if len(requests) == 0 {
+// Err returns the first failure of a Lookup's formatIdentifiers call: a
+// generator that looked names up returns it, since what it rendered used a
+// fallback name.
+func (n *Names) Err() error {
+	if n == nil {
 		return nil
 	}
-	formatted, err := formatIdentifiers(ctx, all[0].engine, requests)
-	if err != nil {
-		return err
-	}
-	for i, r := range requests {
-		owners[i].store(r, formatted[i])
-	}
-	return nil
-}
-
-// requests returns the pending names as requests, one per format, sorted.
-func (n *Names) requests() []request {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	var requests []request
-	for f, names := range n.pending {
-		if len(names) == 0 {
-			continue
-		}
-		requests = append(requests, request{format: f, version: n.version, names: slices.Sorted(maps.Keys(names))})
+	return n.err
+}
+
+// store keeps formatted names; the caller holds n.mu.
+func (n *Names) store(f Format, names, formatted []string) {
+	if n.formatted[f] == nil {
+		n.formatted[f] = map[string]string{}
 	}
-	slices.SortFunc(requests, func(a, b request) int {
-		return strings.Compare(string(a.format.Casing)+" "+string(a.format.Acronyms), string(b.format.Casing)+" "+string(b.format.Acronyms))
+	for i, name := range names {
+		n.formatted[f][name] = formatted[i]
+	}
+}
+
+// sortedFormats returns the formats of names in a stable order, so a
+// query's aliases don't depend on map order.
+func sortedFormats(names map[Format][]string) []Format {
+	return slices.SortedFunc(maps.Keys(names), func(a, b Format) int {
+		return strings.Compare(string(a.Casing)+" "+string(a.Acronyms), string(b.Casing)+" "+string(b.Acronyms))
 	})
-	return requests
-}
-
-// store records the formatted names of a request.
-func (n *Names) store(r request, formatted []string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.formatted[r.format] == nil {
-		n.formatted[r.format] = map[string]string{}
-	}
-	for i, name := range r.names {
-		n.formatted[r.format][name] = formatted[i]
-		delete(n.pending[r.format], name)
-	}
 }

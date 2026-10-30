@@ -38,17 +38,6 @@ func TestApplies(t *testing.T) {
 	}
 }
 
-func TestValid(t *testing.T) {
-	require.True(t, identifiers.Valid("commitSha"))
-	require.True(t, identifiers.Valid("__typename"))
-	require.True(t, identifiers.Valid("3"))
-	require.False(t, identifiers.Valid(""))
-	require.False(t, identifiers.Valid("__"))
-	require.False(t, identifiers.Valid("naïve"))
-	require.False(t, identifiers.Valid(strings.Repeat("a", 257)))
-	require.True(t, identifiers.Valid(strings.Repeat("a", 256)))
-}
-
 var table = identifierstest.Table{
 	"PASCAL/UPPERCASE": {
 		"commitSha": "CommitSHA",
@@ -113,151 +102,77 @@ func TestNilNamesAreTheLegacyRules(t *testing.T) {
 	var names *identifiers.Names
 	_, ok := names.Lookup(identifiers.GoName, "commitSha")
 	require.False(t, ok)
-	runs := 0
-	require.NoError(t, names.Run(t.Context(), func() error { runs++; return nil }))
-	require.Equal(t, 1, runs)
+	require.NoError(t, names.Prefetch(map[identifiers.Format][]string{identifiers.GoName: {"commitSha"}}))
+	require.NoError(t, names.Err())
 	require.Empty(t, names.Version())
 }
 
-// Names looked up while rendering are formatted in one query per round, each
-// name once, and the render runs again with them.
-func TestRunBatchesLookups(t *testing.T) {
+// Prefetch formats every name it's given in one query, one aliased field per
+// format, each name once; lookups of them need no other query.
+func TestPrefetch(t *testing.T) {
 	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table}
-	names := identifiers.NewNames(engine, "v1.0.0-beta.22")
-	var rendered []string
-	render := func() error {
-		rendered = rendered[:0]
-		for _, lookup := range []struct {
-			f    identifiers.Format
-			name string
-		}{
-			{identifiers.GoName, "commitSha"},
-			{identifiers.GoName, "shortSha"},
-			{identifiers.GoName, "commitSha"},
-			{identifiers.TypeName, "JSONValue"},
-			{identifiers.FieldName, "HTTPClient"},
-			{identifiers.FieldName, "GetURL"},
-			{identifiers.GoName, "naïve"}, // never sent
-		} {
-			got, ok := names.Lookup(lookup.f, lookup.name)
-			if !ok {
-				got = "fallback:" + lookup.name
-			}
-			rendered = append(rendered, got)
-		}
-		return nil
-	}
-	require.NoError(t, names.Run(t.Context(), render))
-	require.Equal(t, []string{"CommitSHA", "ShortSHA", "CommitSHA", "JSONValue", "httpClient", "getUrl", "fallback:naïve"}, rendered)
+	names := identifiers.NewNames(t.Context(), engine, "v1.0.0-beta.22")
+	require.NoError(t, names.Prefetch(map[identifiers.Format][]string{
+		identifiers.GoName:    {"commitSha", "shortSha", "commitSha", "JSONValue"},
+		identifiers.FieldName: {"HTTPClient", "GetURL"},
+	}))
 	require.Equal(t, 1, engine.FormatQueries())
 	query := engine.Queries()[0]
 	require.Contains(t, query, "query FormatIdentifiers($v0: String!, $n0: [String!]!, $n1: [String!]!)")
 	require.Contains(t, query, "f0: formatIdentifiers(names: $n0, casing: CAMEL, acronyms: CAPITALIZED, version: $v0)")
 	require.Contains(t, query, "f1: formatIdentifiers(names: $n1, casing: PASCAL, acronyms: UPPERCASE, version: $v0)")
 
-	// Everything is formatted now: another run needs no query.
-	require.NoError(t, names.Run(t.Context(), render))
-	require.Equal(t, 1, engine.FormatQueries())
-}
-
-// A render looking names up in Names of several versions formats them all in
-// one query, each request at its own version; nil Names are skipped.
-func TestRunSeveralNames(t *testing.T) {
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.23", Table: table}
-	c := engine.Connector()
-	schemaNames, err := c.Names(t.Context(), "v1.0.0-beta.23")
-	require.NoError(t, err)
-	moduleNames, err := c.Names(t.Context(), "v1.0.0-beta.22")
-	require.NoError(t, err)
 	var got []string
-	require.NoError(t, identifiers.Run(t.Context(), func() error {
-		goName, _ := schemaNames.Lookup(identifiers.GoName, "commitSha")
-		field, _ := moduleNames.Lookup(identifiers.FieldName, "HTTPClient")
-		got = []string{goName, field}
-		return nil
-	}, schemaNames, nil, moduleNames, schemaNames))
-	require.Equal(t, []string{"CommitSHA", "httpClient"}, got)
-	require.Equal(t, 1, engine.FormatQueries())
-	query := engine.Queries()[1]
-	require.Contains(t, query, "query FormatIdentifiers($v0: String!, $n0: [String!]!, $v1: String!, $n1: [String!]!)")
-}
-
-// Prefetched names are formatted before the first render, so a render that
-// only needs them runs once.
-func TestRunPrefetch(t *testing.T) {
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table}
-	names := identifiers.NewNames(engine, "v1.0.0-beta.22")
-	names.Prefetch(identifiers.GoName, "commitSha", "shortSha")
-	runs := 0
-	require.NoError(t, names.Run(t.Context(), func() error {
-		runs++
-		_, ok := names.Lookup(identifiers.GoName, "shortSha")
-		require.True(t, ok)
-		return nil
-	}))
-	require.Equal(t, 1, runs)
-	require.Equal(t, 1, engine.FormatQueries())
-}
-
-// A render that derives names from formatted ones takes a round per step.
-func TestRunChainedLookups(t *testing.T) {
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: identifierstest.Table{
-		"CAMEL/CAPITALIZED": {"GetURL": "getUrl"},
-		// The stand-in is formatted too; it's wasted, but harmless.
-		"PASCAL/UPPERCASE": {"getUrl": "GetURL", "getURL": "GetURL"},
-	}}
-	names := identifiers.NewNames(engine, "v1.0.0-beta.22")
-	var got string
-	require.NoError(t, names.Run(t.Context(), func() error {
-		field, ok := names.Lookup(identifiers.FieldName, "GetURL")
-		if !ok {
-			field = "getURL" // the legacy spelling stands in until formatted
-		}
-		got, _ = names.Lookup(identifiers.GoName, field)
-		return nil
-	}))
-	require.Equal(t, "GetURL", got)
-	require.Equal(t, 2, engine.FormatQueries())
-}
-
-// A render failing on a stand-in name is retried with the names formatted.
-func TestRunRetriesRenderErrorsWithMissingNames(t *testing.T) {
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table}
-	names := identifiers.NewNames(engine, "v1.0.0-beta.22")
-	require.NoError(t, names.Run(t.Context(), func() error {
-		if _, ok := names.Lookup(identifiers.GoName, "commitSha"); !ok {
-			return errors.New("duplicate declaration")
-		}
-		return nil
-	}))
-	err := names.Run(t.Context(), func() error { return errors.New("real failure") })
-	require.EqualError(t, err, "real failure")
-}
-
-// Run is bounded: a render that keeps asking for new names is a bug.
-func TestRunIsBounded(t *testing.T) {
-	tbl := identifierstest.Table{"PASCAL/UPPERCASE": {}}
-	for i := range 10 {
-		tbl["PASCAL/UPPERCASE"][strings.Repeat("a", i+1)] = "A"
+	for _, lookup := range []struct {
+		f    identifiers.Format
+		name string
+	}{
+		{identifiers.GoName, "commitSha"},
+		{identifiers.TypeName, "JSONValue"},
+		{identifiers.FieldName, "GetURL"},
+	} {
+		formatted, ok := names.Lookup(lookup.f, lookup.name)
+		require.True(t, ok, lookup.name)
+		got = append(got, formatted)
 	}
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: tbl}
-	names := identifiers.NewNames(engine, "v1.0.0-beta.22")
-	runs := 0
-	err := names.Run(t.Context(), func() error {
-		runs++
-		names.Lookup(identifiers.GoName, strings.Repeat("a", runs))
-		return nil
-	})
-	require.ErrorContains(t, err, "still unformatted")
-	require.Equal(t, 4, runs)
+	require.Equal(t, []string{"CommitSHA", "JSONValue", "getUrl"}, got)
+	require.Equal(t, 1, engine.FormatQueries())
+
+	// Prefetching formatted names again sends nothing.
+	require.NoError(t, names.Prefetch(map[identifiers.Format][]string{identifiers.GoName: {"commitSha"}}))
+	require.Equal(t, 1, engine.FormatQueries())
 }
 
-func TestRunPropagatesEngineErrors(t *testing.T) {
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: identifierstest.Table{}}
-	names := identifiers.NewNames(engine, "v1.0.0-beta.22")
-	names.Prefetch(identifiers.GoName, "unknown")
-	err := names.Run(t.Context(), func() error { return nil })
-	require.ErrorContains(t, err, `no PASCAL/UPPERCASE formatting of "unknown"`)
+// A name that wasn't prefetched, such as one a generator derives while
+// rendering, is formatted with a direct call when first looked up, and kept.
+func TestLookupFormatsMissesDirectly(t *testing.T) {
+	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table}
+	names := identifiers.NewNames(t.Context(), engine, "v1.0.0-beta.22")
+	for range 2 {
+		got, ok := names.Lookup(identifiers.GoName, "shortSha")
+		require.True(t, ok)
+		require.Equal(t, "ShortSHA", got)
+	}
+	require.Equal(t, 1, engine.FormatQueries())
+	require.NoError(t, names.Err())
+}
+
+// A name the engine can't format fails the call: Prefetch returns the error,
+// and a Lookup keeps it for Err, so generation fails.
+func TestFormatErrorsFailGeneration(t *testing.T) {
+	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: table}
+	names := identifiers.NewNames(t.Context(), engine, "v1.0.0-beta.22")
+	err := names.Prefetch(map[identifiers.Format][]string{identifiers.GoName: {"commitSha", "naïve"}})
+	require.ErrorContains(t, err, `no PASCAL/UPPERCASE formatting of "naïve"`)
+
+	_, ok := names.Lookup(identifiers.GoName, "naïve")
+	require.False(t, ok)
+	require.ErrorContains(t, names.Err(), `no PASCAL/UPPERCASE formatting of "naïve"`)
+	// The first failure is the one returned; later misses don't call again.
+	queries := engine.FormatQueries()
+	_, ok = names.Lookup(identifiers.GoName, "shortSha")
+	require.False(t, ok)
+	require.Equal(t, queries, engine.FormatQueries())
 }
 
 // Session speaks the engine's GraphQL HTTP protocol: POST /query, the
@@ -302,14 +217,10 @@ func TestSession(t *testing.T) {
 	names, err := identifiers.SessionConnector().Names(context.Background(), "v1.0.0-beta.22")
 	require.NoError(t, err)
 	require.NotNil(t, names)
-	var got string
-	require.NoError(t, names.Run(t.Context(), func() error {
-		got, _ = names.Lookup(identifiers.GoName, "commitSha")
-		return nil
-	}))
+	got, ok := names.Lookup(identifiers.GoName, "commitSha")
+	require.True(t, ok)
 	require.Equal(t, "CommitSHA", got)
 
-	names.Prefetch(identifiers.GoName, "unknownName")
-	err = names.Run(t.Context(), func() error { return nil })
+	err = names.Prefetch(map[identifiers.Format][]string{identifiers.GoName: {"unknownName"}})
 	require.ErrorContains(t, err, `no PASCAL/UPPERCASE formatting of "unknownName"`)
 }

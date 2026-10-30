@@ -12,6 +12,7 @@ import (
 	"golang.org/x/tools/go/packages"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
@@ -96,6 +97,23 @@ func readOverlay(t *testing.T, state *generator.GeneratedState, path string) str
 	data, err := fs.ReadFile(state.Overlay, path)
 	require.NoErrorf(t, err, "read %q from overlay", path)
 	return string(data)
+}
+
+// Past the cut, a name the engine can't format fails generation rather than
+// falling back to its legacy spelling.
+func TestGenerateClientFailsOnUnformattableName(t *testing.T) {
+	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: identifierstest.Table{}}
+	names, err := engine.Connector().Names(t.Context(), "v1.0.0-beta.22")
+	require.NoError(t, err)
+	gen := &GoGenerator{Config: generator.Config{
+		OutputDir:     t.TempDir(),
+		PackageImport: "example.com/client",
+		PackageName:   "client",
+		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: "hello"}},
+		Names:         names,
+	}}
+	_, err = gen.GenerateClient(t.Context(), buildClientSchema(), "v1.0.0-beta.22")
+	require.ErrorContains(t, err, "no PASCAL/UPPERCASE formatting of")
 }
 
 // TestGenerateClient_ServeBoundModule checks the runtime bootstrap the client
