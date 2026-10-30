@@ -159,6 +159,23 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 			}
 		}
 	}
+	// The runtime whose core unified bindings alias: the required one, or its
+	// replacement. A local checkout has no version; it's an SDK developer's,
+	// generated against the engine at hand, so it follows the schema's.
+	coreVersion := runtimeVersion
+	modData, err := os.ReadFile(goModPath)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(goModPath, modData, nil)
+	if err != nil {
+		return err
+	}
+	for _, replace := range mod.Replace {
+		if replace.Old.Path == library.Path {
+			coreVersion = replace.New.Version
+		}
+	}
 	if err := pinGeneratedTelemetry(goModPath); err != nil {
 		return err
 	}
@@ -179,8 +196,8 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	// bindings must spell them alike (SshfsVolumeOpts before the cut,
 	// SSHFSVolumeOpts after).
 	goVersion := cfg.SchemaVersion
-	if cfg.UnifiedClient {
-		goVersion = runtimeVersion
+	if cfg.UnifiedClient && coreVersion != "" {
+		goVersion = coreVersion
 	}
 	names, moduleNames, err := identifierNames(ctx, cfg, goVersion)
 	if err != nil {
