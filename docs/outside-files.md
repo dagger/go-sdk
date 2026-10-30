@@ -133,9 +133,6 @@ A client of another module aliases the core types of the targeted release.
 A `replace` directive for the selected `dagger.io/dagger` is a development
 exception: generation keeps it, reports it, and the generated code follows
 the replacement instead of the targeted release.
-Generation refuses a module's unified clients whose `dagger.io/dagger`,
-required or replaced, is a release before v1.0.0-beta.22: that library spells
-its identifiers by older rules, such as `SshfsVolume` for `SSHFSVolume`.
 
 A module with the Dang entrypoint and embedded bindings targets the same
 release: its bindings are generated from that release's schema, and its
