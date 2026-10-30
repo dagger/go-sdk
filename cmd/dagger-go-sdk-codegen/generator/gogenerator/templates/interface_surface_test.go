@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
@@ -36,7 +35,7 @@ func TestNewGoSDKInterfaceSurface(t *testing.T) {
 
 	funcs := GoModuleTemplateFuncs(t.Context(), schema, schema, "v0.21.0-dev", generator.Config{
 		Names:        styled,
-		ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "test", Naming: identifierstest.Strcase("test")},
+		ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "test"},
 	}, nil, nil, 0)
 	tree, err := buildTemplateTree(funcs)
 	require.NoError(t, err)

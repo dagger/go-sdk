@@ -61,9 +61,19 @@ func main() {
 	}
 }
 
-// sessionConnector returns the Connector the commands name identifiers
-// through: the Dagger session they run in (see identifiers.SessionFromEnv).
-var sessionConnector = identifiers.SessionConnector
+// sessionQuery queries the engine the commands name identifiers through: the
+// Dagger session they run in.
+var sessionQuery = identifiers.SessionQuery
+
+// sessionNames returns the Names Go identifiers of a schema at version are
+// formatted through, by the Dagger session the commands run in.
+func sessionNames(ctx context.Context, version string) (*identifiers.Names, error) {
+	query, err := sessionQuery()
+	if err != nil {
+		return nil, err
+	}
+	return identifiers.NewNames(ctx, query, version), nil
+}
 
 func run(args []string) error {
 	if len(args) == 0 {
@@ -292,7 +302,7 @@ func runClient(args []string) error {
 	ctx := context.Background()
 	// Go identifiers follow the client schema's version: the bound module's
 	// own declarations are named by its version, as the engine serves them.
-	names, err := sessionConnector().Names(ctx, resp.SchemaVersion)
+	names, err := sessionNames(ctx, resp.SchemaVersion)
 	if err != nil {
 		return err
 	}
@@ -449,12 +459,10 @@ func runCore(args []string) error {
 
 	// The schema's own engine names the identifiers; a schema read from a
 	// file needs the session the command runs in.
-	connector := sessionConnector()
+	var names *identifiers.Names
 	if engine != nil {
-		connector = identifiers.NewConnector(func() (identifiers.Engine, error) { return engine, nil })
-	}
-	names, err := connector.Names(ctx, schemaVersion)
-	if err != nil {
+		names = identifiers.NewNames(ctx, engine.Query, schemaVersion)
+	} else if names, err = sessionNames(ctx, schemaVersion); err != nil {
 		return err
 	}
 	gen := &gogenerator.GoGenerator{Config: generator.Config{

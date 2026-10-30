@@ -26,10 +26,9 @@ func TestGenerateDefaultStarter(t *testing.T) {
 				render.Dir = filepath.Join("..", "..", "render-template")
 				out, err := render.CombinedOutput()
 				require.NoError(t, err, string(out))
-				cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello-world", ModuleSourceID: "hello-world", Connector: testEngine(), SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", UnifiedClient: unified, GlobalClient: global, GoImage: "golang:1.26-alpine"}
+				cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello-world", ModuleSourceID: "hello-world", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", UnifiedClient: unified, GlobalClient: global, GoImage: "golang:1.26-alpine"}
 				if unified {
-					postCutLibrary(t, "v1.0.0-beta.22")
-					cfg.DaggerVersion = "v1.0.0-beta.22"
+					cfg.DaggerVersion = "v1.0.0-beta.16.0.20261008202843-134540fec551"
 				}
 				require.NoError(t, Generate(t.Context(), cfg))
 			})

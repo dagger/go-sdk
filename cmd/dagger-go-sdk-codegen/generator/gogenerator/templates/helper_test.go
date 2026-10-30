@@ -2,7 +2,6 @@ package templates
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"flag"
 	"go/format"
@@ -14,22 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
-	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers/identifierstest"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
 var updateFixtures = flag.Bool("test.update-fixtures", false, "update the test fixtures")
 
-// styled styles Go identifiers as the engine does, from its recorded
-// formatting (identifierstest.Recorded).
-var styled = func() *identifiers.Names {
-	names, err := identifierstest.Styled("v1.0.0-beta.22").Connector().Names(context.Background(), "v1.0.0-beta.22")
-	if err != nil {
-		panic(err)
-	}
-	return names
-}()
+// styled styles Go identifiers by a fake engine (identifierstest.Query).
+var styled = identifierstest.Names()
 
 func loadSchemaFromTypeJSON(t *testing.T, jsonString string) (*introspection.Schema, *introspection.Type) {
 	t.Helper()

@@ -3,6 +3,7 @@ package gogenerator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"go/types"
 	"io/fs"
 	"os"
@@ -18,15 +19,8 @@ import (
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
-// styled styles Go identifiers as the engine does, from its recorded
-// formatting (identifierstest.Recorded).
-var styled = func() *identifiers.Names {
-	names, err := identifierstest.Styled("v1.0.0-beta.22").Connector().Names(context.Background(), "v1.0.0-beta.22")
-	if err != nil {
-		panic(err)
-	}
-	return names
-}()
+// styled styles Go identifiers by a fake engine (identifierstest.Query).
+var styled = identifierstest.Names()
 
 // newSourceMapDirective builds the @sourceMap directive the engine attaches to
 // module-contributed types and fields (values are JSON-encoded).
@@ -114,18 +108,16 @@ func readOverlay(t *testing.T, state *generator.GeneratedState, path string) str
 // A name the engine can't format fails generation: there is no other
 // spelling to fall back to.
 func TestGenerateClientFailsOnUnformattableName(t *testing.T) {
-	engine := &identifierstest.Engine{Release: "v1.0.0-beta.22", Table: identifierstest.Table{}}
-	names, err := engine.Connector().Names(t.Context(), "v1.0.0-beta.22")
-	require.NoError(t, err)
+	fail := func(context.Context, string, map[string]any, any) error { return errors.New("cannot parse") }
 	gen := &GoGenerator{Config: generator.Config{
 		OutputDir:     t.TempDir(),
 		PackageImport: "example.com/client",
 		PackageName:   "client",
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: "hello"}},
-		Names:         names,
+		Names:         identifiers.NewNames(t.Context(), fail, "v1.0.0-beta.22"),
 	}}
-	_, err = gen.GenerateClient(t.Context(), buildClientSchema(), "v1.0.0-beta.22")
-	require.ErrorContains(t, err, "no PASCAL/UPPERCASE formatting of")
+	_, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v1.0.0-beta.22")
+	require.ErrorContains(t, err, "cannot parse")
 }
 
 // TestGenerateClient_ServeBoundModule checks the runtime bootstrap the client

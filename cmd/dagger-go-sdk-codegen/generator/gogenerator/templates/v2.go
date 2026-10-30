@@ -43,10 +43,11 @@ type EntrypointSources struct {
 }
 
 // sourcesFloor is the oldest Dagger release the generated code targets: the
-// first whose Go library spells its identifiers as the engine names them
-// (identifiers.CasingVersion), which the generated code follows. It also
-// calls the entrypoint's sources function and passes no workspace to types
-// and call, as every release since v1.0.0-beta.18 does.
+// first whose Go library spells its identifiers as the engine names them,
+// which the generated code follows, and whose engine names a module's
+// declarations (ModuleSource.naming). It also calls the entrypoint's sources
+// function and passes no workspace to types and call, as every release since
+// v1.0.0-beta.18 does.
 const sourcesFloor = "v1.0.0-beta.22"
 
 // GenerateV2Artifacts analyzes a Go module with the existing parser and emits
@@ -81,20 +82,14 @@ func GenerateV2Artifacts(
 		pass:            1,
 	}
 
-	// Format the schema's names, styled as Go identifiers, in one query. The
-	// module's own names are asked for as they're looked up, so only names
-	// its declarations use reach the engine. A failure to name something
-	// comes first: what was rendered with a fallback may be what failed.
-	naming := funcs.moduleNamer().naming
+	// Format the schema's names, styled as Go identifiers, in one query. A
+	// failure to format a derived name comes first: what was rendered with a
+	// fallback may be what failed.
 	if err := cfg.Names.Prefetch(DeclaredNames(schema)); err != nil {
 		return nil, err
 	}
 	artifacts, err := funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, targetVersion, sources)
-	nameErr := cfg.Names.Err()
-	if naming != nil {
-		nameErr = errors.Join(nameErr, naming.Err())
-	}
-	if nameErr != nil {
+	if nameErr := cfg.Names.Err(); nameErr != nil {
 		return nil, nameErr
 	}
 	if err != nil {
@@ -345,10 +340,6 @@ func slicesSortStrings(values []string) {
 
 func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage string, packageNames ...string) ([]byte, error) {
 	var defs []string
-	objectNames := make([]string, len(mod.objects))
-	for i, obj := range mod.objects {
-		objectNames[i] = obj.name
-	}
 	for _, obj := range mod.objects {
 		def, err := renderDangObject(obj)
 		if err != nil {
@@ -356,7 +347,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 		}
 		// The entrypoint protocol needs an explicit constructor to expose the
 		// module's main object. Match the Go runtime's implicit zero-value New.
-		if obj.constructor == nil && mod.namer.isMainObject(obj.name, objectNames) {
+		if obj.constructor == nil && mod.namer.isMainObject(obj.name) {
 			def += "\n  .withConstructor(function(\"\", typeDef.withObject(" + strconv.Quote(obj.name) + ")))"
 		}
 		defs = append(defs, def)

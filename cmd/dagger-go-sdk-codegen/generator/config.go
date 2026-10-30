@@ -7,11 +7,10 @@ type Config struct {
 	OutputDir string
 
 	// Names are the names formatted by the engine's naming rules for the
-	// version Go identifiers follow (see identifiers.Connector): the
-	// generated schema's, or for unified module bindings, which alias
-	// dagger.io/dagger/core, that runtime's. Generation needs them. The
-	// generator formats the schema's names through them up front, and any
-	// other it renders as it's looked up.
+	// version Go identifiers follow: the generated schema's, or for unified
+	// module bindings, which alias dagger.io/dagger/core, that runtime's.
+	// Generation needs them. The generator formats the schema's names
+	// through them up front, and any other it renders as it's looked up.
 	Names *identifiers.Names
 
 	// PackageImport is the import path for the generated package inside its Go
@@ -61,8 +60,8 @@ type ModuleGeneratorConfig struct {
 	LibVersion string
 
 	// Naming is the engine's naming of the module's own declarations
-	// (ModuleSource.naming), which its interface bindings and main object
-	// follow.
+	// (identifiers.NameModule, for the names templates.ModuleDeclarations
+	// lists), which its interface bindings and main object follow.
 	Naming identifiers.ModuleNames
 }
 
