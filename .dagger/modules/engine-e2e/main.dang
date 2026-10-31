@@ -8,7 +8,7 @@ type EngineE2e {
   Shared by engine-dev and the target engine. Keep it aligned with the
   dependency in dagger-module.toml.
   """
-  let engineCommit: String! = "017633c9d125b973a0ae1401073ee3b4c37c2829"
+  let engineCommit: String! = "9e25570efd9dbb9598be473ab27f2760b7af6e07"
 
   let daggerSource(commit: String!): Workspace! {
     git("https://github.com/dagger/dagger").ref(commit).asWorkspace
