@@ -37,7 +37,7 @@ func TestCoreHelpersExcludeDependencies(t *testing.T) {
 			{Name: "plain", TypeRef: object("Container")},
 		}},
 	}}
-	funcs := templates.GoTemplateFuncs(schema, schema, "v1.0.0-beta.18", generator.Config{})
+	funcs := templates.GoTemplateFuncs(schema, schema, "v1.0.0-beta.18", generator.Config{Names: styled})
 	got := coreHelpers(schema, funcs["FormatName"].(func(string) string), funcs["IsSelfChainable"].(func(introspection.Type) bool))
 	require.Equal(t, map[string]bool{"ContainerOpts": true, "ContainerWithExecOpts": true, "WithContainerFunc": true}, got)
 }
@@ -53,7 +53,7 @@ func TestUnifiedClientSharesCoreObjects(t *testing.T) {
 func TestUnifiedClientPinsAreIndependentOfTargetVersion(t *testing.T) {
 	const ref = "github.com/dagger/sdk-helpers@main"
 	for _, pin := range []string{"64645f1967d3dba6fce951dd61ae4acd8d9b0861", "92d07fcb9dd25ae50afd30097f09936d674c2950"} {
-		gen := &GoGenerator{Config: generator.Config{
+		gen := &GoGenerator{Config: generator.Config{Names: styled,
 			UnifiedClient: true, OutputDir: t.TempDir(), PackageImport: "example.com/app/client",
 			ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{
 				Kind: generator.ModuleKindGit, Ref: ref, Pin: pin,
@@ -119,7 +119,7 @@ func TestUnifiedClientConstructorUsesModuleName(t *testing.T) {
 	constructor.Name = "myModule"
 	constructor.TypeRef.OfType.Name = "MyModule"
 	constructor.Directives = introspection.Directives{newSourceMapDirective("my-module")}
-	gen := &GoGenerator{Config: generator.Config{
+	gen := &GoGenerator{Config: generator.Config{Names: styled,
 		UnifiedClient: true, OutputDir: t.TempDir(), PackageImport: "example.com/app/renamed", PackageName: "renamed",
 		ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "another-directory"}},
 	}}
@@ -146,7 +146,7 @@ func TestUnifiedClientReservesNewForModuleConstructor(t *testing.T) {
 // packages bound to a module get constructors.
 func TestUnifiedModulePackageHasNoConstructorShortcut(t *testing.T) {
 	require.Contains(t, generateUnifiedHello(t, buildClientSchema(), "v1.0.0-beta.15", true), "func New() *Hello")
-	gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: t.TempDir(), ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "hello"}}}
+	gen := &GoGenerator{Config: generator.Config{Names: styled, UnifiedClient: true, OutputDir: t.TempDir(), ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "hello"}}}
 	state, err := gen.GenerateEmbeddedClient(t.Context(), buildClientSchema(), "v1.0.0-beta.15", "example.com/hello/internal/dagger")
 	require.NoError(t, err)
 	own := readOverlay(t, state, "internal/dagger/hello.gen.go")
@@ -176,7 +176,7 @@ func TestGlobalClientIncludesDependencies(t *testing.T) {
 	write("main.go", "package main\n\nimport \"example.com/hello/internal/dagger\"\n\n"+
 		"var _ = dagger.AppWordsOpts{Sep: \"-\"}\nvar _ = dagger.AppModeFast\nvar _ *dagger.App\nvar _ *dagger.Core\nvar _ = dagger.SharedOpts{}\nvar _ dagger.Pet\n\nfunc main() {}\n")
 	generate := func(global bool) string {
-		gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, GlobalClient: global, OutputDir: root, ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "hello"}}}
+		gen := &GoGenerator{Config: generator.Config{Names: styled, UnifiedClient: true, GlobalClient: global, OutputDir: root, ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "hello"}}}
 		state, err := gen.GenerateEmbeddedClient(t.Context(), buildClientSchema(), "v1.0.0-beta.15", "example.com/hello/internal/dagger")
 		require.NoError(t, err)
 		return readOverlay(t, state, "internal/dagger/dagger.gen.go")
@@ -211,7 +211,7 @@ func TestEmbeddedClientHasNoConstructorShortcut(t *testing.T) {
 
 func generateUnifiedHello(t *testing.T, schema *introspection.Schema, schemaVersion string, unified bool) string {
 	t.Helper()
-	gen := &GoGenerator{Config: generator.Config{UnifiedClient: unified, OutputDir: t.TempDir(), PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
+	gen := &GoGenerator{Config: generator.Config{Names: styled, UnifiedClient: unified, OutputDir: t.TempDir(), PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
 	state, err := gen.GenerateClient(t.Context(), schema, schemaVersion)
 	require.NoError(t, err)
 	return readOverlay(t, state, "hello.gen.go")
@@ -229,7 +229,7 @@ func testUnifiedClientSharesCoreObjects(t *testing.T, schemaVersion string) {
 	schema.Types[1].Fields = append(schema.Types[1].Fields, &introspection.Field{Name: "echo", TypeRef: ref("Container"), Args: introspection.InputValues{{Name: "value", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "ID"}}, Directives: []*introspection.Directive{{Name: "expectedType", Args: []*introspection.DirectiveArg{{Name: "name", Value: &expected}}}}}}})
 	schema.Types[1].Fields = append(schema.Types[1].Fields, &introspection.Field{Name: "id", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "ID"}}})
 	generator.SetSchemaParents(schema)
-	gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: root, PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
+	gen := &GoGenerator{Config: generator.Config{Names: styled, UnifiedClient: true, OutputDir: root, PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
 	state, err := gen.GenerateClient(t.Context(), schema, schemaVersion)
 	require.NoError(t, err)
 	require.NoError(t, generator.Overlay(t.Context(), state.Overlay, filepath.Join(root, "client")))
@@ -292,7 +292,7 @@ func TestUnifiedClientRemembersIDs(t *testing.T) {
 		},
 	)
 	generator.SetSchemaParents(schema)
-	gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: root, PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
+	gen := &GoGenerator{Config: generator.Config{Names: styled, UnifiedClient: true, OutputDir: root, PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindDir, Path: "hello"}}}}
 	state, err := gen.GenerateClient(t.Context(), schema, "v1.0.0")
 	require.NoError(t, err)
 	require.NoError(t, generator.Overlay(t.Context(), state.Overlay, filepath.Join(root, "client")))
@@ -337,7 +337,7 @@ func TestAuthorCoreAliasesSkipDependencyNames(t *testing.T) {
 		"\t_ = dagger.ContainerWithExecOpts{}\n\t_ = dagger.AppWordsOpts{}\n"+
 		"\t_ = dagger.ImageLayerCompressionGzip\n\t_ = dagger.AppModeFast\n)\n\nfunc main() {}\n")
 	referenced, constants := map[string]bool{}, map[string]bool{}
-	cfg := generator.Config{OutputDir: dir, PackageImport: "example.com/m/internal/dagger"}
+	cfg := generator.Config{Names: styled, OutputDir: dir, PackageImport: "example.com/m/internal/dagger"}
 	coreNames := map[string]bool{"ImageLayerCompression": true}
 	helpers := map[string]bool{"ContainerWithExecOpts": true}
 	require.NoError(t, addAuthorCoreAliases(t.Context(), cfg, coreNames, helpers, nil, referenced, constants, map[string]string{}))

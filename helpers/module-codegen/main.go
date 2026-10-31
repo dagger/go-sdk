@@ -35,6 +35,7 @@ func run() error {
 	flag.StringVar(&cfg.ModuleName, "module-name", "", "Dagger module name")
 	flag.StringVar(&cfg.SchemaPath, "introspection-json-path", "", "path to the module-facing introspection JSON")
 	flag.StringVar(&cfg.SchemaVersion, "schema-version", "", "engine schema version")
+	sourceIDFile := flag.String("module-source-id-file", "", "file holding the ID of the module source the engine serves the module as, whose naming gives the module's schema names")
 	flag.StringVar(&cfg.DaggerVersion, "dagger-version", "", "dagger.io/dagger version")
 	flag.StringVar(&cfg.TargetVersion, "target-version", "", "Dagger release the generated code targets, which the entrypoint declares to the module's process")
 	flag.StringVar(&cfg.GoImage, "go-image", "golang:1.26-alpine", "Go image used by the generated entrypoint")
@@ -53,6 +54,15 @@ func run() error {
 	if cfg.SchemaPath == "" {
 		return fmt.Errorf("--introspection-json-path is required")
 	}
+	if *sourceIDFile == "" {
+		return fmt.Errorf("--module-source-id-file is required")
+	}
+	// The ID is read from a file: it can outgrow an exec argument.
+	sourceID, err := os.ReadFile(*sourceIDFile)
+	if err != nil {
+		return err
+	}
+	cfg.ModuleSourceID = strings.TrimSpace(string(sourceID))
 	return gogenerator.Generate(context.Background(), cfg)
 }
 

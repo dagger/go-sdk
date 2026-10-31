@@ -14,6 +14,7 @@ import (
 	. "github.com/dave/jennifer/jen" //nolint:staticcheck
 	"github.com/stretchr/testify/require"
 
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
 
@@ -153,7 +154,10 @@ func TestDispatchForObjectWithoutFunctions(t *testing.T) {
 }
 
 func TestEntrypointExposesDefaultConstructor(t *testing.T) {
-	mod := &v2Module{objects: []*parsedObjectType{{name: "HelloWorld"}, {name: "Item"}}}
+	mod := &v2Module{
+		namer:   moduleNamer{names: identifiers.ModuleNames{Main: "HelloWorld"}},
+		objects: []*parsedObjectType{{name: "HelloWorld"}, {name: "Item"}},
+	}
 	source, err := mod.renderEntrypointSource("hello-world", ".", "golang:1.26-alpine")
 	require.NoError(t, err)
 	require.Contains(t, string(source), `.withConstructor(function("", typeDef.withObject("HelloWorld")))`)
@@ -266,6 +270,7 @@ func entrypointFixture() *v2Module {
 	}
 	return &v2Module{
 		targetVersion: "v1.0.0-beta.20",
+		namer:         moduleNamer{names: identifiers.ModuleNames{Main: "HelloWorld"}},
 		objects: []*parsedObjectType{
 			{
 				name:      "HelloWorld",

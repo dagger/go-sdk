@@ -34,6 +34,7 @@ func TestNewGoSDKInterfaceSurface(t *testing.T) {
 	t.Cleanup(func() { generator.SetSchema(nil) })
 
 	funcs := GoModuleTemplateFuncs(t.Context(), schema, schema, "v0.21.0-dev", generator.Config{
+		Names:        styled,
 		ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "test"},
 	}, nil, nil, 0)
 	tree, err := buildTemplateTree(funcs)

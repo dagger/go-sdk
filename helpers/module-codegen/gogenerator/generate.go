@@ -27,6 +27,7 @@ import (
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	clientgen "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/library"
 
@@ -38,9 +39,15 @@ type GenerateConfig struct {
 	ModuleName    string
 	SchemaPath    string
 	SchemaVersion string
-	DaggerVersion string
-	TargetVersion string
-	GoImage       string
+	// ModuleSourceID is the ID of the module source the engine serves the
+	// module as, with its generated entrypoint. The interface bindings and
+	// the main object take the module's schema names from its naming
+	// (ModuleSource.naming), while Go identifiers follow the schema's
+	// version.
+	ModuleSourceID string
+	DaggerVersion  string
+	TargetVersion  string
+	GoImage        string
 	// RemovedPath, when set, names a file that receives the module-relative
 	// paths of the generated files this run removed, one per line. The caller
 	// merges the remaining files back, so it needs the list to remove the rest.
@@ -141,6 +148,23 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 			}
 		}
 	}
+	// The runtime whose core unified bindings alias: the required one, or its
+	// replacement. A local checkout has no version; it's an SDK developer's,
+	// generated against the engine at hand, so it follows the schema's.
+	coreVersion := runtimeVersion
+	modData, err := os.ReadFile(goModPath)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(goModPath, modData, nil)
+	if err != nil {
+		return err
+	}
+	for _, replace := range mod.Replace {
+		if replace.Old.Path == library.Path {
+			coreVersion = replace.New.Version
+		}
+	}
 	if err := pinGeneratedTelemetry(goModPath); err != nil {
 		return err
 	}
@@ -154,12 +178,27 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	cfg.SchemaVersion = resp.SchemaVersion
 	generator.SetSchemaParents(resp.Schema)
+	// Embedded bindings carry their own core client, whose Go identifiers
+	// follow the schema's version. Unified bindings alias the core types,
+	// option structs and With functions of the runtime's dagger.io/dagger/core
+	// instead, which spells them by the dictionary of its own version: the
+	// bindings must spell them alike.
+	goVersion := cfg.SchemaVersion
+	if cfg.UnifiedClient && coreVersion != "" {
+		goVersion = coreVersion
+	}
+	query, err := sessionQuery()
+	if err != nil {
+		return err
+	}
+	names := identifiers.NewNames(ctx, query, goVersion)
 
 	genCfg := generator.Config{
 		OutputDir:     root,
 		UnifiedClient: cfg.UnifiedClient,
 		GlobalClient:  cfg.GlobalClient,
 		ClientConfig:  &generator.ClientGeneratorConfig{},
+		Names:         names,
 		ModuleConfig: &generator.ModuleGeneratorConfig{
 			ModuleName: cfg.ModuleName,
 			LibVersion: cfg.DaggerVersion,
@@ -227,6 +266,13 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	pkg, fset, err := loadPackage(ctx, root, false)
 	if err != nil {
 		return fmt.Errorf("load module package: %w", err)
+	}
+	// The engine names the module's declarations the generated code spells,
+	// in one query.
+	typeNames, fieldNames, candidates := templates.ModuleDeclarations(pkg, fset, resp.Schema, cfg.ModuleName)
+	genCfg.ModuleConfig.Naming, err = identifiers.NameModule(ctx, query, cfg.ModuleSourceID, typeNames, fieldNames, candidates)
+	if err != nil {
+		return err
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
 		ctx, resp.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.TargetVersion, sources,
@@ -358,6 +404,10 @@ func removeStaleBindings(root string, overlay fs.FS) ([]string, error) {
 	}
 	return removed, nil
 }
+
+// sessionQuery queries the engine generation names identifiers through: the
+// Dagger session it runs in.
+var sessionQuery = identifiers.SessionQuery
 
 func readSchema(path, version string) (*introspection.Response, error) {
 	data, err := os.ReadFile(path)

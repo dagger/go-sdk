@@ -28,6 +28,31 @@ type GoGenerator struct {
 	Config generator.Config
 }
 
+// withNames formats the names the schema declares, in one query, then runs
+// generate once: the bindings format each of those names, and the few they
+// derive (FooID, handles) are formatted as they're looked up. A failure to
+// format a name fails generation, and so does generating without the
+// engine's names.
+func (g *GoGenerator) withNames(schema *introspection.Schema, generate func() (*generator.GeneratedState, error)) (*generator.GeneratedState, error) {
+	names := g.Config.Names
+	if names == nil {
+		return nil, fmt.Errorf("generating Go bindings needs the engine to name their identifiers (generator.Config.Names)")
+	}
+	if err := names.Prefetch(templates.DeclaredNames(schema)); err != nil {
+		return nil, err
+	}
+	state, err := generate()
+	// A failure to format a name comes first: what was rendered with a
+	// fallback may be what failed.
+	if nameErr := names.Err(); nameErr != nil {
+		return nil, nameErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
 // PackageInfo describes the Go package the generated files belong to.
 type PackageInfo struct {
 	PackageName   string // Go package name
