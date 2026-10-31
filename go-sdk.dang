@@ -635,7 +635,8 @@ type GoSdk {
       .generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
-    let moduleSourceID = toString(entrypointModuleSource(ws, name, scopePath).id)
+    let served = entrypointModuleSource(ws, name, scopePath)
+    let moduleSourceID = toString(served.id)
 
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
@@ -656,9 +657,13 @@ type GoSdk {
     let buildRoot = if (included) { "/src/" + includes.file("module").contents } else { "/src" }
     let tree = if (included) { includedTree(ws, moduleSource, includes) } else { moduleSource }
     # The module source ID can outgrow an exec argument: it's passed in a file.
+    # The entrypoint is checked against the schema it's served at, the
+    # entrypoint source's, which can differ from the bindings' (an enum's
+    # members are spelled by the view).
     let inputs = builder
       .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJson)
+      .withFile("/entrypoint-schema.json", served.introspectionSchemaJson)
       .withNewFile("/module-source-id", moduleSourceID)
     let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
@@ -682,7 +687,7 @@ type GoSdk {
     let generated = runTool(codegen, [
       "entrypoint-contract",
       "--entrypoint-dir", buildRoot + "/" + prefix + entrypointPath,
-      "--introspection-json-path", "/schema.json",
+      "--introspection-json-path", "/entrypoint-schema.json",
     ]).directory(buildRoot)
     # Merge only what the generator owns, so the user's files are not
     # written back.
