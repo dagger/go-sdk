@@ -67,7 +67,15 @@ func GenerateV2Artifacts(
 	goImage string,
 	targetVersion string,
 	sources *EntrypointSources,
-) (*V2Artifacts, error) {
+) (_ *V2Artifacts, rerr error) {
+	defer func() {
+		r := recover()
+		if u, ok := r.(unnamed); ok {
+			rerr = u
+		} else if r != nil {
+			panic(r)
+		}
+	}()
 	namer := goNamer{names: cfg.Names}
 	funcs := goTemplateFuncs{
 		CommonFunctions: generator.NewCommonFunctions(schemaVersion, &FormatTypeFunc{namer: namer}),
