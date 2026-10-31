@@ -11,8 +11,12 @@ type GoSdk {
   module's own bindings unchanged. Dependency clients read the running
   engine's schema and can change when its view of a dependency changes.
   An SDK update changes the targeted release unless this setting pins it.
-  The entrypoint sets DAGGER_CLIENT_VERSION for the module process.
-  The engine ignores this declaration until a future engine change.
+  The entrypoint sets DAGGER_CLIENT_VERSION for the module process, and the
+  dang.toml beside it declares the release as its Dagger import.
+  Released engines up to v1.0.0-beta.21 ignore both declarations.
+  v1.0.0-beta.22 reads the variable, which moves the core API view of the
+  module process, and ignores the file. dagger/dagger#14902, not merged,
+  reads the file, which sets the module's own version.
   A go.mod requirement that needs a later release is refused until the
   target is raised; a replace directive for dagger.io/dagger is a
   development exception that generation reports. The setting pins an older
@@ -166,6 +170,7 @@ type GoSdk {
       # choosing, and bindings generated at a newer engine's view can use
       # fields that view lacks.
       let target = targetRelease("module " + JSON.encode(name), versions)
+      checkDangConfig(initialized, target)
       let withClients = if (unified) {
         generateStandaloneClients(initialized, clients, true, target)
       } else { initialized }
@@ -708,7 +713,91 @@ type GoSdk {
     sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
-      .generate(pruned, lock: false, legacyJson: false)
+      .generate(withDangConfig(pruned, target), lock: false, legacyJson: false)
+  }
+
+  """
+  Write the entrypoint's dang.toml with the target as its Dagger version and
+  the settings it already has. An unchanged file is not written again.
+  """
+  let withDangConfig(ws: Workspace!, target: String!): Workspace! {
+    let scope = ws.withWorkdir(normalizePath(normalizePath(ws.cwd) + "/" + entrypointPath))
+    let configured = sdkHelpers.loadDangConfig(scope)
+      .withVersion(dangLanguage)
+      .withDaggerImport(name: "Dagger", version: target)
+      .generate(scope)
+    if (exists(scope, "dang.toml") and configured.file("dang.toml").contents == scope.file("dang.toml").contents) {
+      return ws
+    }
+    configured.withWorkdir(normalizePath(ws.cwd))
+  }
+
+  """
+  Refuse a dang.toml that generation cannot bring to the target without
+  dropping what it declares. The engine reads only the nearest file in the
+  module directory, so a new entrypoint file would hide one above it.
+  """
+  let checkDangConfig(ws: Workspace!, target: String!): Void {
+    let path = entrypointPath + "/dang.toml"
+    if (exists(ws, path)) {
+      return checkEntrypointDangConfig(path, decodedDangConfig(ws, path), target)
+    }
+    let nearest = ["internal/dagger/dang.toml", "internal/dang.toml", "dang.toml"].filter { p => exists(ws, p) }
+    let inherited = nearest[0] ?? ""
+    if (inherited != "" and !isDefaultDangConfig(decodedDangConfig(ws, inherited), target)) {
+      raise inherited + " has settings that a generated " + path + " would hide, because the engine reads only the nearest dang.toml; move them to " + path + ", or remove them"
+    }
+    null
+  }
+
+  let checkEntrypointDangConfig(path: String!, config: Dagger.JSONValue!, target: String!): Void {
+    let language = rawField(config, "dang")
+    if (language != "" and language != JSON.encode(dangLanguage)) {
+      raise path + " sets dang = " + language + ", and the generated entrypoint is written in Dang " + dangLanguage + "; set dang = " + JSON.encode(dangLanguage) + " or remove it"
+    }
+    dangImports(config).each { importName =>
+      let entry = config.field(["imports", importName])
+      let dagger = rawField(entry, "dagger")
+      if (importName != "Dagger") {
+        if (dagger.hasPrefix("\"") and dagger != JSON.encode(target)) {
+          raise path + " sets imports." + importName + ".dagger = " + dagger + ", and this module targets " + target + ": the engine refuses two Dagger versions; set it to " + JSON.encode(target) + ", or to true"
+        }
+      } else if (entry.fields.contains("path")) {
+        raise path + " sets a path for the Dagger import, and the generated entrypoint needs that import from the engine; remove imports.Dagger.path"
+      } else if (rawField(entry, "endpoint") != "" and rawField(entry, "endpoint") != "\"\"") {
+        raise path + " sets an endpoint for the Dagger import, and Dang does not allow one with the Dagger version generation writes; remove imports.Dagger.endpoint"
+      }
+    }
+    null
+  }
+
+  """Nothing but the language and a Dagger import a generated file would also set."""
+  let isDefaultDangConfig(config: Dagger.JSONValue!, target: String!): Boolean! {
+    let language = rawField(config, "dang")
+    let imports = dangImports(config)
+    if (config.fields.filter { f => f != "dang" and f != "imports" }.length > 0) { return false }
+    if (language != "" and language != JSON.encode(dangLanguage)) { return false }
+    if (imports.filter { i => i != "Dagger" }.length > 0) { return false }
+    if (imports.length == 0) { return true }
+    let entry = config.field(["imports", "Dagger"])
+    let dagger = rawField(entry, "dagger")
+    entry.fields.filter { f => f != "dagger" }.length == 0 and
+      (dagger == "true" or dagger == JSON.encode(target))
+  }
+
+  let decodedDangConfig(ws: Workspace!, path: String!): Dagger.JSONValue! {
+    Dagger.json.withContents(JSON.encode(TOML.decode(ws.file(path).contents)) :: Dagger.JSON!) rescue {
+      err: Error => raise "load " + path + ": " + err.message
+    }
+  }
+
+  let dangImports(config: Dagger.JSONValue!): [String!]! {
+    if (config.fields.contains("imports")) { config.field(["imports"]).fields } else { [] }
+  }
+
+  """A field in its JSON form, which tells a string from true; empty when unset."""
+  let rawField(value: Dagger.JSONValue!, key: String!): String! {
+    if (value.fields.contains(key)) { toString(value.field([key]).contents) } else { "" }
   }
 
   """
@@ -808,6 +897,9 @@ type GoSdk {
 
   """Directory of the generated Dang entrypoint, relative to the module."""
   let entrypointPath: String! = "internal/dagger/entrypoint"
+
+  """The Dang language version of the generated entrypoint."""
+  let dangLanguage: String! = "2.1"
 
   """Path of a module below its Go root, both relative to the workspace root."""
   let moduleSubpath(goRoot: String!, scopePath: String!): String! {

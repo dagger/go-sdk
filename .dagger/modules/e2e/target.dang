@@ -6,6 +6,7 @@ type TargetChecks {
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let dependencyPath: String! = ".dagger/modules/e2e/fixtures/target/dep"
   let floor: String! = "v1.0.0-beta.18"
+  let dangConfigPath: String! = "internal/dagger/entrypoint/dang.toml"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.21"
@@ -18,6 +19,17 @@ type TargetChecks {
   let declares(ws: Workspace!, release: String!): Boolean! {
     ws.file("internal/dagger/entrypoint/main.dang").contents.contains(
       "\n      .withEnvVariable(\"DAGGER_MODULE_CALL_DIGEST\", callDigest ?? \"\")\n      .withEnvVariable(\"DAGGER_CLIENT_VERSION\", " + JSON.encode(release) + ")\n      .withExec(\n")
+  }
+
+  """The generated dang.toml declares language 2.1 and the release."""
+  let configures(ws: Workspace!, release: String!): Boolean! {
+    let config = dangConfig(ws, dangConfigPath)
+    config.field(["dang"]).asString == "2.1" and
+      config.field(["imports", "Dagger", "dagger"]).asString == release
+  }
+
+  let dangConfig(ws: Workspace!, path: String!): Dagger.JSONValue! {
+    Dagger.json.withContents(JSON.encode(TOML.decode(ws.file(path).contents)) :: Dagger.JSON!)
   }
 
   """
@@ -176,6 +188,90 @@ type TargetChecks {
     let kept = sdk.generateScope(ws: first.withNewFile("dagger-module.toml", declared), isModule: true, name: name, clients: [])
     assert("an existing manifest did not keep its engineVersion:\n" + kept.file("dagger-module.toml").contents) {
       kept.file("dagger-module.toml").contents == declared
+    }
+    null
+  }
+
+  """
+  A generated entrypoint's dang.toml declares the release its process
+  declares, for unified and embedded bindings and for a pinned older release,
+  and follows the target when the setting changes. Settings of an existing
+  file survive, the Dagger import of it is replaced, and files above the
+  entrypoint stay as they are. Generating again changes nothing, and a file
+  generation would have to overrule is refused.
+  """
+  dangConfigCheck(ws: Workspace!): Void @check {
+    let name = "target-dang-config"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+    let first = goSdk.generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("dang.toml does not declare what the process declares:\n" + first.file(dangConfigPath).contents) {
+      configures(first, sdkTarget) and declares(first, sdkTarget)
+    }
+    assert("generation moved the working directory to " + first.cwd) { first.cwd == input.cwd }
+    let again = goSdk.generateScope(ws: first, isModule: true, name: name, clients: [])
+    assert("generating again changed files") { again.changes(first).isEmpty }
+    assert("generating again moved the working directory to " + again.cwd) { again.cwd == input.cwd }
+
+    let embedded = goSdk(unifiedClients: false).generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("embedded bindings have a different dang.toml:\n" + embedded.file(dangConfigPath).contents) {
+      configures(embedded, sdkTarget) and declares(embedded, sdkTarget)
+    }
+
+    let pinned = goSdk(targetVersion: "v1.0.0-beta.20").generateScope(ws: first, isModule: true, name: name, clients: [])
+    assert("dang.toml does not declare the pin:\n" + pinned.file(dangConfigPath).contents) {
+      configures(pinned, "v1.0.0-beta.20") and declares(pinned, "v1.0.0-beta.20")
+    }
+    let unpinned = goSdk.generateScope(ws: pinned, isModule: true, name: name, clients: [])
+    assert("dang.toml kept an older version:\n" + unpinned.file(dangConfigPath).contents) {
+      configures(unpinned, sdkTarget) and declares(unpinned, sdkTarget)
+    }
+
+    let settings = "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = true\nservice = [\"dagger\", \"session\"]\n\n[imports.Extra]\npath = \"../extra\"\n"
+    let parent = "[imports.Parent]\npath = \"../parent\"\n"
+    let customized = first.withNewFile(dangConfigPath, settings).withNewFile("dang.toml", parent)
+    let managed = goSdk.generateScope(ws: customized, isModule: true, name: name, clients: [])
+    let config = dangConfig(managed, dangConfigPath)
+    assert("dang.toml lost its settings:\n" + managed.file(dangConfigPath).contents) {
+      configures(managed, sdkTarget) and
+        toString(config.field(["imports", "Dagger", "service"]).contents).contains("session") and
+        config.field(["imports", "Extra", "path"]).asString == "../extra"
+    }
+    assert("generation changed the dang.toml above the entrypoint") {
+      managed.file("dang.toml").contents == parent
+    }
+    let managedAgain = goSdk.generateScope(ws: managed, isModule: true, name: name, clients: [])
+    assert("generating again changed a customized dang.toml") { managedAgain.changes(managed).isEmpty }
+
+    let harmless = "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = true\n"
+    let inherited = goSdk.generateScope(
+      ws: ws.withNewFile(outputRoot + "/dang.toml", parent)
+        .withNewDirectory(scopePath, directory)
+        .withWorkdir(scopePath)
+        .withNewFile("dang.toml", harmless),
+      isModule: true, name: name, clients: [],
+    )
+    assert("a dang.toml with nothing to hide stopped generation:\n" + inherited.file(dangConfigPath).contents) {
+      configures(inherited, sdkTarget) and
+        inherited.file("dang.toml").contents == harmless and
+        inherited.withWorkdir(outputRoot).file("dang.toml").contents == parent
+    }
+
+    let path = dangConfigPath
+    [
+      ["dang = \"2.0\"\n", path + " sets dang = \"2.0\""],
+      ["[imports.Dagger]\npath = \"../dagger\"\n", path + " sets a path for the Dagger import"],
+      ["[imports.Dagger]\ndagger = true\nendpoint = \"http://localhost\"\n", path + " sets an endpoint for the Dagger import"],
+      ["[imports.Other]\ndagger = \"v1.0.0-beta.20\"\n", path + " sets imports.Other.dagger = \"v1.0.0-beta.20\""],
+    ].map { refused =>
+      expectRefusal(goSdk, input.withNewFile(path, refused[0] ?? ""), name, refused[1] ?? "")
+    }
+    [
+      ["dang.toml", parent],
+      ["internal/dang.toml", "[imports.Dagger]\ndagger = \"v1.0.0-beta.20\"\n"],
+      ["internal/dagger/dang.toml", "dang = \"2.0\"\n"],
+    ].map { refused =>
+      expectRefusal(goSdk, input.withNewFile(refused[0] ?? "", refused[1] ?? ""), name, (refused[0] ?? "") + " has settings that a generated " + path + " would hide")
     }
     null
   }
