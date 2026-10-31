@@ -34,12 +34,22 @@ func (funcs goTemplateFuncs) moduleNamer() moduleNamer {
 	return moduleNamer{names: funcs.cfg.ModuleConfig.Naming}
 }
 
-// answer returns the engine's answer for name. Every name the generated code
-// spells was asked for (ModuleDeclarations): one that wasn't is a bug.
+// unnamed is the panic of a lookup of a name the engine wasn't asked for
+// (ModuleDeclarations): a type the module's API uses that it doesn't
+// declare as a module type, such as an interface that doesn't embed
+// DaggerObject. GenerateV2Artifacts returns it as an error.
+type unnamed struct{ kind, name string }
+
+func (u unnamed) Error() string {
+	return fmt.Sprintf("the module's API uses %s %q, which the module doesn't declare: a module interface embeds DaggerObject, and the API uses only the module's own types and core types", u.kind, u.name)
+}
+
+// answer returns the engine's answer for name, and panics with unnamed for
+// a name it wasn't asked for.
 func answer(answers map[string]string, kind, name string) string {
 	answer, ok := answers[name]
 	if !ok {
-		panic(fmt.Sprintf("the engine wasn't asked for the schema name of %s %q (templates.ModuleDeclarations)", kind, name))
+		panic(unnamed{kind, name})
 	}
 	return answer
 }
@@ -69,6 +79,9 @@ func (n moduleNamer) isMainObject(name string) bool {
 func ModuleDeclarations(pkg *packages.Package, fset *token.FileSet, schema *introspection.Schema, moduleName string) (typeNames, fieldNames, candidates []string) {
 	ps := &parseState{pkg: pkg, fset: fset, schema: schema, moduleName: moduleName}
 	scope := pkg.Types.Scope()
+	for _, name := range scope.Names() {
+		ps.objs = append(ps.objs, scope.Lookup(name))
+	}
 	var daggerObject []string
 	if obj, ok := scope.Lookup(daggerObjectIfaceName).(*types.TypeName); ok {
 		if iface, ok := obj.Type().Underlying().(*types.Interface); ok {
