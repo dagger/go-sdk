@@ -425,7 +425,7 @@ func TestGenerateRefusesEngineWithoutModuleContext(t *testing.T) {
 	schema, err := filepath.Abs("../../../cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
 	require.NoError(t, err)
 	err = Generate(t.Context(), GenerateConfig{ModuleRoot: root, ModuleName: "app", ModuleSourceID: "app", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"})
-	require.ErrorContains(t, err, "the generated Dang entrypoint needs Dagger v1.0.0-beta.22 or later")
+	require.ErrorContains(t, err, "the generated Dang entrypoint needs Dagger v1.0.0-beta.25 or later")
 }
 
 // moduleContextSchema is the core schema with the CurrentModule fields of an

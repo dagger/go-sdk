@@ -5,7 +5,7 @@ module's schema names from the engine (ModuleSource.naming), and Go
 identifiers are the engine's formatting at the version of the schema the
 bindings are generated from.
 
-It needs an engine at v1.0.0-beta.22 or later, so no check runs it yet. cli
+It needs an engine at v1.0.0-beta.25 or later, so no check runs it yet. cli
 is that engine's dagger CLI, which runs nested in this session:
 
   dagger -m .dagger/modules/e2e call naming --cli "$(command -v dagger)" calls-check --ws .
@@ -17,7 +17,7 @@ type NamingChecks {
 
   """
   The fixture generated as an embedded entrypoint module. With pinned, the
-  entrypoint's dang.toml declares v1.0.0-beta.22; without one, the engine
+  entrypoint's dang.toml declares v1.0.0-beta.25; without one, the engine
   names the module by v1.0.0-beta.20.
   """
   generated(ws: Workspace!, pinned: Boolean! = false): Directory! {
@@ -31,7 +31,7 @@ type NamingChecks {
   let generatedScope(ws: Workspace!, pinned: Boolean!): Workspace! {
     let module = ws.directory("/" + fixture)
     let source = if (pinned) {
-      module.withNewFile("internal/dagger/entrypoint/dang.toml", "[imports.Dagger]\ndagger = \"v1.0.0-beta.22\"\n")
+      module.withNewFile("internal/dagger/entrypoint/dang.toml", "[imports.Dagger]\ndagger = \"v1.0.0-beta.25\"\n")
     } else { module }
     goSdk(dangEntrypoint: true, unifiedClients: false, globalClient: true).generateScope(
       ws: directory.withDirectory("naming-app", source).asWorkspace.withWorkdir("naming-app"),

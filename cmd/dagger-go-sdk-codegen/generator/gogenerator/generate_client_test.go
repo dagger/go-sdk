@@ -114,9 +114,9 @@ func TestGenerateClientFailsOnUnformattableName(t *testing.T) {
 		PackageImport: "example.com/client",
 		PackageName:   "client",
 		ClientConfig:  &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: "DIR_SOURCE", Path: "hello"}},
-		Names:         identifiers.NewNames(t.Context(), fail, "v1.0.0-beta.22"),
+		Names:         identifiers.NewNames(t.Context(), fail, "v1.0.0-beta.25"),
 	}}
-	_, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v1.0.0-beta.22")
+	_, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v1.0.0-beta.25")
 	require.ErrorContains(t, err, "cannot parse")
 }
 
