@@ -1,7 +1,7 @@
 // Package identifiers names identifiers through the engine, so generators
 // don't carry a copy of its naming rules: Go identifiers by
-// Query.formatIdentifiers (Names), and the schema names the engine gives a
-// module's own declarations by ModuleSource.naming (ModuleNames,
+// Naming.formatIdentifiers (Names), and the schema names the engine gives a
+// module's own declarations by Naming.module (ModuleNames,
 // dagger/dagger#14996). Both ask the Dagger session the generator runs in; a
 // name the engine can't parse fails generation.
 package identifiers

@@ -636,7 +636,7 @@ type GoSdk {
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
     let served = entrypointModuleSource(ws, name, scopePath)
-    let moduleSourceID = toString(served.id)
+    let naming = served.naming
 
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
@@ -656,7 +656,6 @@ type GoSdk {
     # anchor, beside the paths it includes.
     let buildRoot = if (included) { "/src/" + includes.file("module").contents } else { "/src" }
     let tree = if (included) { includedTree(ws, moduleSource, includes) } else { moduleSource }
-    # The module source ID can outgrow an exec argument: it's passed in a file.
     # The entrypoint is checked against the schema it's served at, the
     # entrypoint source's, which can differ from the bindings' (an enum's
     # members are spelled by the view).
@@ -664,16 +663,16 @@ type GoSdk {
       .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJson)
       .withFile("/entrypoint-schema.json", served.introspectionSchemaJson)
-      .withNewFile("/module-source-id", moduleSourceID)
     let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
       "module-codegen",
       "--module-root", buildRoot + "/" + moduleRoot,
       "--build-root", "/src",
-      "--module-name", name,
+      "--module-name", naming.name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
-      "--module-source-id-file", "/module-source-id",
+      "--naming-version", naming.version,
+      "--module-original-name", naming.originalName,
       "--go-image", goImage,
       "--dagger-version", target,
       "--target-version", target,
