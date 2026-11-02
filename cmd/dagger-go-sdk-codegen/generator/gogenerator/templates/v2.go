@@ -52,7 +52,7 @@ type EntrypointSources struct {
 // declarations (ModuleSource.naming). It also calls the entrypoint's sources
 // function and passes no workspace to types and call, as every release since
 // v1.0.0-beta.18 does.
-const sourcesFloor = "v1.0.0-beta.22"
+const sourcesFloor = "v1.0.0-beta.25"
 
 // platformFloor is the first Dagger release with Directory.withPlatform and
 // a prebuild for another platform (Module._prebuild's platform): an

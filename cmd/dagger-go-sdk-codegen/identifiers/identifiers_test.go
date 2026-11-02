@@ -24,7 +24,7 @@ func TestLookup(t *testing.T) {
 		}
 		return identifierstest.Query(ctx, q, variables, data)
 	}
-	names := identifiers.NewNames(t.Context(), query, "v1.0.0-beta.22")
+	names := identifiers.NewNames(t.Context(), query, "v1.0.0-beta.25")
 	require.NoError(t, names.Prefetch([]string{"commitSha"}))
 	for range 2 {
 		for name, want := range map[string]string{"commitSha": "CommitSHA", "shortSha": "ShortSHA"} {
