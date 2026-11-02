@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// Names are Go identifiers formatted by the engine (Query.formatIdentifiers:
+// Names are Go identifiers formatted by the engine (Naming.formatIdentifiers:
 // PascalCase, uppercase acronyms) with the dictionary of one version.
 // Prefetch formats the names a generator knows it will look up, in one
 // query; Lookup finds them, and formats any other name with a direct call.
@@ -89,16 +89,18 @@ func (n *Names) Err() error {
 
 func (n *Names) format(names []string) ([]string, error) {
 	var data struct {
-		Names []string `json:"formatIdentifiers"`
+		Naming struct {
+			Names []string `json:"formatIdentifiers"`
+		} `json:"naming"`
 	}
 	err := n.query(n.ctx, `query FormatIdentifiers($names: [String!]!, $version: String!) {
-  formatIdentifiers(names: $names, casing: PASCAL, acronyms: UPPERCASE, version: $version)
+  naming(version: $version) { formatIdentifiers(names: $names, casing: PASCAL, acronyms: UPPERCASE) }
 }`, map[string]any{"names": names, "version": n.version}, &data)
 	if err != nil {
 		return nil, fmt.Errorf("format Go identifiers: %w", err)
 	}
-	if len(data.Names) != len(names) {
-		return nil, fmt.Errorf("format Go identifiers: got %d names for %d", len(data.Names), len(names))
+	if len(data.Naming.Names) != len(names) {
+		return nil, fmt.Errorf("format Go identifiers: got %d names for %d", len(data.Naming.Names), len(names))
 	}
-	return data.Names, nil
+	return data.Naming.Names, nil
 }
