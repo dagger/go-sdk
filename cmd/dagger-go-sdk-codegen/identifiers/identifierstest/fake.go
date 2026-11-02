@@ -34,7 +34,7 @@ func Formatting(format func(string) string) identifiers.Query {
 			for _, name := range variables["names"].([]string) {
 				formatted = append(formatted, format(name))
 			}
-			result = map[string]any{"formatIdentifiers": formatted}
+			result = map[string]any{"naming": map[string]any{"formatIdentifiers": formatted}}
 		case strings.Contains(query, "naming {"):
 			result = map[string]any{"node": map[string]any{"naming": naming(variables)}}
 		default:
