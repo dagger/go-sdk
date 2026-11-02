@@ -48,7 +48,7 @@ type EntrypointSources struct {
 // declarations (ModuleSource.naming). It also calls the entrypoint's sources
 // function and passes no workspace to types and call, as every release since
 // v1.0.0-beta.18 does.
-const sourcesFloor = "v1.0.0-beta.22"
+const sourcesFloor = "v1.0.0-beta.25"
 
 // GenerateV2Artifacts analyzes a Go module with the existing parser and emits
 // a manifest-v2 entrypoint around its established static dispatcher. The
