@@ -15,7 +15,7 @@ import (
 
 // Names are Go identifiers formatted by Query.
 func Names() *identifiers.Names {
-	return identifiers.NewNames(context.Background(), Query, "v1.0.0-beta.22")
+	return identifiers.NewNames(context.Background(), Query, "v1.0.0-beta.25")
 }
 
 // Query is a fake engine that formats Go identifiers by Format (see

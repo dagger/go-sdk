@@ -8,7 +8,7 @@ type TargetChecks {
   let probePath: String! = ".dagger/modules/e2e/fixtures/target/probe/main.go"
   let dangConfigPath: String! = "internal/dagger/entrypoint/dang.toml"
   """The oldest release the setting pins: sourcesFloor in go-sdk.dang."""
-  let floor: String! = "v1.0.0-beta.22"
+  let floor: String! = "v1.0.0-beta.25"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.27"
@@ -187,7 +187,7 @@ type TargetChecks {
     let name = "target-pin"
     let scopePath = outputRoot + "/" + name
     let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
-    let pinned = goSdk(targetVersion: "1.0.0-beta.22+0123abcd").generateScope(ws: input, isModule: true, name: name, clients: [])
+    let pinned = goSdk(targetVersion: "1.0.0-beta.25+0123abcd").generateScope(ws: input, isModule: true, name: name, clients: [])
     assert("the library is not pinned to the setting:\n" + pinned.file("go.mod").contents) {
       pins(pinned, floor) and declares(pinned, floor)
     }
@@ -484,15 +484,15 @@ type TargetChecks {
     let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
     let subject = "module " + JSON.encode(name) + " pins targetVersion "
     let fix = "Set targetVersion between " + floor + " and " + newestTarget + " in the scope's settings in dagger.toml, or remove it"
-    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.21"), input, name,
-      subject + "v1.0.0-beta.21, which this release of the Go SDK cannot generate for: it is below " + floor + ", the first release whose Go library spells its identifiers as the engine names them, which the generated code follows. " + fix)
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.24"), input, name,
+      subject + "v1.0.0-beta.24, which this release of the Go SDK cannot generate for: it is below " + floor + ", the first release whose Go library spells its identifiers as the engine names them, which the generated code follows. " + fix)
     let above = ", which this release of the Go SDK cannot generate for: it targets " + newestTarget + " at most. " + fix + ", or install the SDK release built for "
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.29"), input, name, subject + "v1.0.0-beta.29" + above + "v1.0.0-beta.29")
     expectRefusal(goSdk(targetVersion: "99.0.0"), input, name, subject + "v99.0.0" + above + "v99.0.0")
     let malformed = ", which is not a Dagger release such as " + sdkTarget + ". " + fix
     expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta..1"), input, name, subject + "\"v1.0.0-beta..1\"" + malformed)
-    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.22+???"), input, name, subject + "\"v1.0.0-beta.22+???\"" + malformed)
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.25+???"), input, name, subject + "\"v1.0.0-beta.25+???\"" + malformed)
     # v1.0.0-beta.25 shipped without an entrypoint's dependencies in the
     # manifest, which daggerGo writes.
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.25", daggerGo: true), input, name,
