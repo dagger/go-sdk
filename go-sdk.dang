@@ -835,7 +835,7 @@ type GoSdk {
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
     let served = entrypointModuleSource(ws, name, scopePath, entrypointSource)
-    let moduleSourceID = toString(served.id)
+    let naming = served.naming
     # The entrypoint is checked against a schema with its dependencies; the
     # module's Go bindings come from the one without, so the module compiles
     # none of a dependency only its entrypoint calls.
@@ -871,7 +871,6 @@ type GoSdk {
     # anchor, beside the paths it includes.
     let buildRoot = if (included) { "/src/" + includes.file("module").contents } else { "/src" }
     let tree = if (included) { includedTree(ws, moduleSource, includes) } else { moduleSource }
-    # The module source ID can outgrow an exec argument: it's passed in a file.
     # The entrypoint is checked against the schema it's served at, the
     # entrypoint source's, which can differ from the bindings' (an enum's
     # members are spelled by the view).
@@ -879,17 +878,17 @@ type GoSdk {
       .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJson)
       .withFile("/contract-schema.json", contractSchema)
-      .withNewFile("/module-source-id", moduleSourceID)
     let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
       "module-codegen",
       "--module-root", buildRoot + "/" + moduleRoot,
       "--build-root", "/src",
       "--source-subpath", code,
-      "--module-name", name,
+      "--module-name", naming.name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
-      "--module-source-id-file", "/module-source-id",
+      "--naming-version", naming.version,
+      "--module-original-name", naming.originalName,
       "--go-image", goImage,
       "--runtime-image", versions.runtimeImage,
       "--dagger-go=" + JSON.encode(deps.length > 0),

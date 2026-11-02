@@ -2,13 +2,12 @@ package identifiers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 )
 
 // ModuleNames are the schema names the engine gives a module's own
-// declarations (ModuleSource.naming, dagger/dagger#14996), by the rules of
-// the version it serves the module at.
+// declarations (Naming.module, dagger/dagger#14996), by the rules of the
+// version it serves the module at.
 type ModuleNames struct {
 	// Types are the schema names of the objects and interfaces the module
 	// declares, by Go name: namespaced by the module's name.
@@ -21,36 +20,31 @@ type ModuleNames struct {
 	Main string
 }
 
-// NameModule asks the engine, in one query, how it names the module source
-// sourceID's declarations: types, fields, and which of candidates is its
+// NameModule asks the engine, in one query, how the rules of version name
+// the declarations of the module name, originally originalName (they differ
+// for a dependency alias): types, fields, and which of candidates is its
 // main object. A name the engine can't parse fails the query.
-func NameModule(ctx context.Context, query Query, sourceID string, types, fields, candidates []string) (ModuleNames, error) {
-	if sourceID == "" {
-		return ModuleNames{}, errors.New("name the module: no module source ID")
-	}
+func NameModule(ctx context.Context, query Query, version, name, originalName string, types, fields, candidates []string) (ModuleNames, error) {
 	var data struct {
-		Node *struct {
-			Naming struct {
+		Naming struct {
+			Module struct {
 				TypeNames  []string `json:"typeNames"`
 				FieldNames []string `json:"fieldNames"`
 				MainObject *string  `json:"mainObject"`
-			} `json:"naming"`
-		} `json:"node"`
+			} `json:"module"`
+		} `json:"naming"`
 	}
-	err := query(ctx, `query ModuleNaming($id: ID!, $types: [String!]!, $fields: [String!]!, $candidates: [String!]!) {
-  node(id: $id) { ... on ModuleSource { naming {
+	err := query(ctx, `query ModuleNaming($version: String!, $name: String!, $originalName: String!, $types: [String!]!, $fields: [String!]!, $candidates: [String!]!) {
+  naming(version: $version) { module(name: $name, originalName: $originalName) {
     typeNames(names: $types)
     fieldNames(names: $fields)
     mainObject(candidates: $candidates)
-  } } }
-}`, map[string]any{"id": sourceID, "types": nonNil(types), "fields": nonNil(fields), "candidates": nonNil(candidates)}, &data)
+  } }
+}`, map[string]any{"version": version, "name": name, "originalName": originalName, "types": nonNil(types), "fields": nonNil(fields), "candidates": nonNil(candidates)}, &data)
 	if err != nil {
 		return ModuleNames{}, fmt.Errorf("name the module: %w", err)
 	}
-	if data.Node == nil {
-		return ModuleNames{}, errors.New("name the module: the module source ID names no ModuleSource")
-	}
-	naming := data.Node.Naming
+	naming := data.Naming.Module
 	names := ModuleNames{Types: map[string]string{}, Fields: map[string]string{}}
 	for _, list := range []struct {
 		asked, answered []string

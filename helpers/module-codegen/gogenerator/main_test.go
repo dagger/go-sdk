@@ -10,7 +10,7 @@ import (
 
 // TestMain runs generation against a fake engine (identifierstest.Query),
 // never the Dagger session the tests may run in. It names a module by its
-// source ID, so tests set ModuleSourceID to the module's name.
+// name.
 func TestMain(m *testing.M) {
 	os.Unsetenv("DAGGER_SESSION_PORT")
 	os.Unsetenv("DAGGER_SESSION_TOKEN")
