@@ -23,8 +23,8 @@ func Names() *identifiers.Names {
 var Query = Formatting(Format)
 
 // Formatting returns a fake engine that answers the queries of package
-// identifiers: formatIdentifiers by format, and ModuleSource.naming as the
-// engine names, by strcase, a module named by its source ID.
+// identifiers: formatIdentifiers by format, and Naming.module as the engine
+// names, by strcase, a module by its name.
 func Formatting(format func(string) string) identifiers.Query {
 	return func(_ context.Context, query string, variables map[string]any, data any) error {
 		var result any
@@ -35,8 +35,8 @@ func Formatting(format func(string) string) identifiers.Query {
 				formatted = append(formatted, format(name))
 			}
 			result = map[string]any{"naming": map[string]any{"formatIdentifiers": formatted}}
-		case strings.Contains(query, "naming {"):
-			result = map[string]any{"node": map[string]any{"naming": naming(variables)}}
+		case strings.Contains(query, "module("):
+			result = map[string]any{"naming": map[string]any{"module": naming(variables)}}
 		default:
 			return fmt.Errorf("fake engine: unexpected query %q", query)
 		}
@@ -69,9 +69,9 @@ func Format(name string) string {
 	return b.String()
 }
 
-// naming answers ModuleSource.naming for the module named by its source ID.
+// naming answers Naming.module for the module named by name.
 func naming(variables map[string]any) map[string]any {
-	module := strcase.ToCamel(variables["id"].(string))
+	module := strcase.ToCamel(variables["name"].(string))
 	var types, fields []string
 	for _, name := range variables["types"].([]string) {
 		if rest, ok := strings.CutPrefix(strcase.ToCamel(name), module); ok && (rest == "" || 'A' <= rest[0] && rest[0] <= 'Z') {

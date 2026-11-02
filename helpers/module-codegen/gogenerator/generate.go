@@ -39,15 +39,16 @@ type GenerateConfig struct {
 	ModuleName    string
 	SchemaPath    string
 	SchemaVersion string
-	// ModuleSourceID is the ID of the module source the engine serves the
-	// module as, with its generated entrypoint. The interface bindings and
-	// the main object take the module's schema names from its naming
-	// (ModuleSource.naming), while Go identifiers follow the schema's
-	// version.
-	ModuleSourceID string
-	DaggerVersion  string
-	TargetVersion  string
-	GoImage        string
+	// NamingVersion and ModuleOriginalName are, with ModuleName, the naming
+	// of the module source the engine serves the module as, with its
+	// generated entrypoint (ModuleSource.naming: version, originalName). The
+	// interface bindings and the main object take the module's schema names
+	// from Naming.module, while Go identifiers follow the schema's version.
+	NamingVersion      string
+	ModuleOriginalName string
+	DaggerVersion      string
+	TargetVersion      string
+	GoImage            string
 	// RemovedPath, when set, names a file that receives the module-relative
 	// paths of the generated files this run removed, one per line. The caller
 	// merges the remaining files back, so it needs the list to remove the rest.
@@ -270,7 +271,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	// The engine names the module's declarations the generated code spells,
 	// in one query.
 	typeNames, fieldNames, candidates := templates.ModuleDeclarations(pkg, fset, resp.Schema, cfg.ModuleName)
-	genCfg.ModuleConfig.Naming, err = identifiers.NameModule(ctx, query, cfg.ModuleSourceID, typeNames, fieldNames, candidates)
+	genCfg.ModuleConfig.Naming, err = identifiers.NameModule(ctx, query, cfg.NamingVersion, cfg.ModuleName, cfg.ModuleOriginalName, typeNames, fieldNames, candidates)
 	if err != nil {
 		return err
 	}
