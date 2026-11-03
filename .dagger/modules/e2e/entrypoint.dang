@@ -20,15 +20,14 @@ type EntrypointChecks {
   }
 
   """
-  The Go runtime cannot generate unified bindings, so dangEntrypoint = false
-  is refused unless unifiedClients = false too, whether unifiedClients is
-  unset or true.
+  Explicit unifiedClients = true is refused with the Go runtime. Unset
+  unifiedClients preserves its embedded bindings.
   """
   unifiedRequiresEntrypointCheck(ws: Workspace!): Void @check {
     let input = ws
       .withNewFile(appPath + "/dagger-module.toml", "name = \"generate-app\"\n\n[runtime]\n  source = \"go\"\n")
       .withWorkdir(appPath)
-    [goSdk(dangEntrypoint: false), goSdk(dangEntrypoint: false, unifiedClients: true)].map { sdk =>
+    [goSdk(dangEntrypoint: false, unifiedClients: true)].map { sdk =>
       let refused = sdk.generateScope(
         ws: input,
         isModule: true,
@@ -294,7 +293,7 @@ type EntrypointChecks {
     assert("unmigrated author code unexpectedly compiled without dag: " + refused) {
       refused.contains("undefined: dag")
     }
-    let defaulted = goSdk.generateScope(
+    let defaulted = goSdk(dangEntrypoint: true).generateScope(
       ws: input, isModule: true, name: "generate-app", clients: [],
     ).file("dagger.gen.go").contents rescue { err: Error => err.message }
     assert("the default migration did not name globalClient: " + defaulted) {
@@ -335,13 +334,10 @@ type EntrypointChecks {
   }
 
   """
-  Unset settings migrate a Go runtime module to the generated entrypoint
-  with unified bindings, and embedded entrypoint bindings to unified ones;
-  explicit false keeps either. A custom runner is refused, without changes,
-  until dangEntrypoint = false keeps it. Beside it, an unset unifiedClients
-  embeds a new client and keeps an existing client's style, and explicit
-  true makes it unified. A remote entrypoint is replaced with the generated
-  one.
+  Unset settings preserve a Go runtime module and existing embedded or
+  unified entrypoint bindings. Explicit true requests migration. Custom
+  runners stay unchanged unless migration is requested (and refused).
+  A remote entrypoint is replaced with the generated one.
   """
   defaultCompatibilityCheck(ws: Workspace!): Void @check {
     let legacyManifest = "name = 'generate-app'\n[runtime]\nsource = 'go'\n"
@@ -354,15 +350,26 @@ type EntrypointChecks {
     assert("explicit false removed the legacy API global") {
       legacy.file("dagger.gen.go").contents.contains("var dag ")
     }
-    let migrated = goSdk(globalClient: true).generateScope(ws: input, isModule: true, name: "generate-app", clients: [])
-    assert("unset settings did not migrate the runtime module to the entrypoint with unified bindings") {
+    let retainedRuntime = goSdk.generateScope(ws: legacy, isModule: true, name: "generate-app", clients: [])
+    assert("unset settings changed the generated runtime module") {
+      retainedRuntime.changes(legacy).isEmpty
+    }
+    let migratedManifest = input.withNewFile("dagger-module.toml", "disableDefaultFunctionCaching = true\n" + legacyManifest)
+    let preservedSettings = goSdk.generateScope(ws: migratedManifest, isModule: true, name: "generate-app", clients: [])
+    assert("unset settings migrated a manifest with legacy-only settings") {
+      preservedSettings.file("dagger-module.toml").contents.contains("disableDefaultFunctionCaching = true") and
+        preservedSettings.file("dagger-module.toml").contents.contains("[runtime]") and
+        preservedSettings.file("dagger.gen.go").contents.contains("var dag ")
+    }
+    let migrated = goSdk(dangEntrypoint: true, globalClient: true).generateScope(ws: input, isModule: true, name: "generate-app", clients: [])
+    assert("explicit migration did not select the entrypoint with unified bindings") {
       migrated.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
         migrated.file("internal/dagger/dagger.gen.go").contents.contains("dagger.io/dagger/core")
     }
     assert("the default migration changed the module source") {
       migrated.file("main.go").contents == input.file("main.go").contents
     }
-    let embedded = goSdk(unifiedClients: false, globalClient: true).generateScope(
+    let embedded = goSdk(dangEntrypoint: true, unifiedClients: false, globalClient: true).generateScope(
       ws: input, isModule: true, name: "generate-app", clients: [],
     )
     assert("unifiedClients = false did not migrate the runtime module to embedded entrypoint bindings") {
@@ -370,16 +377,16 @@ type EntrypointChecks {
         embedded.file("internal/dagger/entrypoint/main.dang").contents.contains("  pub sources(workspace: Workspace!): Directory! {\n") and
         embedded.file("internal/dagger/dagger.gen.go").contents.contains("GraphQLClient() graphql.Client")
     }
-    let retainedEmbedded = goSdk(unifiedClients: false, globalClient: true).generateScope(
+    let retainedEmbedded = goSdk(globalClient: true).generateScope(
       ws: embedded, isModule: true, name: "generate-app", clients: [],
     )
-    assert("regeneration with unifiedClients = false changed embedded entrypoint bindings") {
+    assert("unset unifiedClients changed embedded entrypoint bindings") {
       retainedEmbedded.changes(embedded).isEmpty
     }
-    let unifiedAgain = goSdk(globalClient: true).generateScope(
+    let unifiedAgain = goSdk(unifiedClients: true, globalClient: true).generateScope(
       ws: embedded, isModule: true, name: "generate-app", clients: [],
     )
-    assert("unset unifiedClients did not migrate embedded entrypoint bindings") {
+    assert("explicit unifiedClients did not migrate embedded entrypoint bindings") {
       unifiedAgain.file("internal/dagger/dagger.gen.go").contents.contains("dagger.io/dagger/core")
     }
     let customs = [
@@ -387,11 +394,11 @@ type EntrypointChecks {
       "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = './custom-entrypoint'\n",
       "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = './internal/dagger/entrypoint'\n",
     ]
-    customs.map { manifest =>
+    customs.each { manifest =>
       let custom = input
         .withNewFile("dagger-module.toml", manifest)
         .withNewFile("internal/dagger/entrypoint/main.dang", "# User-authored runner, even at the SDK's usual path.\n")
-      [goSdk, goSdk(dangEntrypoint: true, globalClient: true)].map { sdk =>
+      [goSdk(dangEntrypoint: true, globalClient: true)].each { sdk =>
         let refused = sdk.generateScope(ws: custom, isModule: true, name: "generate-app", clients: [])
           .file("dagger-module.toml").contents rescue { err: Error => err.message }
         assert("generation replaced a custom runner: " + firstLine(refused)) {
@@ -399,9 +406,11 @@ type EntrypointChecks {
             refused.contains("set dangEntrypoint = false")
         }
       }
-      let retained = goSdk(dangEntrypoint: false).generateScope(ws: custom, isModule: true, name: "generate-app", clients: [])
-      assert("dangEntrypoint = false changed a custom runner") {
-        retained.changes(custom).isEmpty
+      [goSdk, goSdk(dangEntrypoint: false)].each { sdk =>
+        let retained = sdk.generateScope(ws: custom, isModule: true, name: "generate-app", clients: [])
+        assert("automatic or explicit false generation changed a custom runner") {
+          retained.changes(custom).isEmpty
+        }
       }
     }
     let customRuntime = input
