@@ -93,7 +93,7 @@ Generation refuses on v1.0.0-beta.16 and older.
 
 ## The release the generated code targets
 
-Each go-sdk release targets one Dagger release, v1.0.0-beta.21 today.
+Each go-sdk release targets one Dagger release, v1.0.0-beta.23 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to exactly that release.
 Its generated entrypoint declares the release to the engine, in the
@@ -104,9 +104,9 @@ The generated `internal/dagger/entrypoint/dang.toml` declares the same
 release as its `Dagger` import; see the [README](../README.md#the-generated-dangtoml).
 Released engines up to v1.0.0-beta.21 ignore both declarations and serve the
 module at their own version.
-v1.0.0-beta.22 reads `DAGGER_CLIENT_VERSION`, which moves the core API view of
-the module's process; it ignores `dang.toml` and serves the module at its own
-version.
+v1.0.0-beta.22 and v1.0.0-beta.23 read `DAGGER_CLIENT_VERSION`, which moves
+the core API view of the module's process.
+They ignore `dang.toml` and serve the module at their own version.
 dagger/dagger#14902, which is not merged, reads `dang.toml` for the module's
 own version.
 With that change, a module without a declared version gets v1.0.0-beta.20,

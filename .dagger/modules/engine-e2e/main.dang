@@ -510,6 +510,18 @@ type EngineE2e {
   }
 
   """
+  Run the named e2e checks on the v1.0.0-beta.18 engine, the oldest engine
+  the generated entrypoint loads on, one dagger check per name.
+  """
+  entrypointFloorChecks(ws: Workspace!, checks: [String!]!): Void {
+    runChecks(sdkClient(
+      ws,
+      engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase),
+      engineCommit,
+    ), checks)
+  }
+
+  """
   Run the runtime-mode checks on the runtime floor engine.
   """
   runtimeFloorCheck(ws: Workspace!): Void @check {

@@ -13,7 +13,7 @@ generated Dang entrypoint:
 dang = "2.1"
 
 [imports.Dagger]
-dagger = "v1.0.0-beta.21"
+dagger = "v1.0.0-beta.23"
 ```
 
 The `dagger` value is the release the module targets: the SDK's own release,
@@ -60,7 +60,7 @@ A generated entrypoint that replaces a remote one follows the rules above.
 
 ### Engines and tools
 
-Released engines from v1.0.0-beta.18 to v1.0.0-beta.22 copy only `.dang` files
+Released engines from v1.0.0-beta.18 to v1.0.0-beta.23 copy only `.dang` files
 to evaluate an entrypoint, so they ignore this file.
 [dagger/dagger#14902](https://github.com/dagger/dagger/pull/14902), which is not
 merged, makes the engine read it to select the module's API view and naming
