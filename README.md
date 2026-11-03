@@ -56,6 +56,8 @@ A file above the module directory plays no part.
 
 Generation does not touch the `dang.toml` of a custom runtime or a local
 entrypoint that the SDK did not generate.
+Unless `dangEntrypoint = false` keeps such a runner, generation refuses the
+module and changes no file.
 A generated entrypoint that replaces a remote one follows the rules above.
 
 ### Engines and tools

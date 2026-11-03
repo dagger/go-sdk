@@ -295,6 +295,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		target = "."
 	}
 	if err := compileGeneratedModule(ctx, buildRoot, root, target, runtimeFiles); err != nil {
+		if !cfg.GlobalClient && regexp.MustCompile(`undefined: dag\b`).MatchString(err.Error()) {
+			err = fmt.Errorf("%w; the module's code uses the global dag: set globalClient = true in the scope's settings in dagger.toml", err)
+		}
 		return withWarnings(err, untidied.Warnings)
 	}
 	if cfg.RemovedPath != "" {
