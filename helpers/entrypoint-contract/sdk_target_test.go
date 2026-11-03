@@ -122,7 +122,8 @@ func TestSdkTargetReleaseRefusals(t *testing.T) {
 }
 
 // The SDK's release is a published dagger.io/dagger, the library a module
-// pins by default, and the setting's documentation names the same release.
+// pins by default, and the setting's documentation and the README name the
+// same release.
 func TestSdkDefaultTargetIsPublished(t *testing.T) {
 	source := sdkSource(t)
 	match := regexp.MustCompile(`(?m)^defaultTarget\s*=\s*"([^"]*)"`).FindStringSubmatch(sdkVersions(t))
@@ -130,6 +131,9 @@ func TestSdkDefaultTargetIsPublished(t *testing.T) {
 	release := match[1]
 	require.Regexp(t, `^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`, release)
 	require.Contains(t, source, "the release this Go SDK is built for, "+release+".")
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(readme), "targets Dagger engine\n> `"+release+"`.")
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/probe\n\ngo 1.26.1\n"), 0o600))
