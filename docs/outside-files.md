@@ -93,16 +93,17 @@ Generation refuses on v1.0.0-beta.16 and older.
 
 ## The release the generated code targets
 
-Each go-sdk release targets one Dagger release, v1.0.0-beta.21 today.
+Each go-sdk release targets one Dagger release, v1.0.0-beta.23 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to exactly that release.
 Its generated entrypoint declares the release to the engine, in the
 `DAGGER_CLIENT_VERSION` variable of the process that runs the module; a
 generated standalone client with a target announces it when it starts a
 session.
-The engine ignores `DAGGER_CLIENT_VERSION` today and serves the module at
-its own version; a later engine release reads it and serves the declared
-release instead.
+Released engines up to v1.0.0-beta.21 ignore `DAGGER_CLIENT_VERSION` and
+serve the module at their own version.
+v1.0.0-beta.22 and v1.0.0-beta.23 read it, which moves the core API view of
+the module's process; they still serve the module at their own version.
 The fixed core library and the module's own bindings depend on the SDK
 release, the target setting and the module's sources.
 An engine update leaves them unchanged.
@@ -114,8 +115,6 @@ The `targetVersion` setting pins an older release, between v1.0.0-beta.18
 and the SDK's release; generation refuses a setting outside that range.
 An engine older than the targeted release is not refused: a call to a
 function that engine lacks fails when the module runs.
-`targetVersion` replaces the `clientVersion` setting; generation refuses a
-scope that still sets `clientVersion`.
 
 When another requirement of `go.mod` needs a later `dagger.io/dagger`,
 generation refuses and names that requirement: raise `targetVersion`, or
@@ -133,6 +132,28 @@ engine instead: an engine update can change its generated files, and the
 `targetVersion` setting is refused there.
 Stable targeting needs the Dang entrypoint with unified clients; see
 Migration.
+
+## Removed settings
+
+go-sdk no longer has the `clientVersion` and `fat` settings.
+Generation writes no `dagger.json`; it migrates an existing one into
+`dagger-module.toml` and removes it.
+The CLI refuses either setting as an argument, for example
+`dagger module init go --fat` fails with `unknown flag: --fat`.
+In `dagger.toml`, the engine ignores an unknown setting under
+`[modules.go-sdk.settings]` or under a scope's settings, so a stale
+`clientVersion` or `fat` there has no effect and no error.
+A stale `clientVersion` no longer pins the target: replace it with
+`targetVersion`, which keeps the pin.
+Remove a stale `fat`.
+
+```toml
+[sdks.go.scopes."path/to/module".settings]
+targetVersion = "v1.0.0-beta.20"
+```
+
+`dagger doctor` reports unknown settings under `[modules.<name>.settings]`;
+check the settings of each scope by hand.
 
 ## When to generate again
 
@@ -167,31 +188,65 @@ the module directory: run dagger generate`.
 
 ## Migration
 
-A module that uses the Go runtime keeps it after an SDK update.
-With `dangEntrypoint` unset, generation keeps existing runtimes and local
-entrypoints.
+`dangEntrypoint` and `unifiedClients` are true when unset; beside a custom
+runner, an unset `unifiedClients` keeps each client's style, as described
+below.
+At its next `dagger generate`, a module on the Go runtime moves to the
+generated entrypoint with unified bindings, and embedded bindings move to
+unified ones.
+The module then needs Dagger v1.0.0-beta.18 or later.
+The generated entrypoint loads the module's types without running it.
+It supports `package main` and importable packages, and needs a `go.mod` in
+the module directory: generation refuses a module that shares the `go.mod`
+of a parent directory.
+Setting both to `true` enforces the migration.
+In a scope without a module, an unset `unifiedClients` moves existing
+embedded clients to unified ones.
+
+| `dangEntrypoint` | `unifiedClients` | Generation |
+|---|---|---|
+| unset or `true` | unset or `true` | Generated entrypoint with unified bindings. |
+| `false` | `false` | Go runtime with its embedded bindings. |
+| unset or `true` | `false` | Generated entrypoint with embedded bindings; such a module cannot use other modules. |
+| `false` | unset or `true` | Refused: the Go runtime cannot generate unified bindings. A custom runner is exempt; see below. |
+
+To keep the Go runtime, set both settings on the module's scope in
+`dagger.toml`:
+
+```toml
+[sdks.go.scopes."path/to/module".settings]
+dangEntrypoint = false
+unifiedClients = false
+```
+
+A module with a generated entrypoint cannot return to the Go runtime.
 A module whose manifest names a remote `[entrypoint]` source, a module or
 git reference, gets the generated entrypoint at its next `dagger generate`,
 which reports the replacement.
 This replacement also applies when `dangEntrypoint = false`.
-The module then needs Dagger v1.0.0-beta.18 or later.
-Before generating again, remove `dangEntrypoint = false` or set it to `true`;
-the Go runtime cannot load a module with a generated entrypoint.
-A local `[entrypoint]` path and a custom `[runtime]` stay the author's.
-To switch one module, set these settings on its scope in `dagger.toml`, then
-run `dagger generate`:
+
+Generation does not replace a custom `[runtime]` or a local `[entrypoint]`
+path that the SDK did not generate.
+It refuses such a module until `dangEntrypoint = false` keeps the runner;
+the refusal changes no file.
+With `dangEntrypoint = false`, such a module needs no `unifiedClients`
+setting: generation keeps the runner and generates only the standalone
+clients that the scope's `clients` list.
+An unset `unifiedClients` keeps the style of each existing client package
+and generates a new one with embedded bindings; `true` or `false` sets the
+style of every client.
+
+The migration removes the global `dag` unless `globalClient = true`.
+When the module's code still uses `dag`, generation fails with
+`undefined: dag` and names the setting, and changes no file:
 
 ```toml
 [sdks.go.scopes."path/to/module".settings]
-dangEntrypoint = true
-unifiedClients = true
 globalClient = true
 ```
 
-`unifiedClients = true` moves the bindings to the shared core library, so
-the module targets one release instead of the running engine.
-`globalClient = true` keeps the global `dag` that the module's code may use;
-without it, generation fails with `undefined: dag`.
+Unified bindings take the module's core types from one fixed library
+release instead of the running engine's schema.
 The same settings under `[modules.go-sdk.settings]` apply to every Go module
 of the workspace.
 `dagger generate` skips a module that fails to load: it shows the error only

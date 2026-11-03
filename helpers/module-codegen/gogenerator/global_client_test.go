@@ -98,6 +98,7 @@ func TestGlobalClientRemovalPreservesAuthorOnFailure(t *testing.T) {
 	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.15", UnifiedClient: true, GoImage: "golang:1.26-alpine"}
 	err := Generate(t.Context(), cfg)
 	require.ErrorContains(t, err, "undefined: dag")
+	require.ErrorContains(t, err, "set globalClient = true")
 	original, err := os.ReadFile(filepath.Join(root, "main.go"))
 	require.NoError(t, err)
 	require.Equal(t, source, string(original))

@@ -183,8 +183,9 @@ anything:
 
 - Module clients. A manifest with an entrypoint has no dependency list.
 - The `legacy` template for a new module.
-- `fat`. A fat `dagger.json` points older engines at the Go runtime, which
-  cannot load an importable package.
+- `fat`, obsolete: go-sdk no longer writes a fat `dagger.json`, and the
+  setting no longer exists. A fat `dagger.json` pointed older engines at the
+  Go runtime, which cannot load an importable package.
 - Manifest settings that the new manifest would drop: `include`,
   `disableDefaultFunctionCaching`, a `source` other than `.`, the `codegen`,
   `clients`, and `dependencies` tables, and a runtime other than Go. The SDK

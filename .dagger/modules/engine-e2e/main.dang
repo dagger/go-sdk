@@ -418,29 +418,7 @@ type EngineE2e {
       .withExec(["test", "-f", ".dagger/modules/sdk-smoke/internal/dagger/dagger.gen.go"])
       .withExec(["grep", "-qF", "dag.Container().", ".dagger/modules/sdk-smoke/main.go"])
 
-    let fat = initialized
-      .withExec([
-        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
-        "dagger", "--auto-apply", "module", "init", "go",
-        "--name", "sdk-smoke",
-        "--path", ".dagger/modules/sdk-smoke",
-        "--dang-entrypoint=false", "--unified-clients=false",
-        "--fat",
-      ])
-      .withExec(["test", "-f", ".dagger/modules/sdk-smoke/dagger.json"])
-
-    let thin = fat
-      .withExec([
-        "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
-        "dagger", "--auto-apply", "module", "init", "go",
-        "--name", "sdk-smoke",
-        "--path", ".dagger/modules/sdk-smoke",
-        "--dang-entrypoint=false", "--unified-clients=false",
-        "--fat=false",
-      ])
-      .withExec(["test", "!", "-e", ".dagger/modules/sdk-smoke/dagger.json"])
-
-    let release = thin
+    let release = initialized
       .withExec([
         "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "-m", ".dagger/modules/sdk-smoke",
@@ -455,7 +433,7 @@ type EngineE2e {
     }
 
     let entrypointPath = ".dagger/modules/sdk-entrypoint"
-    let entrypoint = thin
+    let entrypoint = initialized
       .withExec([
         "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
         "dagger", "--auto-apply", "module", "init", "go",
@@ -480,8 +458,8 @@ type EngineE2e {
       entrypoint.trimSpace != ""
     }
 
-    let global = starterRelease(thin, "sdk-global", ["--global-client=true"], "dag.Container().")
-    let embedded = starterRelease(thin, "sdk-embedded", ["--unified-clients=false"], "dagger.Connect().Container().")
+    let global = starterRelease(initialized, "sdk-global", ["--global-client=true"], "dag.Container().")
+    let embedded = starterRelease(initialized, "sdk-embedded", ["--unified-clients=false"], "dagger.Connect().Container().")
     assert("a starter with the global dag or embedded bindings did not run") {
       global.trimSpace != "" and embedded.trimSpace != ""
     }
@@ -507,6 +485,18 @@ type EngineE2e {
         "contents",
       ])
       .stdout
+  }
+
+  """
+  Run the named e2e checks on the v1.0.0-beta.18 engine, the oldest engine
+  the generated entrypoint loads on, one dagger check per name.
+  """
+  entrypointFloorChecks(ws: Workspace!, checks: [String!]!): Void {
+    runChecks(sdkClient(
+      ws,
+      engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase),
+      engineCommit,
+    ), checks)
   }
 
   """

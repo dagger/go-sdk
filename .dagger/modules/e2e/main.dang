@@ -34,6 +34,8 @@ type E2e {
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
   # Dagger Go library source used by the generated-client compile check.
   let daggerSourceRef: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
+  """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
+  let sdkTarget: String! = "v1.0.0-beta.23"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
@@ -58,7 +60,8 @@ type E2e {
 
   """
   Explicit Go runtime mode gets the manifest, starter source, and embedded
-  bindings. The legacy manifest follows fat.
+  bindings. Generating again migrates a legacy dagger.json into
+  dagger-module.toml and removes it.
   """
   moduleInitCheck(ws: Workspace!): Void @check {
     let scopePath = outputRoot + "/module-init"
@@ -103,39 +106,25 @@ type E2e {
       generated.file("user.txt").contents.contains("keep me")
     }
 
-    let fat = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
-      ws: generated,
+    let legacyJSON = "{\n  \"name\": \"module-init\",\n  \"engineVersion\": \"v1.0.0-beta.20\",\n  \"sdk\": {\n    \"source\": \"go\"\n  }\n}\n"
+    let migrated = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
+      ws: generated.withoutFile("dagger-module.toml").withNewFile("dagger.json", legacyJSON),
       isModule: true,
       name: "module-init",
       clients: [],
     )
-    assert("fat generation did not create the legacy module manifest") {
-      exists(fat, "dagger.json")
+    assert("regeneration retained the legacy module manifest") {
+      exists(migrated, "dagger.json") == false
     }
-    assert("legacy manifest name is wrong") {
-      fat.file("dagger.json").contents.contains("\"name\": \"module-init\"")
+    let toml = migrated.file("dagger-module.toml").contents
+    assert("migrating dagger.json lost its name, engineVersion or runtime:\n" + toml) {
+      toml.contains("name = \"module-init\"") and
+        toml.contains("engineVersion = \"v1.0.0-beta.20\"") and
+        toml.contains("source = \"go\"")
     }
-    assert("legacy manifest engine version is missing") {
-      fat.file("dagger.json").contents.contains("\"engineVersion\": \"v")
-    }
-    assert("legacy manifest runtime is wrong") {
-      fat.file("dagger.json").contents.contains("\"source\": \"go\"")
-    }
-    assert("legacy manifest has an unexpected module source") {
-      fat.file("dagger.json").contents.contains("\"source\": \".\"") == false
-    }
-
-    let thin = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
-      ws: fat,
-      isModule: true,
-      name: "module-init",
-      clients: [],
-    )
-    assert("disabling fat retained the legacy module manifest") {
-      exists(thin, "dagger.json") == false
-    }
-    assert("toggling fat changed the module manifest") {
-      thin.file("dagger-module.toml").contents == generated.file("dagger-module.toml").contents
+    assert("migrating dagger.json changed the author source") {
+      migrated.file("main.go").contents == generated.file("main.go").contents and
+        migrated.file("user.txt").contents.contains("keep me")
     }
     null
   }
@@ -151,13 +140,13 @@ type E2e {
       .withNewDirectory(scopePath, directory)
       .withWorkdir(scopePath)
     let target = ws.moduleSource("/" + clientTargetPath)
-    let initialized = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let initialized = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: input,
       isModule: true,
       name: "module-client",
       clients: [],
     )
-    let generated = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let generated = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: initialized,
       isModule: true,
       name: "module-client",
@@ -179,8 +168,8 @@ type E2e {
     assert("module client source is wrong in the current manifest") {
       generated.file("dagger-module.toml").contents.contains("source = \"../../client/dep\"")
     }
-    assert("module client source is wrong in the legacy manifest") {
-      generated.file("dagger.json").contents.contains("\"source\": \"../../client/dep\"")
+    assert("generation wrote the legacy manifest") {
+      exists(generated, "dagger.json") == false
     }
 
     # The runtime generator creates a module-local go.mod as a workspace
@@ -188,7 +177,7 @@ type E2e {
     assert("generated module has no local Go root") {
       goSdk.findClientRoot(initialized) == scopePath
     }
-    let dual = goSdk(fat: true, dualClients: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let dual = goSdk(dualClients: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: initialized,
       isModule: true,
       name: "module-client",
@@ -307,7 +296,7 @@ type E2e {
   }
 
   """
-  Two standalone target packages compile in one Go module.
+  Two embedded standalone target packages compile in one Go module.
   """
   standaloneClientCompilesCheck(ws: Workspace!): Void @check {
     let sourceRef = if (ws.directory("/").exists(".dagger/modules/e2e/engine-commit")) {
@@ -318,7 +307,7 @@ type E2e {
       .withNewFile(scopePath + "/go.mod", "module example.com/compile\n\ngo 1.25\n")
       .withNewFile(scopePath + "/main.go", "package compile\n")
       .withWorkdir(scopePath)
-    let generated = goSdk.generateScope(
+    let generated = goSdk(unifiedClients: false).generateScope(
       ws: input,
       isModule: false,
       name: "standalone-compile",
@@ -350,6 +339,7 @@ type E2e {
   }
 
   """
+  With unifiedClients unset, an embedded client moves to unified bindings.
   Removing a client prunes generated files and preserves user files.
   """
   standaloneClientPreservationCheck(ws: Workspace!): Void @check {
@@ -360,12 +350,28 @@ type E2e {
       .withNewFile(scopePath + "/internal/dagger/clients/custom/user.go", "package custom\n")
       .withWorkdir(scopePath)
     let target = ws.moduleSource("/" + clientTargetPath)
-    let withClient = goSdk.generateScope(
+    let clientPath = "internal/dagger/clients/client-dep/dagger.gen.go"
+    let embedded = goSdk(unifiedClients: false).generateScope(
       ws: input,
       isModule: false,
       name: "standalone-preservation",
       clients: [target],
     )
+    assert("unifiedClients = false generated a unified client") {
+      embedded.file(clientPath).contents.contains("dagger.ModuleGraphQLClient(") == false
+    }
+    let withClient = goSdk.generateScope(
+      ws: embedded,
+      isModule: false,
+      name: "standalone-preservation",
+      clients: [target],
+    )
+    assert("unset unifiedClients did not migrate the embedded client") {
+      withClient.file(clientPath).contents.contains("dagger.ModuleGraphQLClient(")
+    }
+    assert("the migration did not pin the library to the SDK's release:\n" + withClient.file("go.mod").contents) {
+      withClient.file("go.mod").contents.contains("dagger.io/dagger " + sdkTarget + "\n")
+    }
     let withoutClient = goSdk.generateScope(
       ws: withClient,
       isModule: false,
@@ -381,6 +387,66 @@ type E2e {
     }
     assert("regeneration deleted user source") {
       exists(withoutClient, "user.go")
+    }
+    null
+  }
+
+  """
+  The CLI refuses the removed clientVersion and fat settings as arguments.
+  Generation ignores them in the module settings and in a scope's settings
+  of dagger.toml, where targetVersion keeps its pin. cli is this engine's
+  dagger CLI: it runs nested in this session. No check calls it; run it
+  from the repository root:
+
+    dagger -m .dagger/modules/e2e call removed-settings-call --ws . --cli <the engine's dagger CLI>
+  """
+  removedSettingsCall(ws: Workspace!, cli: File!): Void {
+    let base = container.from("alpine:3.22").withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "git"])
+      .withFile("/usr/local/bin/dagger", cli, permissions: 755)
+      .withDirectory("/go-sdk", ws.directory("/", exclude: ["**/.git", outputRoot]))
+      .withFile("/go-sdk/dagger.toml", ws.file("/.dagger/modules/engine-e2e/workspace.toml"))
+      .withWorkdir("/go-sdk")
+      .withExec(["git", "init", "-q"])
+    let initGo = ["dagger", "--auto-apply", "module", "init", "go"]
+    let help = base.withExec(["dagger", "module", "init", "go", "--help"],
+      experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    let flags = help.stdout + help.stderr
+    assert("module init go does not list the SDK's settings as flags:\n" + flags) {
+      help.exitCode == 0 and flags.contains("--target-version") and
+        flags.contains("--client-version") == false and flags.contains("--fat") == false
+    }
+    [["--client-version", "v1.0.0-beta.20"], ["--fat"]].map { flag =>
+      let refused = base.withExec(initGo + ["--name", "removed-flag", "--path", outputRoot + "/removed-flag"] + flag,
+        experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+      let output = refused.stdout + refused.stderr
+      assert("the CLI accepted " + flag.join(" ") + ":\n" + output) {
+        refused.exitCode != 0 and output.contains("unknown flag: " + (flag[0] ?? ""))
+      }
+    }
+
+    let stale = "clientVersion = \"v1.0.0-beta.20\"\nfat = true\n"
+    let modulePath = outputRoot + "/removed-module-settings"
+    let scopePath = outputRoot + "/removed-scope-settings"
+    let scope = "sdks.go.scopes." + JSON.encode(scopePath)
+    let configured = base.withNewFile("dagger.toml", base.file("dagger.toml").contents +
+      "\n[modules.go-sdk.settings]\n" + stale +
+      "\n[" + scope + "]\nis-module = true\n\n[" + scope + ".settings]\n" + stale + "targetVersion = \"v1.0.0-beta.20\"\n")
+    [[modulePath, sdkTarget], [scopePath, "v1.0.0-beta.20"]].map { expected =>
+      let path = expected[0] ?? ""
+      let release = expected[1] ?? ""
+      let generated = configured.withExec(initGo + ["--name", "removed-settings", "--path", path],
+        experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+      assert("generation with stale settings failed for " + path + ":\n" + generated.stdout + generated.stderr) {
+        generated.exitCode == 0
+      }
+      let module = generated.directory(path)
+      assert("a stale fat wrote dagger.json in " + path) {
+        module.exists("dagger.json") == false
+      }
+      assert("the library of " + path + " is not pinned to " + release + ":\n" + module.file("go.mod").contents) {
+        module.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
+      }
     }
     null
   }

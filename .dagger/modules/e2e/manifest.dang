@@ -9,22 +9,18 @@ type ManifestChecks {
     let scope = ".dagger/modules/e2e/fixtures/manifest/nested/app"
     let input = ws.withNewFile(scope + "/keep.txt", "keep").withWorkdir(scope)
     let target = ws.moduleSource("/.dagger/modules/e2e/fixtures/manifest/dep")
-    let generated = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let generated = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: input,
       isModule: true,
       name: "app",
       clients: [target],
     )
-    let json = generated.file("dagger.json").contents
     let toml = generated.file("dagger-module.toml").contents
-    assert("JSON dependency path is wrong") {
-      json.contains("\"source\": \"../../dep\"")
+    assert("generation wrote the legacy manifest") {
+      generated.directory(".").exists("dagger.json") == false
     }
     assert("TOML dependency path is wrong") {
       toml.contains("source = \"../../dep\"")
-    }
-    assert("JSON has a default pin") {
-      !json.contains("\"pin\":")
     }
     assert("TOML has a default pin") {
       !toml.contains("pin =")
@@ -45,15 +41,12 @@ type ManifestChecks {
       generated.directory(".").exists("internal/dagger/clients/dep/dep.gen.go") == false
     }
 
-    let repeated = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let repeated = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: generated,
       isModule: true,
       name: "app",
       clients: [target],
     )
-    assert("repeated generation changed JSON") {
-      repeated.file("dagger.json").contents == json
-    }
     assert("repeated generation changed TOML") {
       repeated.file("dagger-module.toml").contents == toml
     }
@@ -63,7 +56,7 @@ type ManifestChecks {
       "package main\n\nimport \"context\"\n\ntype App struct{}\n\n"
         + "func (m *App) Hello(ctx context.Context) (string, error) { return dag.Dep().Hello(ctx) }\n",
     )
-    let rebuilt = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let rebuilt = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: runnable,
       isModule: true,
       name: "app",
@@ -76,7 +69,8 @@ type ManifestChecks {
   }
 
   """
-  The SDK passes the lock and fat options and the selected Git commit to the helper.
+  The SDK passes the lock option and the selected Git commit to the helper,
+  and migrates a legacy dagger.json with its pin into dagger-module.toml.
   """
   gitClientCheck(ws: Workspace!): Void @check {
     let commit = "64645f1967d3dba6fce951dd61ae4acd8d9b0861"
@@ -86,15 +80,12 @@ type ManifestChecks {
       "keep",
     )
     # The commit check reads the standalone client, so enable dualClients.
-    let unlocked = goSdk(fat: true, dualClients: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let unlocked = goSdk(dualClients: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: input,
       isModule: true,
       name: "git-app",
       clients: [target],
     )
-    assert("the SDK wrote a default JSON pin") {
-      !unlocked.file("dagger.json").contents.contains("\"pin\":")
-    }
     assert("the SDK wrote a default TOML pin") {
       !unlocked.file("dagger-module.toml").contents.contains("pin =")
     }
@@ -104,41 +95,43 @@ type ManifestChecks {
     assert("default output lost the generated client commit") {
       unlocked.file("internal/dagger/clients/sdk-helpers/dagger.gen.go").contents.contains("RefPin: \"" + commit + "\"")
     }
-    let locked = goSdk(fat: true, lock: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let locked = goSdk(lock: true, dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: unlocked,
       isModule: true,
       name: "git-app",
       clients: [target],
     )
-    assert("the SDK did not write the selected JSON pin") {
-      locked.file("dagger.json").contents.contains("\"pin\": " + JSON.encode(commit))
-    }
     assert("the SDK did not write the selected TOML pin") {
       locked.file("dagger-module.toml").contents.contains("pin = " + JSON.encode(commit))
     }
-    let unlockedAgain = goSdk(fat: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+    let unlockedAgain = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(
       ws: locked,
       isModule: true,
       name: "git-app",
       clients: [target],
     )
-    assert("disabling lock retained a JSON pin") {
-      !unlockedAgain.file("dagger.json").contents.contains("\"pin\":")
-    }
     assert("disabling lock retained a TOML pin") {
       !unlockedAgain.file("dagger-module.toml").contents.contains("pin =")
     }
-    let thin = goSdk(lock: true, dangEntrypoint: false, unifiedClients: false).generateScope(
-      ws: locked,
+    let legacyJSON = "{\"name\": \"git-app\", \"engineVersion\": \"v1.0.0-beta.20\", \"sdk\": {\"source\": \"go\"}, " +
+      "\"dependencies\": [{\"name\": \"sdk-helpers\", \"source\": " + JSON.encode(target.asString) + ", \"pin\": " + JSON.encode(commit) + "}]}\n"
+    let migrated = goSdk(lock: true, dangEntrypoint: false, unifiedClients: false).generateScope(
+      ws: locked.withoutFile("dagger-module.toml").withNewFile("dagger.json", legacyJSON),
       isModule: true,
       name: "git-app",
       clients: [target],
     )
-    assert("disabling fat retained JSON") {
-      !thin.directory(".").exists("dagger.json")
+    let toml = migrated.file("dagger-module.toml").contents
+    assert("migration retained dagger.json") {
+      !migrated.directory(".").exists("dagger.json")
     }
-    assert("disabling fat lost the selected TOML pin") {
-      thin.file("dagger-module.toml").contents.contains("pin = " + JSON.encode(commit))
+    assert("migration lost the engineVersion, the Git source or its pin:\n" + toml) {
+      toml.contains("engineVersion = \"v1.0.0-beta.20\"") and
+        toml.contains("source = " + JSON.encode(target.asString)) and
+        toml.contains("pin = " + JSON.encode(commit))
+    }
+    assert("migration changed an existing file") {
+      migrated.file("keep.txt").contents == "keep"
     }
   }
 }
