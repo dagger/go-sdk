@@ -81,9 +81,10 @@ type CurrentModule { source: Directory! }
 
 func TestSdkTargetRelease(t *testing.T) {
 	for _, c := range []struct{ setting, want string }{
-		{"", "v1.0.0-beta.21"},
+		{"", "v1.0.0-beta.23"},
+		{"v1.0.0-beta.23", "v1.0.0-beta.23"},
+		{"1.0.0-beta.23+abc", "v1.0.0-beta.23"},
 		{"v1.0.0-beta.21", "v1.0.0-beta.21"},
-		{"1.0.0-beta.21+abc", "v1.0.0-beta.21"},
 		{"v1.0.0-beta.20", "v1.0.0-beta.20"},
 		{"1.0.0-beta.18", "v1.0.0-beta.18"},
 	} {
@@ -98,18 +99,18 @@ func TestSdkTargetReleaseAsserts(t *testing.T) {
 }
 
 func TestSdkTargetReleaseRefusals(t *testing.T) {
-	const fix = "Set targetVersion between v1.0.0-beta.18 and v1.0.0-beta.21 in the scope's settings in dagger.toml, or remove it"
+	const fix = "Set targetVersion between v1.0.0-beta.18 and v1.0.0-beta.23 in the scope's settings in dagger.toml, or remove it"
 	const below = `module "probe" pins targetVersion v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below v1.0.0-beta.18, the oldest engine the generated entrypoint loads on. ` + fix
 	above := func(v string) string {
-		return `module "probe" pins targetVersion ` + v + ", which this release of the Go SDK cannot generate for: it targets v1.0.0-beta.21 at most. " + fix + ", or install the SDK release built for " + v
+		return `module "probe" pins targetVersion ` + v + ", which this release of the Go SDK cannot generate for: it targets v1.0.0-beta.23 at most. " + fix + ", or install the SDK release built for " + v
 	}
 	malformed := func(v string) string {
-		return `module "probe" pins targetVersion "` + v + `", which is not a Dagger release such as v1.0.0-beta.21. ` + fix
+		return `module "probe" pins targetVersion "` + v + `", which is not a Dagger release such as v1.0.0-beta.23. ` + fix
 	}
 	for _, c := range []struct{ setting, want string }{
 		{"v1.0.0-beta.17", below},
 		{"1.0.0-beta.17+abc", below},
-		{"v1.0.0-beta.22", above("v1.0.0-beta.22")},
+		{"v1.0.0-beta.24", above("v1.0.0-beta.24")},
 		{"99.0.0", above("v99.0.0")},
 		{"v1.0.0", above("v1.0.0")},
 		{"latest", malformed("latest")},

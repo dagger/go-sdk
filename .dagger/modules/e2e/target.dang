@@ -5,10 +5,11 @@ default, or the older release the targetVersion setting pins.
 type TargetChecks {
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let dependencyPath: String! = ".dagger/modules/e2e/fixtures/target/dep"
+  let probePath: String! = ".dagger/modules/e2e/fixtures/target/probe/main.go"
   let floor: String! = "v1.0.0-beta.18"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.21"
+  let sdkTarget: String! = "v1.0.0-beta.23"
 
   let pins(ws: Workspace!, release: String!): Boolean! {
     ws.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
@@ -21,10 +22,32 @@ type TargetChecks {
   }
 
   """
+  Serve the generated module from a nested client and return the data of
+  one query, so the engine runs the module's generated code.
+  """
+  let called(ws: Workspace!, scopePath: String!, query: String!): String! {
+    let ran = container.from("golang:1.26-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/workspace", ws.directory("/", exclude: ["**/.git"]))
+      .withFile("/probe/main.go", ws.file("/" + probePath))
+      .withWorkdir("/workspace/" + scopePath)
+      .withEnvVariable("GOFLAGS", "-mod=mod")
+      .withEnvVariable("MODULE_PATH", scopePath)
+      .withEnvVariable("QUERY", query)
+      .withExec(["go", "run", "-buildvcs=false", "/probe/main.go"],
+        experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    if (ran.exitCode != 0) {
+      raise "the generated module failed:\n" + ran.stdout + ran.stderr
+    }
+    ran.stdout
+  }
+
+  """
   A first generation targets the SDK's release whatever engine runs it,
   pins the library to that release, declares it to the module's process,
   writes no version into the manifest, and changes nothing when run again.
-  The generated module loads.
+  The engine runs the starter, which builds on the release's core types.
   """
   defaultCheck(ws: Workspace!): Void @check {
     let name = "target-default"
@@ -42,8 +65,8 @@ type TargetChecks {
     }
     let again = goSdk.generateScope(ws: first, isModule: true, name: name, clients: [])
     assert("generating again changed files") { again.changes(first).isEmpty }
-    let loaded = first.withWorkdir(".").moduleSource("/" + scopePath).introspectionSchemaJSON.contents
-    assert("the generated module did not load") { loaded.contains("\"__schema\"") }
+    let out = called(first, scopePath, "query($ws:ID!){targetDefault(ws:$ws){container{withExec(args:[\"cat\",\"/etc/alpine-release\"]){stdout}}}}")
+    assert("the starter did not run on the SDK's release: " + out) { out.contains("\"stdout\":\"3.21.") }
     null
   }
 
@@ -74,6 +97,8 @@ type TargetChecks {
   A dependency client aliases the core types of the targeted release, read
   from the running engine's view of the dependency, and compiles against
   the pinned library; generating again on the same engine changes nothing.
+  On the SDK's release, the engine runs the module, which calls the
+  dependency and returns its core object. An older pin aliases the same way.
   """
   dependencyCheck(ws: Workspace!): Void @check {
     let name = "target-dependency"
@@ -83,17 +108,29 @@ type TargetChecks {
       .withNewFile(scopePath + "/main.go", "package target_dependency\n\nimport (\n\t\"context\"\n\n\t\"dagger.io/dagger/core\"\n\tdep \"example.com/target-dependency/internal/dagger/clients/target-dep\"\n)\n\ntype TargetDependency struct{}\n\nfunc (*TargetDependency) Greet(ctx context.Context) (string, error) {\n\treturn dep.New().Greet(ctx, \"target\")\n}\n\nfunc (*TargetDependency) Box() *core.Container {\n\treturn dep.New().Box(\"target\")\n}\n")
       .withWorkdir(scopePath)
     let dependency = ws.moduleSource("/" + dependencyPath)
-    let sdk = goSdk(targetVersion: "v1.0.0-beta.20")
-    let generated = sdk.generateScope(ws: input, isModule: true, name: name, clients: [dependency])
-    assert("the library is not pinned to the target:\n" + generated.file("go.mod").contents) {
-      pins(generated, "v1.0.0-beta.20")
+    let generated = goSdk.generateScope(ws: input, isModule: true, name: name, clients: [dependency])
+    assert("the library is not pinned to the SDK's release:\n" + generated.file("go.mod").contents) {
+      pins(generated, sdkTarget)
     }
-    let client = generated.file("internal/dagger/clients/target-dep/dagger.gen.go").contents
+    let clientPath = "internal/dagger/clients/target-dep/dagger.gen.go"
+    let client = generated.file(clientPath).contents
     assert("the dependency client does not alias core:\n" + client) {
       client.contains("type Container = core.Container\n")
     }
-    let again = sdk.generateScope(ws: generated, isModule: true, name: name, clients: [dependency])
+    let again = goSdk.generateScope(ws: generated, isModule: true, name: name, clients: [dependency])
     assert("generating again changed files") { again.changes(generated).isEmpty }
+    let out = called(generated, scopePath, "{targetDependency{greet box{file(path:\"/value\"){contents}}}}")
+    assert("the module did not call its dependency on the SDK's release: " + out) {
+      out.contains("\"greet\":\"hello target\"") and out.contains("\"contents\":\"target\"")
+    }
+
+    let pinned = goSdk(targetVersion: "v1.0.0-beta.20").generateScope(ws: generated, isModule: true, name: name, clients: [dependency])
+    assert("the library is not pinned to the setting:\n" + pinned.file("go.mod").contents) {
+      pins(pinned, "v1.0.0-beta.20")
+    }
+    assert("the pinned dependency client does not alias core:\n" + pinned.file(clientPath).contents) {
+      pinned.file(clientPath).contents.contains("type Container = core.Container\n")
+    }
     null
   }
 
@@ -146,7 +183,7 @@ type TargetChecks {
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.17"), input, name,
       subject + "v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below " + floor + ", the oldest engine the generated entrypoint loads on. " + fix)
     let above = ", which this release of the Go SDK cannot generate for: it targets " + sdkTarget + " at most. " + fix + ", or install the SDK release built for "
-    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.22"), input, name, subject + "v1.0.0-beta.22" + above + "v1.0.0-beta.22")
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.24"), input, name, subject + "v1.0.0-beta.24" + above + "v1.0.0-beta.24")
     expectRefusal(goSdk(targetVersion: "99.0.0"), input, name, subject + "v99.0.0" + above + "v99.0.0")
     let malformed = ", which is not a Dagger release such as " + sdkTarget + ". " + fix
     expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)
