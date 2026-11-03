@@ -188,29 +188,29 @@ the module directory: run dagger generate`.
 
 ## Migration
 
-`dangEntrypoint` and `unifiedClients` are true when unset; beside a custom
-runner, an unset `unifiedClients` keeps each client's style, as described
-below.
-At its next `dagger generate`, a module on the Go runtime moves to the
-generated entrypoint with unified bindings, and embedded bindings move to
-unified ones.
+When unset, `dangEntrypoint` and `unifiedClients` select the generated
+entrypoint and unified bindings for a new module. On `dagger generate`,
+existing modules keep their runtime or entrypoint and binding style.
+Set both settings to `true` to migrate a Go runtime module to the generated
+entrypoint with unified bindings.
 The module then needs Dagger v1.0.0-beta.18 or later.
 The generated entrypoint loads the module's types without running it.
 It supports `package main` and importable packages, and needs a `go.mod` in
 the module directory: generation refuses a module that shares the `go.mod`
 of a parent directory.
-Setting both to `true` enforces the migration.
-In a scope without a module, an unset `unifiedClients` moves existing
-embedded clients to unified ones.
+In a scope without a module, an unset `unifiedClients` keeps existing
+clients' binding styles and uses unified bindings for new clients.
 
 | `dangEntrypoint` | `unifiedClients` | Generation |
 |---|---|---|
-| unset or `true` | unset or `true` | Generated entrypoint with unified bindings. |
-| `false` | `false` | Go runtime with its embedded bindings. |
-| unset or `true` | `false` | Generated entrypoint with embedded bindings; such a module cannot use other modules. |
-| `false` | unset or `true` | Refused: the Go runtime cannot generate unified bindings. A custom runner is exempt; see below. |
+| unset | unset | New module: generated entrypoint and unified bindings. Existing module: retain runner and bindings. |
+| `true` | `true` | Migrate to the generated entrypoint with unified bindings. |
+| `true` | unset | Generated entrypoint; retain existing bindings, or use unified bindings if none exist. |
+| `false` | unset or `false` | Go runtime with its embedded bindings. |
+| `true` | `false` | Generated entrypoint with embedded bindings; such a module cannot use other modules. |
+| `false` | `true` | Refused: the Go runtime cannot generate unified bindings. A custom runner is exempt; see below. |
 
-To keep the Go runtime, set both settings on the module's scope in
+To explicitly keep the Go runtime, set both settings on the module's scope in
 `dagger.toml`:
 
 ```toml
@@ -227,11 +227,9 @@ This replacement also applies when `dangEntrypoint = false`.
 
 Generation does not replace a custom `[runtime]` or a local `[entrypoint]`
 path that the SDK did not generate.
-It refuses such a module until `dangEntrypoint = false` keeps the runner;
-the refusal changes no file.
-With `dangEntrypoint = false`, such a module needs no `unifiedClients`
-setting: generation keeps the runner and generates only the standalone
-clients that the scope's `clients` list.
+With `dangEntrypoint` unset or `false`, generation keeps the runner and
+only generates the standalone clients that the scope's `clients` list.
+Explicit `dangEntrypoint = true` is refused without changing any files.
 An unset `unifiedClients` keeps the style of each existing client package
 and generates a new one with embedded bindings; `true` or `false` sets the
 style of every client.
@@ -242,6 +240,8 @@ When the module's code still uses `dag`, generation fails with
 
 ```toml
 [sdks.go.scopes."path/to/module".settings]
+dangEntrypoint = true
+unifiedClients = true
 globalClient = true
 ```
 
