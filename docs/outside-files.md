@@ -104,6 +104,9 @@ Released engines up to v1.0.0-beta.21 ignore `DAGGER_CLIENT_VERSION` and
 serve the module at their own version.
 v1.0.0-beta.22 to v1.0.0-beta.24 read it, which moves the core API view of
 the module's process; they still serve the module at their own version.
+The generated `internal/dagger/entrypoint/dang.toml` declares the same
+release as its `Dagger` import; see the
+[README](../README.md#the-generated-dangtoml).
 The fixed core library and the module's own bindings depend on the SDK
 release, the target setting and the module's sources.
 An engine update leaves them unchanged.
@@ -236,8 +239,9 @@ This replacement also applies when `dangEntrypoint = false`.
 
 Generation does not replace a custom `[runtime]` or a local `[entrypoint]`
 path that the SDK did not generate.
-With `dangEntrypoint` unset or `false`, generation keeps the runner and
-only generates the standalone clients that the scope's `clients` list.
+With `dangEntrypoint` unset or `false`, generation keeps the runner and its
+`dang.toml`, and only generates the standalone clients that the scope's
+`clients` list.
 Explicit `dangEntrypoint = true` is refused without changing any files.
 An unset `unifiedClients` keeps the style of each existing client package
 and generates a new one with embedded bindings; `true` or `false` sets the
