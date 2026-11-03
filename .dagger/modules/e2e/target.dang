@@ -191,7 +191,7 @@ type TargetChecks {
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.21+???"), input, name, subject + "\"v1.0.0-beta.21+???\"" + malformed)
     let embedded = "targetVersion applies to a module with a Dang entrypoint and unified clients; this module's generated code follows the running engine: set dangEntrypoint = true and unifiedClients = true in the module's dagger.toml settings to migrate, or remove targetVersion"
     expectRefusal(goSdk(targetVersion: sdkTarget, unifiedClients: false), input, name, embedded)
-    expectRefusal(goSdk(targetVersion: sdkTarget, dangEntrypoint: false), input, name, embedded)
+    expectRefusal(goSdk(targetVersion: sdkTarget, dangEntrypoint: false, unifiedClients: false), input, name, embedded)
     expectRefusal(goSdk(clientVersion: "v1.0.0-beta.20"), input, name,
       "clientVersion was renamed to targetVersion: replace clientVersion = \"v1.0.0-beta.20\" with targetVersion = \"v1.0.0-beta.20\" in the dagger.toml settings and run dagger generate")
     null

@@ -34,6 +34,8 @@ type E2e {
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
   # Dagger Go library source used by the generated-client compile check.
   let daggerSourceRef: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
+  """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
+  let sdkTarget: String! = "v1.0.0-beta.23"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
@@ -307,7 +309,7 @@ type E2e {
   }
 
   """
-  Two standalone target packages compile in one Go module.
+  Two embedded standalone target packages compile in one Go module.
   """
   standaloneClientCompilesCheck(ws: Workspace!): Void @check {
     let sourceRef = if (ws.directory("/").exists(".dagger/modules/e2e/engine-commit")) {
@@ -318,7 +320,7 @@ type E2e {
       .withNewFile(scopePath + "/go.mod", "module example.com/compile\n\ngo 1.25\n")
       .withNewFile(scopePath + "/main.go", "package compile\n")
       .withWorkdir(scopePath)
-    let generated = goSdk.generateScope(
+    let generated = goSdk(unifiedClients: false).generateScope(
       ws: input,
       isModule: false,
       name: "standalone-compile",
@@ -350,6 +352,7 @@ type E2e {
   }
 
   """
+  With unifiedClients unset, an embedded client moves to unified bindings.
   Removing a client prunes generated files and preserves user files.
   """
   standaloneClientPreservationCheck(ws: Workspace!): Void @check {
@@ -360,12 +363,28 @@ type E2e {
       .withNewFile(scopePath + "/internal/dagger/clients/custom/user.go", "package custom\n")
       .withWorkdir(scopePath)
     let target = ws.moduleSource("/" + clientTargetPath)
-    let withClient = goSdk.generateScope(
+    let clientPath = "internal/dagger/clients/client-dep/dagger.gen.go"
+    let embedded = goSdk(unifiedClients: false).generateScope(
       ws: input,
       isModule: false,
       name: "standalone-preservation",
       clients: [target],
     )
+    assert("unifiedClients = false generated a unified client") {
+      embedded.file(clientPath).contents.contains("dagger.ModuleGraphQLClient(") == false
+    }
+    let withClient = goSdk.generateScope(
+      ws: embedded,
+      isModule: false,
+      name: "standalone-preservation",
+      clients: [target],
+    )
+    assert("unset unifiedClients did not migrate the embedded client") {
+      withClient.file(clientPath).contents.contains("dagger.ModuleGraphQLClient(")
+    }
+    assert("the migration did not pin the library to the SDK's release:\n" + withClient.file("go.mod").contents) {
+      withClient.file("go.mod").contents.contains("dagger.io/dagger " + sdkTarget + "\n")
+    }
     let withoutClient = goSdk.generateScope(
       ws: withClient,
       isModule: false,
