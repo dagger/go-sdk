@@ -339,8 +339,9 @@ type E2e {
   }
 
   """
-  With unifiedClients unset, an embedded client moves to unified bindings.
-  Removing a client prunes generated files and preserves user files.
+  With unifiedClients unset, existing clients keep their binding style.
+  Explicit true migrates embedded clients. Removing a client prunes generated
+  files and preserves user files.
   """
   standaloneClientPreservationCheck(ws: Workspace!): Void @check {
     let scopePath = fixtureRoot + "/go-scope"
@@ -360,13 +361,19 @@ type E2e {
     assert("unifiedClients = false generated a unified client") {
       embedded.file(clientPath).contents.contains("dagger.ModuleGraphQLClient(") == false
     }
-    let withClient = goSdk.generateScope(
+    let retained = goSdk.generateScope(
+      ws: embedded, isModule: false, name: "standalone-preservation", clients: [target],
+    )
+    assert("unset unifiedClients changed the embedded client") {
+      retained.changes(embedded).isEmpty
+    }
+    let withClient = goSdk(unifiedClients: true).generateScope(
       ws: embedded,
       isModule: false,
       name: "standalone-preservation",
       clients: [target],
     )
-    assert("unset unifiedClients did not migrate the embedded client") {
+    assert("explicit unifiedClients did not migrate the embedded client") {
       withClient.file(clientPath).contents.contains("dagger.ModuleGraphQLClient(")
     }
     assert("the migration did not pin the library to the SDK's release:\n" + withClient.file("go.mod").contents) {
