@@ -3,27 +3,15 @@ Manage Dagger modules and module clients that use the Go SDK.
 """
 type GoSdk {
   """
-  The Dagger release the module's generated code targets, such as
-  v1.0.0-beta.20; the v prefix and build metadata are optional. Empty means
-  the release this Go SDK is built for, v1.0.0-beta.23. A module with a
-  Dang entrypoint and unified clients pins dagger.io/dagger to exactly the
-  targeted release. An engine update leaves that core library and the
-  module's own bindings unchanged. Dependency clients read the running
-  engine's schema and can change when its view of a dependency changes.
-  An SDK update changes the targeted release unless this setting pins it.
-  The entrypoint sets DAGGER_CLIENT_VERSION for the module process.
-  Released engines up to v1.0.0-beta.21 ignore it. v1.0.0-beta.22 and
-  v1.0.0-beta.23 read it, which moves the core API view of the module
-  process.
-  A go.mod requirement that needs a later release is refused until the
-  target is raised; a replace directive for dagger.io/dagger is a
-  development exception that generation reports. The setting pins an older
-  release, from v1.0.0-beta.18, the oldest engine the entrypoint loads on,
-  up to the SDK's; outside that range, generation refuses it. Embedded
-  bindings and the Go runtime follow the running engine instead and refuse
-  this setting. In a scope without a module, it pins the library of the
-  standalone clients the same way. Unset, such a scope pins the SDK's
-  release when it has clients, unless unifiedClients is false.
+  The Dagger release the generated code targets, such as v1.0.0-beta.20;
+  the v prefix and build metadata are optional. Empty means
+  the release this Go SDK is built for, v1.0.0-beta.23. Generation accepts
+  a release from v1.0.0-beta.18, the oldest engine the entrypoint loads on,
+  up to the SDK's release. A module with a Dang entrypoint and unified
+  clients pins dagger.io/dagger to exactly the targeted release; embedded
+  bindings and the Go runtime follow the running engine and refuse this
+  setting. In a scope without a module, it pins the library of the
+  standalone clients. See docs/outside-files.md.
   """
   targetVersion: String! = ""
 
