@@ -316,6 +316,33 @@ type TargetChecks {
   }
 
   """
+  On an engine that reads the entrypoint's dang.toml, the Dagger import
+  sets the version the engine serves the module at, a module without the
+  file gets the engine's fallback of v1.0.0-beta.24, and the engine runs
+  the generated module. Released engines ignore the file, so this is not
+  a check: EngineE2e.dangConfigEngineCheck runs it on such an engine.
+  """
+  dangConfigEngineCheck(ws: Workspace!): Void {
+    let name = "target-dang-config-engine"
+    let scopePath = outputRoot + "/" + name
+    let release = "v1.0.0-beta.23"
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+    let pinned = goSdk(targetVersion: release).generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("dang.toml and the process do not both declare " + release + ":\n" + pinned.file(dangConfigPath).contents) {
+      configures(pinned, release) and declares(pinned, release)
+    }
+    let served = pinned.withWorkdir(".").moduleSource("/" + scopePath).engineVersion
+    assert("the engine did not serve the module at its dang.toml version: " + served) { served == release }
+    let fallback = pinned.withoutFile(dangConfigPath).withWorkdir(".").moduleSource("/" + scopePath).engineVersion
+    assert("the engine did not serve a module without dang.toml at v1.0.0-beta.24: " + fallback) {
+      fallback == "v1.0.0-beta.24"
+    }
+    let out = called(pinned, scopePath, "query($ws:ID!){targetDangConfigEngine(ws:$ws){container{withExec(args:[\"cat\",\"/etc/alpine-release\"]){stdout}}}}")
+    assert("the generated module did not run: " + out) { out.contains("\"stdout\":\"3.21.") }
+    null
+  }
+
+  """
   Generation refuses a target the SDK cannot generate for and says how to
   fix it: a setting below the floor, above the SDK's release, or not a
   release; and a setting on a Go runtime module.
