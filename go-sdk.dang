@@ -27,9 +27,6 @@ type GoSdk {
   """
   targetVersion: String! = ""
 
-  """Renamed to targetVersion. Generation refuses a scope that still sets it."""
-  clientVersion: String! = ""
-
   """
   True if unset; set true to enforce unified-client migration. Beside a
   custom runtime or entrypoint, unset keeps each client's existing style
@@ -54,20 +51,13 @@ type GoSdk {
   """
   template: String! = "default"
 
-  """
-  Generate a fat module that also writes the legacy dagger.json manifest.
-  The SDK-module interface requires Dagger v1.0.0-beta.12 or later.
-  """
-  fat: Boolean! = false
-
   """Write selected dependency commits to the module manifests."""
   lock: Boolean! = false
 
   """
-  In module scopes, generate each client two times: one for the module and
-  one standalone. Non-module scopes always generate standalone clients.
-
-  Temporary: this setting will be removed when the two clients become one.
+  With the Go runtime, also generate a standalone client for each module
+  client. Generated entrypoints and non-module scopes always generate
+  standalone clients.
   """
   dualClients: Boolean! = false
 
@@ -104,9 +94,6 @@ type GoSdk {
     name: String!,
     clients: [ModuleSource!]!,
   ): Workspace! {
-    if (clientVersion != "") {
-      raise "clientVersion was renamed to targetVersion: replace clientVersion = " + JSON.encode(clientVersion) + " with targetVersion = " + JSON.encode(clientVersion) + " in the dagger.toml settings and run dagger generate"
-    }
     let hadManifest = exists(ws, "dagger-module.toml") or exists(ws, "dagger.json")
     let entrypoint = isModule and usesEntrypoint(ws)
     let unified = unifiedClients ?? true
@@ -377,11 +364,12 @@ type GoSdk {
     name: String!,
     clients: [ModuleSource!]!,
   ): Workspace! {
+    # legacyJson defaults to true, which writes dagger.json for a Go runtime.
     sdkHelpers.loadModuleManifest(ws)
       .withName(name)
       .withLegacyGoRuntime
       .withLegacyRuntimeDependencies(modules: clients)
-      .generate(ws, lock: lock, legacyJson: fat)
+      .generate(ws, lock: lock, legacyJson: false)
   }
 
   """Run built-in Go codegen and discard its manifest files."""
@@ -444,9 +432,6 @@ type GoSdk {
       }
       if (!hadManifest and template == "legacy") {
         raise "the legacy template is not available with a Dang entrypoint; choose another template or set dangEntrypoint = false and unifiedClients = false"
-      }
-      if (fat) {
-        raise "a fat module is not available with a Dang entrypoint: dagger.json would point older engines at the Go runtime, which cannot load an importable package; set fat = false"
       }
       let clientNames = clients.map { client => client.moduleOriginalName }
       let clientSources = clients.map { client => client.asString }
