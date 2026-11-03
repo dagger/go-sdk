@@ -394,11 +394,11 @@ type EntrypointChecks {
       "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = './custom-entrypoint'\n",
       "name = 'generate-app'\n[entrypoint]\nkind = 'dang'\nsource = './internal/dagger/entrypoint'\n",
     ]
-    customs.map { manifest =>
+    customs.each { manifest =>
       let custom = input
         .withNewFile("dagger-module.toml", manifest)
         .withNewFile("internal/dagger/entrypoint/main.dang", "# User-authored runner, even at the SDK's usual path.\n")
-      [goSdk(dangEntrypoint: true, globalClient: true)].map { sdk =>
+      [goSdk(dangEntrypoint: true, globalClient: true)].each { sdk =>
         let refused = sdk.generateScope(ws: custom, isModule: true, name: "generate-app", clients: [])
           .file("dagger-module.toml").contents rescue { err: Error => err.message }
         assert("generation replaced a custom runner: " + firstLine(refused)) {
@@ -406,7 +406,7 @@ type EntrypointChecks {
             refused.contains("set dangEntrypoint = false")
         }
       }
-      [goSdk, goSdk(dangEntrypoint: false)].map { sdk =>
+      [goSdk, goSdk(dangEntrypoint: false)].each { sdk =>
         let retained = sdk.generateScope(ws: custom, isModule: true, name: "generate-app", clients: [])
         assert("automatic or explicit false generation changed a custom runner") {
           retained.changes(custom).isEmpty
