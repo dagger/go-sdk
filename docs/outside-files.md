@@ -123,8 +123,6 @@ The `targetVersion` setting pins an older release, between v1.0.0-beta.18
 and the SDK's release; generation refuses a setting outside that range.
 An engine older than the targeted release is not refused: a call to a
 function that engine lacks fails when the module runs.
-`targetVersion` replaces the `clientVersion` setting; generation refuses a
-scope that still sets `clientVersion`.
 
 When another requirement of `go.mod` needs a later `dagger.io/dagger`,
 generation refuses and names that requirement: raise `targetVersion`, or
@@ -151,6 +149,28 @@ engine's when it declares none, and the engine generates the module's code
 for that version.
 Fully pinned targeting needs the Dang entrypoint with unified clients; see
 Migration.
+
+## Removed settings
+
+go-sdk no longer has the `clientVersion` and `fat` settings.
+Generation writes no `dagger.json`; it migrates an existing one into
+`dagger-module.toml` and removes it.
+The CLI refuses either setting as an argument, for example
+`dagger module init go --fat` fails with `unknown flag: --fat`.
+In `dagger.toml`, the engine ignores an unknown setting under
+`[modules.go-sdk.settings]` or under a scope's settings, so a stale
+`clientVersion` or `fat` there has no effect and no error.
+A stale `clientVersion` no longer pins the target: replace it with
+`targetVersion`, which keeps the pin.
+Remove a stale `fat`.
+
+```toml
+[sdks.go.scopes."path/to/module".settings]
+targetVersion = "v1.0.0-beta.20"
+```
+
+`dagger doctor` reports unknown settings under `[modules.<name>.settings]`;
+check the settings of each scope by hand.
 
 ## When to generate again
 

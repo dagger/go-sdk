@@ -601,18 +601,6 @@ type EntrypointChecks {
       legacy.contains("legacy template") and legacy.contains("set dangEntrypoint = false and unifiedClients = false")
     }
 
-    let fat = goSdk(dangEntrypoint: false, fat: true).generateScope(
-      ws: remote,
-      isModule: true,
-      name: "generate-app",
-      clients: [],
-    ).file("dagger.gen.go").contents rescue {
-      err: Error => err.message
-    }
-    assert("a fat module was accepted: " + firstLine(fat)) {
-      fat.contains("set fat = false")
-    }
-
     # Package main uses a dispatcher in the author package.
     let mainPath = outputRoot + "/entrypoint-main"
     let packageMain = goSdk(dangEntrypoint: true).generateScope(
@@ -679,7 +667,7 @@ type EntrypointChecks {
       independent.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
         independent.file("internal/dagger/entrypoint/main.dang").contents.contains("type Entrypoint implements ModuleEntrypoint")
     }
-    [withClient, fat, dropped, droppedLegacy, parentGoMod].map { refusal =>
+    [withClient, dropped, droppedLegacy, parentGoMod].map { refusal =>
       assert("a remote entrypoint refusal recommends an ineffective opt-out: " + firstLine(refusal)) {
         refusal.contains("dangEntrypoint = false") == false
       }

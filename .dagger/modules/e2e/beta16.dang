@@ -41,7 +41,7 @@ type Beta16Checks {
     assert("migration retained the legacy Go runtime") {
       manifest.contains("[entrypoint]") and manifest.contains("[runtime]") == false
     }
-    assert("migration retained a fat manifest") {
+    assert("migration retained dagger.json") {
       migrated.directory(".").exists("dagger.json") == false
     }
     assert("migration did not reuse shared core types") {
