@@ -93,7 +93,7 @@ Generation refuses on v1.0.0-beta.16 and older.
 
 ## The release the generated code targets
 
-Each go-sdk release targets one Dagger release, v1.0.0-beta.23 today.
+Each go-sdk release targets one Dagger release, v1.0.0-beta.24 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to exactly that release.
 Its generated entrypoint declares the release to the engine, in the
@@ -102,7 +102,7 @@ generated standalone client with a target announces it when it starts a
 session.
 Released engines up to v1.0.0-beta.21 ignore `DAGGER_CLIENT_VERSION` and
 serve the module at their own version.
-v1.0.0-beta.22 and v1.0.0-beta.23 read it, which moves the core API view of
+v1.0.0-beta.22 to v1.0.0-beta.24 read it, which moves the core API view of
 the module's process; they still serve the module at their own version.
 The fixed core library and the module's own bindings depend on the SDK
 release, the target setting and the module's sources.

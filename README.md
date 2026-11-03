@@ -3,7 +3,7 @@
 > [!NOTE]
 >
 > By default, this version of the Go SDK targets Dagger engine
-> `v1.0.0-beta.23`. See
+> `v1.0.0-beta.24`. See
 > [The release the generated code targets](docs/outside-files.md#the-release-the-generated-code-targets).
 
 A Dagger module for managing Dagger modules and module clients that use the
