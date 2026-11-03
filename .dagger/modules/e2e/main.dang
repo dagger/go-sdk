@@ -35,7 +35,7 @@ type E2e {
   # Dagger Go library source used by the generated-client compile check.
   let daggerSourceRef: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.23"
+  let sdkTarget: String! = "v1.0.0-beta.24"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
