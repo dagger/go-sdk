@@ -75,7 +75,7 @@ func TestNullableObjectLoadsBySchemaName(t *testing.T) {
 	generator.SetSchemaParents(schema)
 	generator.SetSchema(schema)
 	t.Cleanup(func() { generator.SetSchema(nil) })
-	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.25", generator.Config{Names: styled})
+	funcs := GoTemplateFuncs(schema, nil, "v1.0.0-beta.26", generator.Config{Names: styled})
 	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(filepath.Join("src", "_types/object.go.tmpl"))
 	require.NoError(t, err)
 	var buf bytes.Buffer
