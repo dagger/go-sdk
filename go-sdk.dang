@@ -38,8 +38,10 @@ type GoSdk {
   """
   globalClient: Boolean
   """
-  Build the module's process with dagger/go, as any dagger/go build: the
-  scope must list dagger/go as a client. Applies to Dang entrypoints.
+  Build the module's process with dagger/go, as any dagger/go build. The
+  scope lists dagger/go as a client named go, which becomes the generated
+  entrypoint's dependency instead of a Go client. Applies to Dang
+  entrypoints. A prototype, pending manifest version 2 dependencies.
   """
   daggerGo: Boolean! = false
 
@@ -135,10 +137,17 @@ type GoSdk {
       # fields that view lacks.
       let target = targetRelease("module " + JSON.encode(name), versions)
       checkDangConfig(initialized, target)
+      # With daggerGo, dagger/go is the entrypoint's dependency, which
+      # builds the module, and no Go client of the module's.
+      let entrypointDeps = if (daggerGo) { clients.filter { client => client.moduleOriginalName == "go" } } else { [] :: [ModuleSource!]! }
+      let goClients = if (daggerGo) { clients.filter { client => client.moduleOriginalName != "go" } } else { clients }
+      if (daggerGo and entrypointDeps.length == 0) {
+        raise "daggerGo needs dagger/go among the scope's clients"
+      }
       let withClients = if (unified) {
-        generateStandaloneClients(initialized, clients, true, target, false)
+        generateStandaloneClients(initialized, goClients, true, target, false)
       } else { initialized }
-      entrypointModule(withClients, name, unified, target)
+      entrypointModule(withClients, name, unified, target, entrypointDeps)
     } else if (isModule and hasCustomRunner(initialized)) {
       # A runtime or entrypoint the user chose remains theirs. Only explicitly
       # requested standalone clients are generated beside it.
@@ -593,18 +602,29 @@ type GoSdk {
   command, and the entrypoint into the module's Go root. sdk-helpers then
   writes the manifest that names the entrypoint and removes dagger.json.
   """
-  let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!, target: String!): Workspace! {
+  let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!, target: String!, deps: [ModuleSource!]!): Workspace! {
     let scopePath = normalizePath(ws.cwd)
     # A module whose manifest names an entrypoint and no dependencies loads
     # through that entrypoint, which is not generated yet. A fresh runtime
     # manifest of the targeted release gives the engine a module it can
     # serve a schema for.
-    let staged = sdkHelpers.moduleManifest
+    let stagedManifest = sdkHelpers.moduleManifest
       .withName(name: name)
       .withLegacyGoRuntime(engineVersion: target)
-      .generate(ws, lock: false, legacyJson: false)
+    let staged = stagedManifest.generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
+    # The entrypoint is checked against a schema with its dependencies; the
+    # module's Go bindings come from the one without, so the module compiles
+    # none of a dependency only its entrypoint calls.
+    let contractSchema = if (deps.length == 0) { source.introspectionSchemaJSON } else {
+      stagedManifest
+        .withLegacyRuntimeDependencies(modules: deps)
+        .generate(ws, lock: false, legacyJson: false)
+        .withWorkdir(".")
+        .moduleSource(rootedPath(scopePath))
+        .introspectionSchemaJSON
+    }
 
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
@@ -630,6 +650,7 @@ type GoSdk {
     let inputs = builder
       .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJSON)
+      .withFile("/contract-schema.json", contractSchema)
     let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
       "module-codegen",
@@ -653,7 +674,7 @@ type GoSdk {
     let generated = runTool(codegen, [
       "entrypoint-contract",
       "--entrypoint-dir", buildRoot + "/" + prefix + entrypointPath,
-      "--introspection-json-path", "/schema.json",
+      "--introspection-json-path", "/contract-schema.json",
     ]).directory(buildRoot)
     # Merge only what the generator owns, so the user's files are not
     # written back.
@@ -676,10 +697,17 @@ type GoSdk {
     # are removed here, relative to the module.
     let removed = codegen.file("/removed.txt").contents.split("\n").filter { p => p != "" }
     let pruned = removed.reduce(merged) { current, p => current.withoutFile(p) }
-    sdkHelpers.moduleManifest
+    let manifested = sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
       .generate(withDangConfig(pruned, target), lock: false, legacyJson: false)
+    if (deps.length == 0) { return manifested }
+    # The entrypoint's dependencies, which manifest version 2 lists without a
+    # runtime; sdk-helpers writes dependencies only with one.
+    let tables = deps.map { dep =>
+      "\n[[dependencies]]\n  name = " + JSON.encode(dep.moduleOriginalName) + "\n  source = " + JSON.encode(dependencySource(dep, scopePath)) + "\n"
+    }.join("")
+    manifested.withDirectory(".", directory.withNewFile("dagger-module.toml", manifested.file("dagger-module.toml").contents + tables))
   }
 
   let withDangConfig(ws: Workspace!, target: String!): Workspace! {
@@ -759,6 +787,20 @@ type GoSdk {
   """A field in its JSON form, which tells a string from true; empty when unset."""
   let rawField(value: Dagger.JSONValue!, key: String!): String! {
     if (value.fields.contains(key)) { toString(value.field([key]).contents) } else { "" }
+  }
+
+  """
+  A dependency's source as the manifest of the module at scopePath names it:
+  its address, or for a local module, its path from the module's directory.
+  """
+  let dependencySource(dep: ModuleSource!, scopePath: String!): String! {
+    if (dep.kind == GIT_SOURCE) {
+      dep.asString
+    } else if (scopePath == ".") {
+      "./" + dep.sourceRootSubpath
+    } else {
+      scopePath.split("/").map { segment => ".." }.join("/") + "/" + dep.sourceRootSubpath
+    }
   }
 
   """
