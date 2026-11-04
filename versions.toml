@@ -1,5 +1,5 @@
 defaultTarget = "v1.0.0-beta.27"
-sourcesFloor = "v1.0.0-beta.25"
+sourcesFloor = "v1.0.0-beta.26"
 # The dagger/go that generated entrypoint modules build with (daggerGo): the
 # commit on dagger/go's main that brought the per-package build, until a
 # dagger/go release carries it.
