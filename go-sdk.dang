@@ -38,6 +38,12 @@ type GoSdk {
   """
   globalClient: Boolean
   """
+  Build the module's process with dagger/go, as any dagger/go build: the
+  scope must list dagger/go as a client. Applies to Dang entrypoints.
+  """
+  daggerGo: Boolean! = false
+
+  """
   Starter template used when a new module scope is initialized.
 
   Valid values are `default`, `empty`, and `legacy`. `legacy` needs
@@ -634,6 +640,7 @@ type GoSdk {
       "--schema-version", schemaVersion,
       "--go-image", goImage,
       "--runtime-image", pinnedImage("alpine:3.22"),
+      "--dagger-go=" + JSON.encode(daggerGo),
       "--dagger-version", target,
       "--target-version", target,
       "--unified=" + JSON.encode(unified),
