@@ -654,12 +654,12 @@ func renderDangFunctionNamed(spec *funcTypeSpec, name string) (string, error) {
 	}
 	switch spec.cachePolicy {
 	case "never":
-		base += "\n  .withCachePolicy(FunctionCachePolicy.Never)"
+		base += "\n  .withCachePolicy(FunctionCachePolicy.NEVER)"
 	case "session":
-		base += "\n  .withCachePolicy(FunctionCachePolicy.PerSession)"
+		base += "\n  .withCachePolicy(FunctionCachePolicy.PER_SESSION)"
 	case "":
 	default:
-		base += "\n  .withCachePolicy(FunctionCachePolicy.Default, timeToLive: " + strconv.Quote(strings.TrimSpace(spec.cachePolicy)) + ")"
+		base += "\n  .withCachePolicy(FunctionCachePolicy.DEFAULT, timeToLive: " + strconv.Quote(strings.TrimSpace(spec.cachePolicy)) + ")"
 	}
 	if spec.sourceMap != nil {
 		base += "\n  .withSourceMap(" + renderDangSourceMap(spec.sourceMap) + ")"
