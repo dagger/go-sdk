@@ -819,7 +819,10 @@ type GoSdk {
   command, and the entrypoint into the module's Go root. sdk-helpers then
   writes the manifest that names the entrypoint and removes dagger.json.
   """
-  let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!, target: String!, deps: [ModuleSource!]!): Workspace! {
+  let entrypointModule(input: Workspace!, name: String!, unified: Boolean!, target: String!, deps: [ModuleSource!]!): Workspace! {
+    # Name and validate the module with the exact dang.toml we publish.
+    # Writing it after codegen would query the previous version's names.
+    let ws = withDangConfig(input, target, entrypointDir(input))
     let scopePath = normalizePath(ws.cwd)
     # The module's Go code is in its directory or in the subdirectory its
     # manifest names; the generated files go there, and the manifest stays
@@ -938,7 +941,7 @@ type GoSdk {
     let manifested = sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointSource)
-      .generate(withDangConfig(pruned, target, entrypointSource), lock: false, legacyJson: false)
+      .generate(pruned, lock: false, legacyJson: false)
     let includedManifest = withManifestInclude(manifested, codegen.file("/include.txt"))
     if (deps.length == 0) { return includedManifest }
     # The entrypoint's dependencies, which manifest version 2 lists without a
