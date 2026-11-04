@@ -95,11 +95,14 @@ Released engines from v1.0.0-beta.18 to v1.0.0-beta.25 copy only `.dang`
 files to evaluate an entrypoint, so they ignore this file and serve the
 module at their own version.
 [dagger/dagger#14902](https://github.com/dagger/dagger/pull/14902) and
-[dagger/dagger#14958](https://github.com/dagger/dagger/pull/14958), which are
-not merged, make the engine read the `Dagger` version of this file and serve
-the module at that release.
+[dagger/dagger#14958](https://github.com/dagger/dagger/pull/14958), released
+in v1.0.0-beta.26, make the engine read the `Dagger` version of this file
+and serve the module at that release.
 With those changes, an entrypoint without a Dagger version gets
-v1.0.0-beta.24, so a module that targets any other release needs the file.
+v1.0.0-beta.25, and the identifier-casing cut is in v1.0.0-beta.26.
+Every target of this SDK is at or after the cut, so the generated file must
+already be present when codegen asks the engine for the module's names.
+Generation writes it before querying that source and publishes the same file.
 Run `dagger generate` to add the file to a module whose entrypoint an older
 SDK generated.
 
