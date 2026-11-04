@@ -61,6 +61,7 @@ func GenerateV2Artifacts(
 	packageImport string,
 	moduleSubpath string,
 	goImage string,
+	runtimeImage string,
 	targetVersion string,
 	sources *EntrypointSources,
 ) (*V2Artifacts, error) {
@@ -76,7 +77,7 @@ func GenerateV2Artifacts(
 		pass:            1,
 	}
 
-	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, targetVersion, sources)
+	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, targetVersion, sources)
 }
 
 type v2Module struct {
@@ -87,9 +88,16 @@ type v2Module struct {
 	implementation *Statement
 	sources        *EntrypointSources
 	targetVersion  string
+	// runtimeImage is the image the module's process runs in; empty for
+	// defaultRuntimeImage.
+	runtimeImage string
 }
 
-func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
+// defaultRuntimeImage is the image a module's process runs in when the
+// generator isn't given one.
+const defaultRuntimeImage = "alpine:3.22"
+
+func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
 	if !exposesModuleContext(funcs.schema) {
 		return nil, errors.New("the generated Dang entrypoint needs Dagger " + sourcesFloor + " or later")
 	}
@@ -98,6 +106,7 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		implementation: Empty(),
 		sources:        sources,
 		targetVersion:  targetVersion,
+		runtimeImage:   runtimeImage,
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -403,8 +412,13 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
     # A build failure stays out of the rescue below, so it surfaces unchanged.
     let binary = dispatch.sync
     let result = container
-      .from("alpine:3.22")
-      .withFile("/usr/local/bin/dispatch", binary, permissions: 755)
+`)
+	runtimeImage := mod.runtimeImage
+	if runtimeImage == "" {
+		runtimeImage = defaultRuntimeImage
+	}
+	fmt.Fprintf(&b, "      .from(%s)\n", strconv.Quote(runtimeImage))
+	b.WriteString(`      .withFile("/usr/local/bin/dispatch", binary, permissions: 755)
       .withMountedDirectory("/workspace", currentModule.contextDirectory)
 `)
 	fmt.Fprintf(&b, "      .withWorkdir(%s)\n", workdir)

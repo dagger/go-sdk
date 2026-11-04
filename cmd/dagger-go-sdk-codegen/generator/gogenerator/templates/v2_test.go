@@ -74,6 +74,23 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.NotContains(t, text, "FunctionCallArgValue")
 }
 
+// The entrypoint builds and runs the module in the images it's given, which
+// the SDK pins by digest, and runs it in alpine without one.
+func TestEntrypointImages(t *testing.T) {
+	const goImage = "docker.io/library/golang:1.26.1-alpine@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const runtimeImage = "docker.io/library/alpine:3.22@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	source, err := (&v2Module{runtimeImage: runtimeImage}).renderEntrypointSource("hello", ".", goImage)
+	require.NoError(t, err)
+	text := string(source)
+	require.Contains(t, text, `.from("`+goImage+`")`)
+	require.Contains(t, text, `.from("`+runtimeImage+`")`)
+	require.NotContains(t, text, `.from("alpine:3.22")`)
+
+	source, err = (&v2Module{}).renderEntrypointSource("hello", ".", goImage)
+	require.NoError(t, err)
+	require.Contains(t, string(source), `.from("alpine:3.22")`)
+}
+
 func TestEntrypointWithoutOutsideFilesReturnsItsOwnDirectory(t *testing.T) {
 	source, err := (&v2Module{}).renderEntrypointSource("hello-world", ".", "golang:1.26-alpine")
 	require.NoError(t, err)

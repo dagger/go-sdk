@@ -609,7 +609,10 @@ type GoSdk {
     let goVersion = if (exists(workspaceRoot, "go.mod")) {
       requiredGoVersion(workspaceRoot.file("go.mod"))
     } else { minimumGoVersion }
-    let goImage = "golang:" + goVersion + "-alpine"
+    # The entrypoint names its images by digest, as this generation resolved
+    # them: a tag would be looked up in the registry again in every session
+    # that builds or runs the module.
+    let goImage = pinnedImage("golang:" + goVersion + "-alpine")
     let builder = moduleCodegenBuilder(goImage)
     let moduleSource = workspaceRoot.directory(".", exclude: ["**/.git"])
     let includes = moduleIncludes(ws, builder, moduleSource, goRoot, moduleRoot, scopePath)
@@ -630,6 +633,7 @@ type GoSdk {
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
       "--go-image", goImage,
+      "--runtime-image", pinnedImage("alpine:3.22"),
       "--dagger-version", target,
       "--target-version", target,
       "--unified=" + JSON.encode(unified),
@@ -863,6 +867,14 @@ type GoSdk {
 
   let rootedPath(p: String!): String! {
     if (p == ".") { "/" } else { "/" + p }
+  }
+
+  """
+  The image at ref, by its digest: the workspace's lock entry for it, or the
+  registry's, which the lock then records.
+  """
+  let pinnedImage(ref: String!): String! {
+    container.from(ref).imageRef
   }
 
   """
