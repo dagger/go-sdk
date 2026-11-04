@@ -91,6 +91,26 @@ func TestEntrypointImages(t *testing.T) {
 	require.Contains(t, string(source), `.from("alpine:3.22")`)
 }
 
+// With daggerGo, the entrypoint builds the module's process with dagger/go,
+// by its package's workspace directory, instead of a go build of its own.
+func TestEntrypointDaggerGoDispatch(t *testing.T) {
+	source, err := (&v2Module{daggerGo: true}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+	require.NoError(t, err)
+	text := string(source)
+	require.Contains(t, text, "let ws = currentModule.contextDirectory.asWorkspace")
+	require.Contains(t, text, "let root = src\n")
+	require.Contains(t, text, "let pkg = src\n")
+	require.Contains(t, text, "go.module(ws, path: root, findUp: false).packages(ws).get(pkg).binary(ws)")
+	require.NotContains(t, text, "go build -o /tmp/dispatch")
+	require.NotContains(t, text, "go-sdk-v2-build")
+
+	source, err = (&v2Module{daggerGo: true}).renderEntrypointSource("hello", "modules/hello", "golang:1.26-alpine")
+	require.NoError(t, err)
+	text = string(source)
+	require.Contains(t, text, `let root = if (src == "modules/hello") { "." } else { src.trimSuffix("/modules/hello") }`)
+	require.Contains(t, text, `let pkg = if (src == ".") { "cmd/hello-dispatch" } else { src + "/cmd/hello-dispatch" }`)
+}
+
 func TestEntrypointWithoutOutsideFilesReturnsItsOwnDirectory(t *testing.T) {
 	source, err := (&v2Module{}).renderEntrypointSource("hello-world", ".", "golang:1.26-alpine")
 	require.NoError(t, err)

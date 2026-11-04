@@ -39,6 +39,7 @@ func run() error {
 	flag.StringVar(&cfg.TargetVersion, "target-version", "", "Dagger release the generated code targets, which the entrypoint declares to the module's process")
 	flag.StringVar(&cfg.GoImage, "go-image", "golang:1.26-alpine", "Go image used by the generated entrypoint")
 	flag.StringVar(&cfg.RuntimeImage, "runtime-image", "", "image the generated entrypoint runs the module's process in")
+	flag.BoolVar(&cfg.DaggerGo, "dagger-go", false, "build the module's process with dagger/go, the module's client \"go\"")
 	flag.StringVar(&cfg.RemovedPath, "removed-list", "", "file that receives the paths of removed generated files")
 	flag.BoolVar(&cfg.UnifiedClient, "unified", false, "reuse core bindings and shared sessions")
 	flag.BoolVar(&cfg.GlobalClient, "global-client", false, "generate the compatibility unqualified dag API")

@@ -62,6 +62,7 @@ func GenerateV2Artifacts(
 	moduleSubpath string,
 	goImage string,
 	runtimeImage string,
+	daggerGo bool,
 	targetVersion string,
 	sources *EntrypointSources,
 ) (*V2Artifacts, error) {
@@ -77,7 +78,7 @@ func GenerateV2Artifacts(
 		pass:            1,
 	}
 
-	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, targetVersion, sources)
+	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, targetVersion, sources)
 }
 
 type v2Module struct {
@@ -91,13 +92,16 @@ type v2Module struct {
 	// runtimeImage is the image the module's process runs in; empty for
 	// defaultRuntimeImage.
 	runtimeImage string
+	// daggerGo builds the module's process with dagger/go, a client of the
+	// module, instead of a go build of its own.
+	daggerGo bool
 }
 
 // defaultRuntimeImage is the image a module's process runs in when the
 // generator isn't given one.
 const defaultRuntimeImage = "alpine:3.22"
 
-func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
+func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage string, daggerGo bool, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
 	if !exposesModuleContext(funcs.schema) {
 		return nil, errors.New("the generated Dang entrypoint needs Dagger " + sourcesFloor + " or later")
 	}
@@ -107,6 +111,7 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		sources:        sources,
 		targetVersion:  targetVersion,
 		runtimeImage:   runtimeImage,
+		daggerGo:       daggerGo,
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -363,28 +368,15 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	b.WriteString("type Entrypoint implements ModuleEntrypoint {\n")
 	writeSources(&b, mod.sources)
 	workdir := `"/workspace/" + currentModule.sourceSubpath`
-	b.WriteString("  let dispatch: File! {\n")
-	b.WriteString("    container\n")
-	fmt.Fprintf(&b, "      .from(%s)\n", strconv.Quote(goImage))
-	b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
-	b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
-	b.WriteString("      .withMountedDirectory(\"/workspace\", currentModule.contextDirectory)\n")
-	fmt.Fprintf(&b, "      .withWorkdir(%s)\n", workdir)
-	b.WriteString("      .withEnvVariable(\"CGO_ENABLED\", \"0\")\n")
-	b.WriteString("      .withEnvVariable(\"GOWORK\", \"off\")\n")
 	buildTarget := "./cmd/" + strcase.ToKebab(moduleName) + "-dispatch"
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		buildTarget = "."
 	}
-	// Go reports a file that sources leaves out as a missing module or
-	// package and suggests go get; the fix is to generate again.
-	script := "go build -o /tmp/dispatch " + buildTarget + " 2>/tmp/build.log && exit 0; cat /tmp/build.log >&2; " +
-		"grep -q -e 'no required module provides package' -e 'replacement directory' -e 'no matching files found' /tmp/build.log && " +
-		"echo 'The build misses files outside the module directory: run dagger generate after changing go.mod replace directives, " +
-		"the imports from a replace target or their embeds.' >&2; exit 1"
-	fmt.Fprintf(&b, "      .withExec([\"sh\", \"-c\", %s])\n", strconv.Quote(script))
-	b.WriteString("      .file(\"/tmp/dispatch\")\n")
-	b.WriteString("  }\n\n")
+	if mod.daggerGo {
+		writeDaggerGoDispatch(&b, moduleSubpath, buildTarget)
+	} else {
+		writeGoBuildDispatch(&b, goImage, workdir, buildTarget)
+	}
 	b.WriteString("  pub types: [TypeDef!]! {\n")
 	b.WriteString("    [\n")
 	for i, def := range defs {
@@ -1015,4 +1007,54 @@ func developerArgEncoding(spec ParsedType) string {
 		}
 	}
 	return "json"
+}
+
+// writeGoBuildDispatch writes the entrypoint's dispatch member as a go build
+// of the module's process at buildTarget, in goImage, with the module's own
+// Go cache volumes.
+func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string) {
+	b.WriteString("  let dispatch: File! {\n")
+	b.WriteString("    container\n")
+	fmt.Fprintf(b, "      .from(%s)\n", strconv.Quote(goImage))
+	b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
+	b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
+	b.WriteString("      .withMountedDirectory(\"/workspace\", currentModule.contextDirectory)\n")
+	fmt.Fprintf(b, "      .withWorkdir(%s)\n", workdir)
+	b.WriteString("      .withEnvVariable(\"CGO_ENABLED\", \"0\")\n")
+	b.WriteString("      .withEnvVariable(\"GOWORK\", \"off\")\n")
+	// Go reports a file that sources leaves out as a missing module or
+	// package and suggests go get; the fix is to generate again.
+	script := "go build -o /tmp/dispatch " + buildTarget + " 2>/tmp/build.log && exit 0; cat /tmp/build.log >&2; " +
+		"grep -q -e 'no required module provides package' -e 'replacement directory' -e 'no matching files found' /tmp/build.log && " +
+		"echo 'The build misses files outside the module directory: run dagger generate after changing go.mod replace directives, " +
+		"the imports from a replace target or their embeds.' >&2; exit 1"
+	fmt.Fprintf(b, "      .withExec([\"sh\", \"-c\", %s])\n", strconv.Quote(script))
+	b.WriteString("      .file(\"/tmp/dispatch\")\n")
+	b.WriteString("  }\n\n")
+}
+
+// writeDaggerGoDispatch writes the entrypoint's dispatch member as dagger/go's
+// build of the module's process at buildTarget: the same per-package builds,
+// cached the same way, as any dagger/go build, at the toolchain of the
+// module's go.mod. dagger/go is the module's client "go". moduleSubpath is
+// the module's directory under its Go module's.
+func writeDaggerGoDispatch(b *bytes.Buffer, moduleSubpath, buildTarget string) {
+	b.WriteString("  let dispatch: File! {\n")
+	b.WriteString("    let ws = currentModule.contextDirectory.asWorkspace\n")
+	b.WriteString("    let src = currentModule.sourceSubpath\n")
+	// dagger/go keys a package by its directory in the workspace.
+	if moduleSubpath == "." {
+		b.WriteString("    let root = src\n")
+	} else {
+		fmt.Fprintf(b, "    let root = if (src == %s) { \".\" } else { src.trimSuffix(%s) }\n",
+			strconv.Quote(moduleSubpath), strconv.Quote("/"+moduleSubpath))
+	}
+	pkg := strings.TrimPrefix(buildTarget, "./")
+	if pkg == "." {
+		b.WriteString("    let pkg = src\n")
+	} else {
+		fmt.Fprintf(b, "    let pkg = if (src == \".\") { %s } else { src + %s }\n", strconv.Quote(pkg), strconv.Quote("/"+pkg))
+	}
+	b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).binary(ws)\n")
+	b.WriteString("  }\n\n")
 }
