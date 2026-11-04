@@ -16,9 +16,10 @@ type NamingChecks {
   let fixture: String! = ".dagger/modules/e2e/fixtures/naming"
 
   """
-  The fixture generated as an embedded entrypoint module. With pinned, the
-  entrypoint's dang.toml declares v1.0.0-beta.26; without one, the engine
-  names the module by v1.0.0-beta.20.
+  The fixture generated as an embedded entrypoint module. Generation writes
+  the target's v1.0.0-beta.26 dang.toml before asking for the module's names.
+  With pinned, an existing pre-cut import is upgraded; without it, the
+  generated import is new.
   """
   generated(ws: Workspace!, pinned: Boolean! = false): Directory! {
     generatedScope(ws, pinned).directory(".")
@@ -31,7 +32,7 @@ type NamingChecks {
   let generatedScope(ws: Workspace!, pinned: Boolean!): Workspace! {
     let module = ws.directory("/" + fixture)
     let source = if (pinned) {
-      module.withNewFile("internal/dagger/entrypoint/dang.toml", "[imports.Dagger]\ndagger = \"v1.0.0-beta.26\"\n")
+      module.withNewFile("internal/dagger/entrypoint/dang.toml", "[imports.Dagger]\ndagger = \"v1.0.0-beta.25\"\n")
     } else { module }
     goSdk(dangEntrypoint: true, unifiedClients: false, globalClient: true).generateScope(
       ws: directory.withDirectory("naming-app", source).asWorkspace.withWorkdir("naming-app"),
@@ -58,8 +59,8 @@ type NamingChecks {
 
   """
   The interface bindings load a module interface and select its functions by
-  the names the engine gives them, with and
-  without a pinned version, and the module's functions answer
+  the names the engine gives them at the generated target, both when adding
+  dang.toml and when upgrading a pre-cut import. The module's functions answer
   by the engine's names, through the main object the entrypoint constructs.
   The bindings' Go identifiers are the engine's formatting either way
   (GitCommit.ShortSHA). The module calls itself only through a client added
@@ -68,11 +69,19 @@ type NamingChecks {
   """
   callsCheck(ws: Workspace!): Void {
     [
-      {{pinned: false, fetcher: "\"NamingAppHttpFetcher\"", field: "Select(\"e2Etest\")", peer: "InlineFragment(\"NamingAppHttpFetcher\")", e2e: "e2-etest", arch: "ARM_64"}},
+      {{pinned: false, fetcher: "\"NamingAppHTTPFetcher\"", field: "Select(\"e2eTest\")", peer: "InlineFragment(\"NamingAppHTTPFetcher\")", e2e: "e2e-test", arch: "ARM64"}},
       {{pinned: true, fetcher: "\"NamingAppHTTPFetcher\"", field: "Select(\"e2eTest\")", peer: "InlineFragment(\"NamingAppHTTPFetcher\")", e2e: "e2e-test", arch: "ARM64"}},
     ].each { want =>
-      let module = generated(ws, want.pinned)
-      let label = if (want.pinned) { "the pinned module" } else { "the module without a version" }
+      let generated = generatedScope(ws, want.pinned)
+      let module = generated.directory(".")
+      let label = if (want.pinned) { "the upgraded module" } else { "the new module" }
+      assert(label + " does not declare the target") {
+        module.file("internal/dagger/entrypoint/dang.toml").contents.contains("v1.0.0-beta.26")
+      }
+      let again = goSdk(dangEntrypoint: true, unifiedClients: false, globalClient: true).generateScope(
+        ws: generated, isModule: true, name: "naming-app", clients: [],
+      )
+      assert(label + " changed on regeneration") { again.changes(generated).isEmpty }
       let bindings = module.file("dagger.gen.go").contents
       [want.fetcher, want.field, want.peer].each { name =>
         assert(label + "'s interface bindings lack " + name) { bindings.contains(name) }

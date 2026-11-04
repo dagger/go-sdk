@@ -36,7 +36,7 @@ type E2e {
   # Dagger Go library source used by the generated-client compile check.
   let daggerSourceRef: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.25"
+  let sdkTarget: String! = "v1.0.0-beta.26"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
@@ -439,8 +439,8 @@ type E2e {
     let scope = "sdks.go.scopes." + JSON.encode(scopePath)
     let configured = base.withNewFile("dagger.toml", base.file("dagger.toml").contents +
       "\n[modules.go-sdk.settings]\n" + stale +
-      "\n[" + scope + "]\nis-module = true\n\n[" + scope + ".settings]\n" + stale + "targetVersion = \"v1.0.0-beta.20\"\n")
-    [[modulePath, sdkTarget], [scopePath, "v1.0.0-beta.20"]].map { expected =>
+      "\n[" + scope + "]\nis-module = true\n\n[" + scope + ".settings]\n" + stale + "targetVersion = \"" + sdkTarget + "\"\n")
+    [[modulePath, sdkTarget], [scopePath, sdkTarget]].map { expected =>
       let path = expected[0] ?? ""
       let release = expected[1] ?? ""
       let generated = configured.withExec(initGo + ["--name", "removed-settings", "--path", path],

@@ -137,9 +137,9 @@ type TargetChecks {
       out.contains("\"greet\":\"hello target\"") and out.contains("\"contents\":\"target\"")
     }
 
-    let pinned = goSdk(targetVersion: "v1.0.0-beta.20").generateScope(ws: generated, isModule: true, name: name, clients: [dependency])
+    let pinned = goSdk(targetVersion: floor).generateScope(ws: generated, isModule: true, name: name, clients: [dependency])
     assert("the library is not pinned to the setting:\n" + pinned.file("go.mod").contents) {
-      pins(pinned, "v1.0.0-beta.20")
+      pins(pinned, floor)
     }
     assert("the pinned dependency client does not alias core:\n" + pinned.file(clientPath).contents) {
       pinned.file(clientPath).contents.contains("type Container = core.Container\n")
@@ -205,9 +205,9 @@ type TargetChecks {
     assert("generating again changed files") { again.changes(first).isEmpty }
     let loaded = first.withWorkdir(".").moduleSource("/" + scopePath).introspectionSchemaJSON.contents
     assert("the generated module did not load") { loaded.contains("\"__schema\"") }
-    let pinned = goSdk(unifiedClients: false, targetVersion: "v1.0.0-beta.20").generateScope(ws: first, isModule: true, name: name, clients: [])
+    let pinned = goSdk(unifiedClients: false, targetVersion: floor).generateScope(ws: first, isModule: true, name: name, clients: [])
     assert("the embedded entrypoint does not declare the setting:\n" + pinned.file("internal/dagger/entrypoint/main.dang").contents) {
-      declares(pinned, "v1.0.0-beta.20")
+      declares(pinned, floor)
     }
     null
   }
@@ -262,9 +262,9 @@ type TargetChecks {
       configures(embedded, sdkTarget) and declares(embedded, sdkTarget)
     }
 
-    let pinned = goSdk(targetVersion: "v1.0.0-beta.20").generateScope(ws: first, isModule: true, name: name, clients: [])
+    let pinned = goSdk(targetVersion: floor).generateScope(ws: first, isModule: true, name: name, clients: [])
     assert("dang.toml does not declare the pin:\n" + pinned.file(dangConfigPath).contents) {
-      configures(pinned, "v1.0.0-beta.20") and declares(pinned, "v1.0.0-beta.20")
+      configures(pinned, floor) and declares(pinned, floor)
     }
     let unpinned = goSdk.generateScope(ws: pinned, isModule: true, name: name, clients: [])
     assert("dang.toml kept an older version:\n" + unpinned.file(dangConfigPath).contents) {
@@ -323,14 +323,14 @@ type TargetChecks {
   """
   On an engine that reads the entrypoint's dang.toml, the Dagger import
   sets the version the engine serves the module at, a module without the
-  file gets the engine's fallback of v1.0.0-beta.24, and the engine runs
+  file gets the engine's fallback of v1.0.0-beta.25, and the engine runs
   the generated module. Released engines ignore the file, so this is not
   a check: EngineE2e.dangConfigEngineCheck runs it on such an engine.
   """
   dangConfigEngineCheck(ws: Workspace!): Void {
     let name = "target-dang-config-engine"
     let scopePath = outputRoot + "/" + name
-    let release = "v1.0.0-beta.23"
+    let release = floor
     let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
     let pinned = goSdk(targetVersion: release).generateScope(ws: input, isModule: true, name: name, clients: [])
     assert("dang.toml and the process do not both declare " + release + ":\n" + pinned.file(dangConfigPath).contents) {
@@ -339,8 +339,8 @@ type TargetChecks {
     let served = pinned.withWorkdir(".").moduleSource("/" + scopePath).engineVersion
     assert("the engine did not serve the module at its dang.toml version: " + served) { served == release }
     let fallback = pinned.withoutFile(dangConfigPath).withWorkdir(".").moduleSource("/" + scopePath).engineVersion
-    assert("the engine did not serve a module without dang.toml at v1.0.0-beta.24: " + fallback) {
-      fallback == "v1.0.0-beta.24"
+    assert("the engine did not serve a module without dang.toml at v1.0.0-beta.25: " + fallback) {
+      fallback == "v1.0.0-beta.25"
     }
     let out = called(pinned, scopePath, "query($ws:ID!){targetDangConfigEngine(ws:$ws){container{withExec(args:[\"cat\",\"/etc/alpine-release\"]){stdout}}}}")
     assert("the generated module did not run: " + out) { out.contains("\"stdout\":\"3.21.") }

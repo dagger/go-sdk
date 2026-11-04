@@ -165,7 +165,7 @@ Remove a stale `fat`.
 
 ```toml
 [sdks.go.scopes."path/to/module".settings]
-targetVersion = "v1.0.0-beta.20"
+targetVersion = "v1.0.0-beta.26"
 ```
 
 `dagger doctor` reports unknown settings under `[modules.<name>.settings]`;
@@ -209,7 +209,7 @@ entrypoint and unified bindings for a new module. On `dagger generate`,
 existing modules keep their runtime or entrypoint and binding style.
 Set both settings to `true` to migrate a Go runtime module to the generated
 entrypoint with unified bindings.
-The module then needs Dagger v1.0.0-beta.18 or later.
+The module then needs Dagger v1.0.0-beta.26 or later.
 The generated entrypoint loads the module's types without running it.
 It supports `package main` and importable packages, and needs a `go.mod` in
 the module directory: generation refuses a module that shares the `go.mod`
