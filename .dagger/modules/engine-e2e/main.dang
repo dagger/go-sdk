@@ -500,6 +500,21 @@ type EngineE2e {
   }
 
   """
+  Run TargetChecks.dangConfigEngineCheck on an engine that reads the
+  entrypoint's dang.toml, such as dagger/dagger#14958. engineRevision is
+  the dagger commit under test; engineSource replaces its checkout with a
+  local one at that commit.
+  """
+  dangConfigEngineCheck(ws: Workspace!, engineRevision: String!, engineSource: Directory = null): Void {
+    let source = if (engineSource == null) { daggerSource(engineRevision) } else { engineSource.asWorkspace }
+    let client = sdkClient(ws, engineDev(ws: source).installClient(client: clientBase), engineRevision)
+    succeeded(runDagger(client, client.workdir, [
+      "-m", ".dagger/modules/e2e", "call", "target", "dang-config-engine-check", "--ws", ".",
+    ]))
+    null
+  }
+
+  """
   Run the runtime-mode checks on the runtime floor engine.
   """
   runtimeFloorCheck(ws: Workspace!): Void @check {
