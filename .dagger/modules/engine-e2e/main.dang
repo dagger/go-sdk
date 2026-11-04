@@ -190,11 +190,11 @@ type EngineE2e {
   let engineCommit: String! = "400b82d6f3c09ef096d2f59b3e920267b5969bf4"
 
   """
-  Commit of release v1.0.0-beta.18, shared by the sources-floor-engine-dev
+  Commit of release v1.0.0-beta.26, shared by the sources-floor-engine-dev
   dependency and the engine of the sources check: the oldest engine the
   generated entrypoint loads on, and one that calls its sources function.
   """
-  let sourcesFloorCommit: String! = "249edbd646e63c5181053c8af72623ed9bdf030d"
+  let sourcesFloorCommit: String! = "9f15293b2d3960d9eeee567d2e50bd60dcf0df80"
 
   let daggerSource(commit: String!): Workspace! {
     git("https://github.com/dagger/dagger").ref(commit).asWorkspace
@@ -344,7 +344,7 @@ type EngineE2e {
   }
 
   """
-  On an engine that calls sources, v1.0.0-beta.18, the module builds from
+  On an engine that calls sources, v1.0.0-beta.26, the module builds from
   its context, reuses results across sessions until an included file
   changes, and runs from anywhere. engineSource replaces the pinned engine
   with a dagger checkout.
@@ -593,7 +593,7 @@ type EngineE2e {
   }
 
   """
-  Run the named e2e checks on the v1.0.0-beta.18 engine, the oldest engine
+  Run the named e2e checks on the v1.0.0-beta.26 engine, the oldest engine
   the generated entrypoint loads on, one dagger check per name.
   """
   entrypointFloorChecks(ws: Workspace!, checks: [String!]!): Void {

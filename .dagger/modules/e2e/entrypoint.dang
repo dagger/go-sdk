@@ -426,13 +426,13 @@ type EntrypointChecks {
     assert("the unified module has no global client") {
       unifiedGlobalApp(input).file("dagger.gen.go").contents.contains("var dag ")
     }
-    # beta.18's library lacks fields this engine serves in beta.18's view,
-    # such as identifier, and generation compiles the module.
-    let older = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true, targetVersion: "v1.0.0-beta.18").generateScope(
+    # The floor's library can lack fields this engine serves in the floor's
+    # view, and generation compiles the module.
+    let older = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true, targetVersion: "v1.0.0-beta.26").generateScope(
       ws: input, isModule: true, name: "generate-app", clients: [],
     )
-    assert("the beta.18 module's library is not pinned:\n" + older.file("go.mod").contents) {
-      older.file("go.mod").contents.contains("dagger.io/dagger v1.0.0-beta.18\n")
+    assert("the floor module's library is not pinned:\n" + older.file("go.mod").contents) {
+      older.file("go.mod").contents.contains("dagger.io/dagger v1.0.0-beta.26\n")
     }
     ["Host", "Engine", "CurrentWorkspace"].each { call =>
       let calling = input.withNewFile("main_client.go", "package generate_app\n\nvar _ = dag." + call + "()\n")
