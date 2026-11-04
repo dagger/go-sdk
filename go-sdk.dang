@@ -38,12 +38,15 @@ type GoSdk {
   """
   globalClient: Boolean
   """
-  Build the module's process with dagger/go, as any dagger/go build. The
-  scope lists dagger/go as a client named go, which becomes the generated
-  entrypoint's dependency instead of a Go client. Applies to Dang
-  entrypoints. A prototype, pending manifest version 2 dependencies.
+  Build the module's process with dagger/go, the release this Go SDK pins
+  (versions.toml), which the generated entrypoint lists as its own
+  dependency: the same per-package builds, cached the same way, as any
+  dagger/go build. The module itself compiles none of dagger/go's API.
+  Unset uses it for new entrypoint modules and keeps what an existing module
+  does. Set true to migrate, or false to build with go build. Applies to
+  Dang entrypoints.
   """
-  daggerGo: Boolean! = false
+  daggerGo: Boolean
 
   """
   Starter template used when a new module scope is initialized.
@@ -137,15 +140,11 @@ type GoSdk {
       # fields that view lacks.
       let target = targetRelease("module " + JSON.encode(name), versions)
       checkDangConfig(initialized, target)
-      # With daggerGo, dagger/go is the entrypoint's dependency, which
-      # builds the module, and no Go client of the module's.
-      let entrypointDeps = if (daggerGo) { clients.filter { client => client.moduleOriginalName == "go" } } else { [] :: [ModuleSource!]! }
-      let goClients = if (daggerGo) { clients.filter { client => client.moduleOriginalName != "go" } } else { clients }
-      if (daggerGo and entrypointDeps.length == 0) {
-        raise "daggerGo needs dagger/go among the scope's clients"
-      }
+      # dagger/go, which builds the module's process, is the entrypoint's
+      # own dependency, not a client of the module's.
+      let entrypointDeps = if (usesDaggerGo(ws, hadManifest, name, target)) { [moduleSource(versions.daggerGo)] } else { [] :: [ModuleSource!]! }
       let withClients = if (unified) {
-        generateStandaloneClients(initialized, goClients, true, target, false)
+        generateStandaloneClients(initialized, clients, true, target, false)
       } else { initialized }
       entrypointModule(withClients, name, unified, target, entrypointDeps)
     } else if (isModule and hasCustomRunner(initialized)) {
@@ -167,6 +166,51 @@ type GoSdk {
     } else {
       # Standalone clients are the only output here, so dualClients does not apply.
       generateStandaloneClients(initialized, clients, false, "", false)
+    }
+  }
+
+  """
+  Build new entrypoint modules with dagger/go, and keep what an existing
+  module does unless the setting says otherwise. A manifest that lists an
+  entrypoint's dependencies loads from Dagger versions.daggerGoFloor, so a
+  module that targets an older release builds with go build; target is ""
+  for an engine that is not a release.
+  """
+  let usesDaggerGo(ws: Workspace!, hadManifest: Boolean!, name: String!, target: String!): Boolean! {
+    let wanted = if (daggerGo != null) {
+      daggerGo ?? false
+    } else if (hadManifest) {
+      listsDaggerGo(ws)
+    } else {
+      true
+    }
+    if (wanted and target != "" and releasePrecedes(target, versions.daggerGoFloor)) {
+      if (daggerGo ?? false) {
+        raise "module " + JSON.encode(name) + " sets daggerGo, which needs Dagger " + versions.daggerGoFloor + " or later: its manifest lists the entrypoint's dependencies, and the module targets " + target + ". Set targetVersion to " + versions.daggerGoFloor + " or later in the scope's settings in dagger.toml, or set daggerGo = false"
+      }
+      return false
+    }
+    wanted
+  }
+
+  """
+  The name a manifest gives the dagger/go dependency the generator writes,
+  and the module it names.
+  """
+  let daggerGoName: String! = "go"
+  let daggerGoModule: String! = "github.com/dagger/go"
+
+  """Whether the module's manifest lists the dagger/go dependency the generator writes."""
+  let listsDaggerGo(ws: Workspace!): Boolean! {
+    let optionalManifest = decodedManifest(ws)
+    if (optionalManifest == null) { return false }
+    let manifest = optionalManifest :: Dagger.JSONValue!
+    if (manifest.fields.contains("dependencies") == false) { return false }
+    let entries = manifest.field(["dependencies"]).contents :: String!
+    let objects = ((JSON.decode(entries) :: [{{name: String, source: String}}!]!).length >= 0) rescue { err: Error => false }
+    if (objects == false) { return false }
+    (JSON.decode(entries) :: [{{name: String, source: String}}!]!).any { dependency =>
+      (dependency.name ?? "") == daggerGoName and (dependency.source ?? "").hasPrefix(daggerGoModule)
     }
   }
 
@@ -467,7 +511,10 @@ type GoSdk {
       if (!hadManifest and template == "legacy") {
         raise "the legacy template is not available with a Dang entrypoint; choose another template or set dangEntrypoint = false and unifiedClients = false"
       }
-      let clientNames = clients.map { client => client.moduleOriginalName }
+      # The dagger/go dependency is the generator's own, which it writes again
+      # or drops by the daggerGo setting.
+      let ownNames = if (listsDaggerGo(ws)) { [daggerGoName] } else { [] :: [String!]! }
+      let clientNames = clients.map { client => client.moduleOriginalName } + ownNames
       let clientSources = clients.map { client => client.asString }
       refuseManifestSettings("dagger-module.toml", decodedManifest(ws), "runtime", clientNames, clientSources)
       let legacyJSON = if (exists(ws, "dagger.json")) {
@@ -661,7 +708,7 @@ type GoSdk {
       "--schema-version", schemaVersion,
       "--go-image", goImage,
       "--runtime-image", pinnedImage("alpine:3.22"),
-      "--dagger-go=" + JSON.encode(daggerGo),
+      "--dagger-go=" + JSON.encode(deps.length > 0),
       "--dagger-version", target,
       "--target-version", target,
       "--unified=" + JSON.encode(unified),
@@ -1134,4 +1181,14 @@ type Versions {
   release; a test checks that the library release exists.
   """
   pub defaultTarget: String!
+  """
+  The dagger/go module this Go SDK release builds generated entrypoint
+  modules with (daggerGo), by its address with a pinned commit.
+  """
+  pub daggerGo: String!
+  """
+  The first Dagger release whose module manifests list an entrypoint's
+  dependencies, which daggerGo writes.
+  """
+  pub daggerGoFloor: String!
 }
