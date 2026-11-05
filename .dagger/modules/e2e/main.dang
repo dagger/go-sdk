@@ -460,11 +460,12 @@ type E2e {
 
   """
   The unit tests of every helper pass. The entrypoint contract check embeds
-  Dang, whose parser needs cgo.
+  Dang, whose parser needs cgo. The module generator's tests generate new
+  modules, which declare Go 1.27.
   """
   helperTestsCheck(ws: Workspace!): Void @check {
     let base = container
-      .from("golang:1.26-alpine")
+      .from("golang:1.27-alpine")
       .withoutEntrypoint
       .withExec(["apk", "add", "--no-cache", "build-base"])
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))

@@ -145,7 +145,7 @@ func TestRunStandaloneModuleInsideProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(mod) != "module dagger/hello-world\n\ngo 1.26.1\n" {
+	if string(mod) != "module dagger/hello-world\n\ngo 1.27\n" {
 		t.Fatalf("unexpected local module:\n%s", mod)
 	}
 	starter, err := os.ReadFile(filepath.Join(out, "main.go"))

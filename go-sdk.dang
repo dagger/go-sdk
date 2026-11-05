@@ -681,7 +681,7 @@ type GoSdk {
     let workspaceRoot = ws.withWorkdir(goRoot)
     let goVersion = if (exists(workspaceRoot, "go.mod")) {
       requiredGoVersion(workspaceRoot.file("go.mod"))
-    } else { minimumGoVersion }
+    } else { defaultGoVersion }
     # The entrypoint names its images by digest, as this generation resolved
     # them: a tag would be looked up in the registry again in every session
     # that builds or runs the module.
@@ -994,10 +994,15 @@ type GoSdk {
   }
 
   """
-  The generators' minimum Go version, which fresh modules declare. The
-  helpers build on its image, so init and generate pull one Go image.
+  The generators' minimum Go version. The helpers build on its image.
   """
   let minimumGoVersion: String! = "1.26.1"
+
+  """
+  The Go version a new module declares, and the one its generator and
+  dispatcher build on when it has no go.mod yet.
+  """
+  let defaultGoVersion: String! = "1.27"
 
   """Build the engine-free standalone client generator."""
   let codegenBuilder: Container! {
