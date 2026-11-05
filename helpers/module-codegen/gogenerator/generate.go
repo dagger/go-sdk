@@ -513,7 +513,6 @@ func restoreRequirements(path string, required map[string]string) error {
 	return writeFile(path, body)
 }
 
-
 // The embedded transport needs only propagation from otel-go, but that package
 // also imports the experimental log SDK. Seed its known dependency graph before
 // tidy discovers direct OTel imports: resolving those imports independently at
