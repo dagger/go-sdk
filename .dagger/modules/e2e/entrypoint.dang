@@ -626,6 +626,35 @@ type EntrypointChecks {
   }
 
   """
+  Generation reads a module on Go 1.27, whose compiler writes export data
+  that the generator's package loader must decode to see the context
+  parameter as context.Context.
+  """
+  go127Check(ws: Workspace!): Void @check {
+    let name = "go-127"
+    let scopePath = outputRoot + "/" + name
+    let source = "package go_127\n\nimport \"context\"\n\ntype Go127 struct{}\n\nfunc (m *Go127) Echo(ctx context.Context, value string) string { return value }\n"
+    let input = ws.withWorkdir(scopePath)
+      .withNewFile("go.mod", "module example.com/go-127\n\ngo 1.27\n")
+      .withNewFile("dagger-module.toml", "name = 'go-127'\n[runtime]\nsource = 'go'\n")
+      .withNewFile("main.go", source)
+    let generated = goSdk(dangEntrypoint: true).generateScope(
+      ws: input, isModule: true, name: name, clients: [],
+    )
+    let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
+    assert("the emitted dispatch compiler is not Go 1.27") {
+      entrypoint.contains(".from(\"golang:1.27-alpine\")")
+    }
+    assert("the function lost its argument") {
+      entrypoint.contains(".withArg(\"value\"")
+    }
+    assert("the context parameter became an argument") {
+      entrypoint.contains(".withArg(\"ctx\"") == false
+    }
+    null
+  }
+
+  """
   dangEntrypoint refuses what a manifest with an entrypoint cannot carry,
   and a module with a Dang entrypoint is not moved back to the Go runtime.
   """
