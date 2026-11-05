@@ -220,7 +220,7 @@ type EntrypointChecks {
       entrypoint.contains("go build -o /tmp/dispatch ./cmd/generate-app-dispatch ")
     }
     assert("the dispatch compiler does not match the new go.mod") {
-      entrypoint.contains(".from(\"golang:1.27-alpine\")")
+      entrypoint.contains("golang:1.27-alpine@sha256:")
     }
 
     let dispatcher = container
@@ -605,7 +605,7 @@ type EntrypointChecks {
       }
       let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
       assert("the emitted dispatch compiler lost the selected patch version") {
-        entrypoint.contains(".from(\"golang:1.26.8-alpine\")")
+        entrypoint.contains("golang:1.26.8-alpine@sha256:")
       }
       let dispatcher = container.from("golang:1.26.8-alpine").withoutEntrypoint
         .withEnvVariable("CGO_ENABLED", "0")
@@ -649,7 +649,7 @@ type EntrypointChecks {
     )
     let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
     assert("the emitted dispatch compiler is not Go 1.27") {
-      entrypoint.contains(".from(\"golang:1.27-alpine\")")
+      entrypoint.contains("golang:1.27-alpine@sha256:")
     }
     assert("the function lost its argument") {
       entrypoint.contains(".withArg(\"value\"")
