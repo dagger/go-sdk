@@ -994,20 +994,22 @@ type GoSdk {
   }
 
   """
-  The generators' minimum Go version. The helpers build on its image.
+  The oldest Go version generation uses: a module that declares an older
+  one generates on this version.
   """
   let minimumGoVersion: String! = "1.26.1"
 
   """
   The Go version a new module declares, and the one its generator and
-  dispatcher build on when it has no go.mod yet.
+  dispatcher build on when it has no go.mod yet. The helpers build on its
+  image too, so a new module pulls one Go image.
   """
   let defaultGoVersion: String! = "1.27"
 
   """Build the engine-free standalone client generator."""
   let codegenBuilder: Container! {
     container
-      .from("golang:" + minimumGoVersion + "-alpine")
+      .from("golang:" + defaultGoVersion + "-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
@@ -1098,7 +1100,7 @@ type GoSdk {
       raise "unknown init template: " + selected
     } else {
       let builder = container
-        .from("golang:" + minimumGoVersion + "-alpine")
+        .from("golang:" + defaultGoVersion + "-alpine")
         .withoutEntrypoint
         .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
         .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
