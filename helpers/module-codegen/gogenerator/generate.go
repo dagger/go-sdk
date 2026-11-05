@@ -150,6 +150,12 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := pinGeneratedTelemetry(goModPath); err != nil {
 		return err
 	}
+	// Tidying with the bootstrap bindings below drops what only the real
+	// bindings need, and every version those requirements held up.
+	required, err := requirements(goModPath)
+	if err != nil {
+		return err
+	}
 	if err := removeLegacyGeneratedFile(root); err != nil {
 		return err
 	}
@@ -259,6 +265,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	// the bootstrap bindings. The collection build below loads the package
 	// with the dispatcher, so go.mod and go.sum must already provide it.
 	if err := pinGeneratedTelemetry(goModPath); err != nil {
+		return err
+	}
+	if err := restoreRequirements(goModPath, required); err != nil {
 		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {
@@ -450,6 +459,60 @@ func ensureGoModule(root, moduleName string) (packageImport, goModPath string, _
 	}
 	return "dagger/" + strcase.ToKebab(moduleName), path, nil
 }
+
+// requirements reads the versions a go.mod requires.
+func requirements(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	mod, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return nil, err
+	}
+	required := make(map[string]string, len(mod.Require))
+	for _, requirement := range mod.Require {
+		required[requirement.Mod.Path] = requirement.Mod.Version
+	}
+	return required, nil
+}
+
+// restoreRequirements requires again each version of required that go.mod no
+// longer does, except the library's, which has its own pin. The tidy that
+// follows drops the ones the module doesn't use, and the module keeps the
+// versions the others held up.
+func restoreRequirements(path string, required map[string]string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return err
+	}
+	current := make(map[string]string, len(mod.Require))
+	for _, requirement := range mod.Require {
+		current[requirement.Mod.Path] = requirement.Mod.Version
+	}
+	for module, version := range required {
+		if module == library.Path {
+			continue
+		}
+		if have, ok := current[module]; ok && semver.Compare(have, version) >= 0 {
+			continue
+		}
+		if err := mod.AddRequire(module, version); err != nil {
+			return err
+		}
+	}
+	mod.Cleanup()
+	body, err := mod.Format()
+	if err != nil {
+		return err
+	}
+	return writeFile(path, body)
+}
+
 
 // The embedded transport needs only propagation from otel-go, but that package
 // also imports the experimental log SDK. Seed its known dependency graph before
