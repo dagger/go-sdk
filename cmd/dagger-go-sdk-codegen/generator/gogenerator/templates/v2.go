@@ -377,6 +377,9 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	} else {
 		writeGoBuildDispatch(&b, goImage, workdir, buildTarget)
 	}
+	// The engine evaluates prebuild before the module's first call, so the
+	// call finds its binary built, or joins the build in flight.
+	b.WriteString("  pub prebuild: File! {\n    dispatch\n  }\n\n")
 	b.WriteString("  pub types: [TypeDef!]! {\n")
 	b.WriteString("    [\n")
 	for i, def := range defs {

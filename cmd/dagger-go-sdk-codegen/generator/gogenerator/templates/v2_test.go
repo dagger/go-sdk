@@ -67,6 +67,7 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.NotContains(t, text, "pub main(")
 	require.Contains(t, text, "pub sources(workspace: Workspace!): Directory!")
 	require.Contains(t, text, "pub types: [TypeDef!]!")
+	require.Contains(t, text, "  pub prebuild: File! {\n    dispatch\n  }")
 	require.Contains(t, text, `.withWorkdir("/workspace/" + currentModule.sourceSubpath)`)
 	require.Contains(t, text, "fnArgs: JSON!,")
 	require.Contains(t, text, "fnArgs: fnArgs,")
