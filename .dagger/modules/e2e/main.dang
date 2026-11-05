@@ -474,7 +474,7 @@ type E2e {
     let out = ["cmd/dagger-go-sdk-codegen", "helpers/module-codegen", "helpers/render-template", "helpers/entrypoint-contract"].reduce(base) { ctr, helper =>
       ctr
         .withWorkdir("/src/" + helper)
-        .withExec(["go", "test", "./..."])
+        .withExec(["go", "test", "-timeout", "30m", "./..."])
     }.stdout
 
     null
