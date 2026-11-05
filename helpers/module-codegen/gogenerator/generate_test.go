@@ -219,6 +219,76 @@ func TestEnsureGoModuleUsesEnclosingModule(t *testing.T) {
 	}
 }
 
+// A requirement only the real bindings use is gone after the bootstrap's tidy,
+// and with it the versions it held up. Generating must not lower them.
+func TestRestoreRequirementsKeepsVersionsAcrossBootstrapTidy(t *testing.T) {
+	root := t.TempDir()
+	for _, dep := range []struct{ name, goMod, source string }{
+		{"runtime", "module example.com/runtime\n\ngo 1.26\n\nrequire example.com/leaf v1.2.0\n", "package runtime\n\nimport _ \"example.com/leaf\"\n"},
+		{"leaf", "module example.com/leaf\n\ngo 1.26\n", "package leaf\n"},
+	} {
+		if err := os.Mkdir(filepath.Join(root, dep.name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(root, dep.name, "go.mod"), dep.goMod)
+		writeTestFile(t, filepath.Join(root, dep.name, dep.name+".go"), dep.source)
+	}
+	goMod := filepath.Join(root, "go.mod")
+	writeTestFile(t, goMod, `module example.com/app
+
+go 1.26
+
+require (
+	example.com/leaf v1.3.0
+	example.com/runtime v1.1.0
+	example.com/unused v1.0.0
+)
+
+replace example.com/runtime => ./runtime
+
+replace example.com/leaf => ./leaf
+
+replace example.com/unused => ./runtime
+`)
+	writeTestFile(t, filepath.Join(root, "main.go"), "package app\n")
+	required, err := requirements(goMod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The bootstrap's tidy: nothing imports them yet.
+	if err := goModTidy(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	after, err := requirements(goMod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := after["example.com/runtime"]; ok {
+		t.Fatalf("the bootstrap's tidy kept a requirement nothing imports: %v", after)
+	}
+	// The real bindings: they import runtime, not unused.
+	writeTestFile(t, filepath.Join(root, "main.go"), "package app\n\nimport _ \"example.com/runtime\"\n")
+	if err := restoreRequirements(goMod, required); err != nil {
+		t.Fatal(err)
+	}
+	if err := goModTidy(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	got, err := requirements(goMod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["example.com/runtime"] != "v1.1.0" {
+		t.Errorf("runtime = %q, want v1.1.0", got["example.com/runtime"])
+	}
+	if got["example.com/leaf"] != "v1.3.0" {
+		t.Errorf("leaf = %q, want v1.3.0: generating lowered it", got["example.com/leaf"])
+	}
+	if _, ok := got["example.com/unused"]; ok {
+		t.Errorf("a requirement nothing imports came back: %v", got)
+	}
+}
+
 func TestPinGeneratedTelemetryPreservesUserChoices(t *testing.T) {
 	for name, goMod := range map[string]string{
 		"replace": "module example.com/app\n\ngo 1.26\n\nreplace github.com/dagger/otel-go => ../telemetry\n",
