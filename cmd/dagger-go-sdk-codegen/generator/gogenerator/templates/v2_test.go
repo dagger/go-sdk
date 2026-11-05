@@ -65,8 +65,9 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.Contains(t, text, "type Entrypoint implements ModuleEntrypoint")
 	require.Contains(t, text, "receiverType: String!")
 	require.NotContains(t, text, "pub main(")
-	require.Contains(t, text, "pub sources(workspace: Workspace!): Directory!")
-	require.Contains(t, text, "pub types: [TypeDef!]!")
+	require.NotContains(t, text, "pub sources(")
+	require.Contains(t, text, "pub types(workspace: Workspace!): [TypeDef!]!")
+	require.Contains(t, text, "  pub call(\n    workspace: Workspace!,\n    receiverType: String!,")
 	require.Contains(t, text, "  pub prebuild: File! {\n    dispatch\n  }")
 	require.Contains(t, text, `.withWorkdir("/workspace/" + currentModule.sourceSubpath)`)
 	require.Contains(t, text, "fnArgs: JSON!,")
@@ -112,37 +113,39 @@ func TestEntrypointDaggerGoDispatch(t *testing.T) {
 	require.Contains(t, text, `let pkg = if (src == ".") { "cmd/hello-dispatch" } else { src + "/cmd/hello-dispatch" }`)
 }
 
-func TestEntrypointWithoutOutsideFilesReturnsItsOwnDirectory(t *testing.T) {
+// The entrypoint declares no sources: the manifest includes the files a
+// build reads outside the module directory, so every module gets the same
+// entrypoint shape.
+func TestEntrypointDeclaresNoSources(t *testing.T) {
 	source, err := (&v2Module{}).renderEntrypointSource("hello-world", ".", "golang:1.26-alpine")
 	require.NoError(t, err)
 	text := string(source)
-	require.Contains(t, text, `  pub sources(workspace: Workspace!): Directory! {
-    directory
-      .withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git"], gitignore: true))
-  }`)
-	require.NotContains(t, text, "workspace.findUp")
+	require.NotContains(t, text, "pub sources(")
+	require.NotContains(t, text, "workspace.")
 	require.Contains(t, text, "callDigest: String,")
 	require.Contains(t, text, `.withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")`)
 	require.Contains(t, text, `.file("/dagger/result.json")`)
 }
 
-// A module with files outside its directory differs from one without only in
-// what sources returns.
-func TestEntrypointShapeIsUniform(t *testing.T) {
-	render := func(mod *v2Module) (rest, sources string) {
-		source, err := mod.renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
-		require.NoError(t, err)
-		text := string(source)
-		start, end := strings.Index(text, "  pub sources("), strings.Index(text, "  let dispatch:")
-		require.Positive(t, start)
-		require.Greater(t, end, start)
-		return text[:start] + text[end:], text[start:end]
-	}
-	plainRest, plainSources := render(entrypointFixture())
-	outsideRest, outsideSources := render(sourcesFixture())
-	require.Equal(t, plainRest, outsideRest)
-	require.NotEqual(t, plainSources, outsideSources)
-	require.NotContains(t, plainRest, "workspace:")
+// The manifest's include roots each pattern at the anchor, relative to the
+// module directory, then excludes every test file outside the module, embedded
+// directories' too, and keeps the module's own.
+func TestManifestInclude(t *testing.T) {
+	require.Nil(t, ManifestInclude(nil))
+	require.Nil(t, ManifestInclude(&EntrypointSources{Anchor: ".."}))
+	require.Equal(t, []string{
+		"../lib/go.mod",
+		"../lib/greet/*.go",
+		"../lib/greet/templates",
+		"!../**/*_test.go",
+		"**/*_test.go",
+	}, ManifestInclude(&EntrypointSources{Anchor: "..", Include: []string{"lib/go.mod", "lib/greet/*.go", "lib/greet/templates"}}))
+	require.Equal(t, []string{
+		"../../../go.mod",
+		"../../../greet/*.go",
+		"!../../../**/*_test.go",
+		"**/*_test.go",
+	}, ManifestInclude(&EntrypointSources{Anchor: "../../..", Include: []string{"go.mod", "greet/*.go"}}))
 }
 
 // The entrypoint declares the targeted release to the module's process, next
@@ -351,36 +354,12 @@ func TestEntrypointSourceGolden(t *testing.T) {
 	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint.golden", got), got)
 }
 
-func sourcesFixture() *v2Module {
-	mod := entrypointFixture()
-	mod.sources = &EntrypointSources{Anchor: "..", Include: []string{"lib/go.mod", "lib/greet/*.go", "lib/greet/greeting.txt"}}
-	return mod
-}
-
-func TestEntrypointSourcesGolden(t *testing.T) {
-	source, err := sourcesFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
-	require.NoError(t, err)
-	got := string(source)
-	require.Equal(t, updateAndGetFixture(t, "testdata/entrypoint_sources.golden", got), got)
-}
-
-func TestEntrypointSourcesAnchor(t *testing.T) {
-	mod := entrypointFixture()
-	mod.sources = &EntrypointSources{Anchor: "../../..", Include: []string{"go.mod", "greet/*.go"}}
-	source, err := mod.renderEntrypointSource("deep", ".", "golang:1.26.1-alpine", "deep")
-	require.NoError(t, err)
-	require.Contains(t, string(source), `.withDirectory(workspace.cwd + "/../../..", workspace.directory("../../..",
-        include: ["go.mod", "greet/*.go"],`)
-}
-
 // The engine loads a module that mentions resources through its resources
 // path, which v1.0.0-beta.17 has.
-func TestEntrypointSourcesAvoidsResources(t *testing.T) {
-	for _, mod := range []*v2Module{entrypointFixture(), sourcesFixture()} {
-		source, err := mod.renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
-		require.NoError(t, err)
-		require.NotContains(t, string(source), "resources")
-	}
+func TestEntrypointAvoidsResources(t *testing.T) {
+	source, err := entrypointFixture().renderEntrypointSource("hello-world", ".", "golang:1.26.1-alpine", "hello_world")
+	require.NoError(t, err)
+	require.NotContains(t, string(source), "resources")
 }
 
 func TestExposesModuleContext(t *testing.T) {

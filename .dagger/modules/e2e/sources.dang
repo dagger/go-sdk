@@ -13,34 +13,34 @@ type SourcesChecks {
   }
 
   """
-  The generated entrypoint returns the files the build reads outside the
-  module from sources, builds from the module context with GOWORK=off, and
-  regenerates without changes. Generation writes no file outside the module.
+  The generated manifest includes the files the build reads outside the
+  module, the entrypoint declares no sources and builds from the module
+  context with GOWORK=off, and the module regenerates without changes.
+  Generation writes no file outside the module.
   """
   generateCheck(ws: Workspace!): Void @check {
     let input = ws.withWorkdir(appPath)
     let ready = generated(ws)
     let entrypoint = ready.file("internal/dagger/entrypoint/main.dang").contents
     [
-      "pub sources(workspace: Workspace!): Directory! {\n    directory\n      .withDirectory(workspace.cwd + \"/..\", workspace.directory(\"..\",\n        include: [\"lib/go.mod\", \"lib/greet/*.go\", \"lib/greet/*.h\", \"lib/greet/*.s\", \"lib/greet/*.syso\", \"lib/greet/greeting.txt\"],",
-      "# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing \"workspace\" argument.\ntype Entrypoint implements ModuleEntrypoint {",
-      "pub types: [TypeDef!]! {",
-      "pub call(\n    receiverType: String!,\n",
+      "# Needs Dagger v1.0.0-beta.18 or later.\ntype Entrypoint implements ModuleEntrypoint {",
+      "pub types(workspace: Workspace!): [TypeDef!]! {",
+      "pub call(\n    workspace: Workspace!,\n    receiverType: String!,\n",
       ".withWorkdir(\"/workspace/\" + currentModule.sourceSubpath)",
       ".withEnvVariable(\"GOWORK\", \"off\")",
       ".withMountedDirectory(\"/workspace\", currentModule.contextDirectory)",
     ].each { literal =>
       assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
     }
-    [".glob(", "--inventory", "go-inputs", "Dagger.node", "resources", "workspace != null", "let source", "currentModule.source."].each { literal =>
+    [".glob(", "--inventory", "go-inputs", "Dagger.node", "resources", "workspace != null", "let source", "currentModule.source.", "pub sources("].each { literal =>
       assert("the entrypoint mentions " + literal) { entrypoint.contains(literal) == false }
     }
     assert("generation vendored the discovery tool") {
       ready.directory("internal/dagger/entrypoint").exists("go-inputs") == false
     }
-    assert("the manifest is not the entrypoint manifest") {
+    assert("the manifest is not the entrypoint manifest with the files outside the module:\n" + ready.file("dagger-module.toml").contents) {
       ready.file("dagger-module.toml").contents ==
-        "name = \"include-app\"\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+        "name = \"include-app\"\ninclude = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
     }
     assert("generation changed main.go") {
       ready.file("main.go").contents == input.file("main.go").contents
@@ -57,16 +57,16 @@ type SourcesChecks {
 
   """
   A module directory without a manifest keeps its Go source: generation
-  adds the manifest, and sources returns the files the build reads outside
-  the module.
+  adds the manifest, which includes the files the build reads outside the
+  module.
   """
   existingSourceCheck(ws: Workspace!): Void @check {
     let ready = generated(ws.withoutFile("/" + appPath + "/dagger-module.toml"))
     assert("generation replaced main.go") {
       ready.file("main.go").contents == ws.file("/" + appPath + "/main.go").contents
     }
-    assert("the entrypoint does not declare sources") {
-      ready.file("internal/dagger/entrypoint/main.dang").contents.contains("pub sources(workspace: Workspace!): Directory!")
+    assert("the manifest does not include the files outside the module") {
+      ready.file("dagger-module.toml").contents.contains("include = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]")
     }
     null
   }
@@ -119,8 +119,8 @@ type SourcesChecks {
   }
 
   """
-  Generation drops the include list of a migrated manifest: the local replace
-  directives of go.mod select the files outside the module directory.
+  Generation replaces the include list of a migrated manifest: the local
+  replace directives of go.mod select the files outside the module directory.
   """
   manifestIncludeCheck(ws: Workspace!): Void @check {
     [
@@ -129,8 +129,9 @@ type SourcesChecks {
     ].each { file =>
       let ready = generated(ws.withNewFile("/" + appPath + "/" + (file[0] ?? ""), file[1] ?? ""))
       let manifest = ready.file("dagger-module.toml").contents
-      assert((file[0] ?? "") + ": generation kept include or lacks the entrypoint:\n" + manifest) {
-        manifest.contains("include =") == false and manifest.contains("[entrypoint]") and
+      assert((file[0] ?? "") + ": generation kept the old include, lacks the replace's, or lacks the entrypoint:\n" + manifest) {
+        manifest.contains("../shared") == false and manifest.contains("./data") == false and
+          manifest.contains("include = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]") and manifest.contains("[entrypoint]") and
           ready.directory(".").exists("dagger.json") == false
       }
     }
@@ -217,11 +218,11 @@ type SourcesChecks {
       .withNewFile("a/b/deep/go.mod", "module example.com/deep\n\ngo 1.26.1\n\nrequire example.com/root v0.0.0\n\nreplace example.com/root => ../../..\n")
       .withNewFile("a/b/deep/main.go", "package deep\n\nimport \"example.com/root/greet\"\n\ntype Deep struct{}\n\nfunc (*Deep) Greeting() string { return greet.Greeting() }\n")
       .asWorkspace
-    let entrypoint = goSdk(dangEntrypoint: true).generateScope(
+    let manifest = goSdk(dangEntrypoint: true).generateScope(
       ws: inputs.withWorkdir("a/b/deep"), isModule: true, name: "deep", clients: [],
-    ).file("internal/dagger/entrypoint/main.dang").contents
-    assert("the entrypoint does not read the root's files:\n" + entrypoint) {
-      entrypoint.contains(".withDirectory(workspace.cwd + \"/../../..\", workspace.directory(\"../../..\",\n        include: [\"go.mod\", \"greet/*.go\", \"greet/*.h\", \"greet/*.s\", \"greet/*.syso\"],")
+    ).file("dagger-module.toml").contents
+    assert("the manifest does not include the root's files:\n" + manifest) {
+      manifest.contains("include = [\"../../../go.mod\", \"../../../greet/*.go\", \"../../../greet/*.h\", \"../../../greet/*.s\", \"../../../greet/*.syso\", \"!../../../**/*_test.go\", \"**/*_test.go\"]")
     }
     null
   }
@@ -248,20 +249,19 @@ type SourcesChecks {
   }
 
   """
-  The caller returns its own files outside its directory from sources. The
-  control module, which reads nothing outside, gets the same entrypoint
-  shape, and its sources returns its directory only.
+  The caller's manifest includes its own files outside its directory. The
+  control module, which reads nothing outside, gets the same entrypoint, and
+  its manifest includes nothing.
   """
   familyCheck(ws: Workspace!): Void @check {
     let repo = fixture(ws)
-    let caller = repo.file("caller/internal/dagger/entrypoint/main.dang").contents
-    assert("the caller does not return its own files from sources:\n" + caller) {
-      caller.contains("workspace.directory(\"..\",\n        include: [\"lib/go.mod\", \"lib/greet/*.go\", \"lib/greet/*.h\", \"lib/greet/*.s\", \"lib/greet/*.syso\", \"lib/greet/greeting.txt\"],")
+    let caller = repo.file("caller/dagger-module.toml").contents
+    assert("the caller's manifest does not include its own files outside:\n" + caller) {
+      caller.contains("\"../lib/go.mod\", \"../lib/greet/*.go\"")
     }
-    let control = repo.file("control/internal/dagger/entrypoint/main.dang").contents
-    assert("the control entrypoint does not return its own directory from sources:\n" + control) {
-      control.contains("pub sources(workspace: Workspace!): Directory! {\n    directory\n      .withDirectory(workspace.cwd, workspace.directory(\".\", exclude: [\"**/.git\"], gitignore: true))\n  }") and
-        control.contains("include:") == false
+    let control = repo.file("control/dagger-module.toml").contents
+    assert("the control manifest includes files:\n" + control) {
+      control.contains("include") == false
     }
     let app = repo.file("app/internal/dagger/entrypoint/main.dang").contents
     assert("the app and control entrypoints differ in call") {

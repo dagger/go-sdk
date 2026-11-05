@@ -222,13 +222,16 @@ func TestGenerateModuleWithSources(t *testing.T) {
 		"lib/greet/greeting.txt":      "hello from lib",
 		"lib/greet/testdata/data.txt": "not built\n",
 	})
-	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	includeList := filepath.Join(t.TempDir(), "include.txt")
+	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine", IncludePath: includeList}
 	require.NoError(t, Generate(t.Context(), cfg))
 
+	include, err := os.ReadFile(includeList)
+	require.NoError(t, err)
+	require.Equal(t, "../lib/go.mod\n../lib/greet/*.go\n../lib/greet/*.h\n../lib/greet/*.s\n../lib/greet/*.syso\n../lib/greet/greeting.txt\n!../**/*_test.go\n**/*_test.go\n", string(include))
 	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
 	require.NoError(t, err)
-	require.Contains(t, string(entrypoint), `.withDirectory(workspace.cwd + "/..", workspace.directory("..",
-        include: ["lib/go.mod", "lib/greet/*.go", "lib/greet/*.h", "lib/greet/*.s", "lib/greet/*.syso", "lib/greet/greeting.txt"],`)
+	require.NotContains(t, string(entrypoint), "pub sources(")
 	require.Contains(t, string(entrypoint), `.withMountedDirectory("/workspace", currentModule.contextDirectory)`)
 	require.NotContains(t, string(entrypoint), "let source")
 	require.NotContains(t, string(entrypoint), "currentModule.source.")
@@ -269,17 +272,19 @@ func TestGenerateSourcesMatchTidiedGoMod(t *testing.T) {
 		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n",
 		"lib/greet/greet.go": "package greet\n",
 	})
-	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	includeList := filepath.Join(t.TempDir(), "include.txt")
+	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine", IncludePath: includeList}
 	require.NoError(t, Generate(t.Context(), cfg))
 
+	// The module imports nothing from the replace target, so the manifest
+	// includes nothing.
+	include, err := os.ReadFile(includeList)
+	require.NoError(t, err)
+	require.Empty(t, string(include))
 	entrypointPath := filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang")
 	entrypoint, err := os.ReadFile(entrypointPath)
 	require.NoError(t, err)
-	require.Contains(t, string(entrypoint), `  pub sources(workspace: Workspace!): Directory! {
-    directory
-      .withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git"], gitignore: true))
-  }
-`)
+	require.NotContains(t, string(entrypoint), "pub sources(")
 	require.NotContains(t, string(entrypoint), "warning")
 	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
@@ -305,13 +310,14 @@ func TestGenerateModuleEmbeddingGoFiles(t *testing.T) {
 		"lib/greet/assets/asset.go":  "package assets\n",
 		"lib/greet/assets/private.h": "",
 	})
-	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	includeList := filepath.Join(t.TempDir(), "include.txt")
+	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine", IncludePath: includeList}
 	require.NoError(t, Generate(t.Context(), cfg))
 
-	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
+	include, err := os.ReadFile(includeList)
 	require.NoError(t, err)
-	require.Contains(t, string(entrypoint),
-		`include: ["lib/go.mod", "lib/greet/*.go", "lib/greet/*.h", "lib/greet/*.s", "lib/greet/*.syso", "lib/greet/assets/*.go"],`)
+	require.Equal(t, "../lib/go.mod\n../lib/greet/*.go\n../lib/greet/*.h\n../lib/greet/*.s\n../lib/greet/*.syso\n"+
+		"../lib/greet/assets/*.go\n!../**/*_test.go\n**/*_test.go\n", string(include))
 }
 
 func TestGenerateCollectionModuleWithSources(t *testing.T) {

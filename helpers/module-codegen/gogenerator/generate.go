@@ -50,7 +50,12 @@ type GenerateConfig struct {
 	// RemovedPath, when set, names a file that receives the module-relative
 	// paths of the generated files this run removed, one per line. The caller
 	// merges the remaining files back, so it needs the list to remove the rest.
-	RemovedPath   string
+	RemovedPath string
+	// IncludePath, when set, names a file that receives the module manifest's
+	// include list, one pattern per line, relative to the module directory:
+	// what the module's build reads outside it. It is empty when the build
+	// reads nothing outside.
+	IncludePath   string
 	UnifiedClient bool
 	// GlobalClient emits the compatibility unqualified dag API.
 	GlobalClient bool
@@ -243,7 +248,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("reload module package: %w", err)
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.TargetVersion, sources,
+		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.TargetVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
@@ -308,6 +313,15 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 			err = fmt.Errorf("%w; the module's code uses the global dag: set globalClient = true in the scope's settings in dagger.toml", err)
 		}
 		return withWarnings(err, untidied.Warnings)
+	}
+	if cfg.IncludePath != "" {
+		var list bytes.Buffer
+		for _, pattern := range templates.ManifestInclude(sources) {
+			list.WriteString(pattern + "\n")
+		}
+		if err := os.WriteFile(cfg.IncludePath, list.Bytes(), 0o644); err != nil {
+			return fmt.Errorf("write manifest include list: %w", err)
+		}
 	}
 	if cfg.RemovedPath != "" {
 		var list bytes.Buffer

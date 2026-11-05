@@ -12,13 +12,14 @@ import (
 )
 
 // moduleEntrypointContract is the engine's ModuleEntrypoint interface for an
-// entrypoint that declares sources, copied verbatim from
-// sourcesEntrypointInterface in dagger/dagger core/sdk/dang/v2/entrypoint.go
-// (branch entrypoint-sources, 3f1a7a8c6c).
+// entrypoint without a sources member, copied verbatim from
+// moduleEntrypointInterface in dagger/dagger core/sdk/dang/v2/entrypoint.go.
+// The generated entrypoint declares no sources: its manifest includes the
+// files the module's build reads outside its directory.
 const moduleEntrypointContract = `interface ModuleEntrypoint {
-  sources(workspace: Workspace!): Directory!
-  types: [TypeDef!]!
+  types(workspace: Workspace!): [TypeDef!]!
   call(
+    workspace: Workspace!
     receiverType: String!
     receiverValue: JSON
     fnName: String!

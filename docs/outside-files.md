@@ -3,10 +3,9 @@
 A Go module can build code from another directory of its repository through
 a local `replace` directive in `go.mod`.
 That code can embed files with `//go:embed`.
-Every Dang entrypoint that go-sdk generates declares a `sources` function.
-`sources` returns the module directory and the files the build reads outside
-it.
-The rest of the entrypoint is the same for every module.
+Generation lists the files the build reads outside the module directory in
+the module's `dagger-module.toml`, as `include`.
+The generated Dang entrypoint is the same for every module.
 
 ## What generation writes
 
@@ -19,12 +18,14 @@ outside the module directory:
 - the files those packages embed, and their assembly, header and syso files.
 
 The scan counts imports under every build tag and in the module's test files.
-Generation writes the patterns of these files into `sources`.
-For a module whose build reads nothing outside its directory, `sources`
-returns the module directory only.
+Generation writes the patterns of these files into `include`, relative to the
+module directory. It then excludes every test file outside the module, which
+the build never reads, and keeps the module's own test files.
+A module whose build reads nothing outside its directory gets no `include`.
+Generation replaces any `include` the manifest had.
 
 The `go mod tidy` of generation removes a requirement that nothing imports,
-so `sources` does not return the replace target of that requirement.
+so `include` does not list the replace target of that requirement.
 When a dependency outside the workspace still needs packages of that replace
 target, generation fails.
 The generation error ends with one line per such replace target, for example
@@ -45,34 +46,25 @@ type App struct{}
 func (*App) Greeting() string { return greet.Greeting() }
 ```
 
-Generation writes this function into `app/internal/dagger/entrypoint/main.dang`:
+Generation writes this manifest, `app/dagger-module.toml`:
 
-```dang
-pub sources(workspace: Workspace!): Directory! {
-  directory
-    .withDirectory(workspace.cwd + "/..", workspace.directory("..",
-      include: ["lib/go.mod", "lib/greet/*.go", "lib/greet/*.h", "lib/greet/*.s", "lib/greet/*.syso", "lib/greet/greeting.txt"],
-      exclude: ["**/.git", "**/*_test.go"],
-      gitignore: true,
-    ))
-    .withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git"], gitignore: true))
-}
+```toml
+name = "app"
+include = ["../lib/go.mod", "../lib/greet/*.go", "../lib/greet/*.h", "../lib/greet/*.s", "../lib/greet/*.syso", "../lib/greet/greeting.txt", "!../**/*_test.go", "**/*_test.go"]
+
+[entrypoint]
+  kind = "dang"
+  source = "./internal/dagger/entrypoint"
 ```
 
-## How the engine uses sources
+## How the engine uses include
 
-The engine calls `sources` when it loads the module.
-`sources` runs with a working client and the same trust as module code.
-The workspace that `sources` receives is rooted at the module's context root,
-and its current directory is the module directory.
-`sources` returns the module directory and the outside files at their paths
-from the workspace root.
-The engine adds the returned files to the module context.
+The engine loads the included files with the module's own files when it
+loads the module, as it loads a legacy module's `include`.
 The engine keys the module's types and every function result on the content
 of that context.
 
-A function result is reused across sessions until a file that `sources`
-returns changes.
+A function result is reused across sessions until an included file changes.
 A change to another file outside the module directory does not invalidate a
 result.
 Exported functions need no workspace argument for the build.
@@ -84,11 +76,11 @@ A function can therefore read `../lib/greet/greeting.txt` when it runs.
 ## Engine versions
 
 Every Dang entrypoint that go-sdk generates needs Dagger v1.0.0-beta.18 or
-later, with or without files outside the module directory.
-On v1.0.0-beta.17 and older, loading the module fails with
-`field "types": missing argument "workspace" required by interface`.
-The error prints the line above the entrypoint type, which reads
-`# Needs Dagger v1.0.0-beta.18 or later; older engines report a missing "workspace" argument.`
+later, the first release with the module context it builds from.
+A module whose manifest has `include` also needs an engine whose manifest
+version 2 reads it, which no release has yet. A released engine ignores
+`include`, so the module loads without those files and its build fails with
+`The build misses files outside the module directory`.
 Generation refuses on v1.0.0-beta.16 and older.
 
 ## The release the generated code targets
@@ -108,7 +100,7 @@ The generated `internal/dagger/entrypoint/dang.toml` declares the same
 release as its `Dagger` import; see the
 [README](../README.md#the-generated-dangtoml).
 The fixed core library and the module's own bindings depend on the SDK
-release, the target setting and the module's sources.
+release, the target setting and the module's source files.
 An engine update leaves them unchanged.
 Dependency clients still read the running engine's schema.
 An engine update can change a dependency client if the engine's view of
@@ -188,15 +180,16 @@ the module directory: run dagger generate`.
 - A replace target must stay inside the workspace. Generation refuses a
   target above the workspace root.
 - A version-specific replace whose version only a dependency's `go.mod`
-  selects can add extra files to `sources` when the replace targets of
+  selects can add extra files to `include` when the replace targets of
   several versions exist.
 - A version-specific replace of a nested module path that `go.mod` does not
   require, such as `example.com/a/sub v1.0.0`, hides the packages under that
-  path from a required replace of its parent `example.com/a`: `sources`
+  path from a required replace of its parent `example.com/a`: `include`
   misses their files and the build fails.
 - Generation refuses a symlink that leads outside the module directory.
-- `sources` returns no file that `.gitignore` ignores. Generation refuses a
-  pattern that matches only ignored files.
+- The engine applies `.gitignore` to a local module's included files, as to
+  its own files, and loads every committed file of a git module. Generation
+  refuses a pattern that matches only ignored files.
 
 ## Migration
 

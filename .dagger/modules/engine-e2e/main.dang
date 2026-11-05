@@ -205,10 +205,11 @@ type EngineE2e {
   }
 
   """
-  On an engine that calls sources, the module builds from its context,
-  reuses results across sessions until an included file changes, and runs
-  from anywhere. engineSource replaces the pinned engine with a dagger
-  checkout.
+  On an engine whose manifest v2 accepts include, the module builds from its
+  context, reuses results across sessions until an included file changes,
+  and runs from anywhere. engineSource replaces the pinned engine with a
+  dagger checkout; the pinned engine predates include, so this check needs
+  one until a release carries it.
   """
   sourcesCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
     sourcesCalls(sdkClient(
@@ -219,9 +220,9 @@ type EngineE2e {
   }
 
   """
-  On beta.17, which does not call sources and passes a workspace to types
-  and call, a generated module fails at load, with or without files outside
-  its directory, and the error shows the release it needs.
+  On beta.17, which reads include as a pre-v2 key of a fat manifest and
+  ignores it, a generated module with files outside its directory loads
+  without them, and its build says to generate again.
   """
   sourcesGuardCheck(ws: Workspace!): Void @check {
     # beta.17 cannot generate the fixture: the caller's client loads
@@ -242,13 +243,9 @@ type EngineE2e {
     )
       .withDirectory("/repo", exported.directory("/repo"))
       .withExec(["git", "-C", "/repo", "init", "-q"])
-    [["-m", "app", "call", "greeting"], ["-m", "control", "call", "nonce"]].each { args =>
-      let refused = runDagger(repo, "/repo", args)
-      assert("beta.17 did not refuse " + args.join(" ") + " with the release it needs:\n" + refused.stdout + refused.stderr) {
-        refused.exitCode != 0 and
-          refused.stderr.contains("missing argument \"workspace\" required by interface") and
-          refused.stderr.contains("Needs Dagger v1.0.0-beta.18 or later")
-      }
+    let refused = runDagger(repo, "/repo", ["-m", "app", "call", "greeting"])
+    assert("beta.17 did not fail the app's build for its missing files:\n" + refused.stdout + refused.stderr) {
+      refused.exitCode != 0 and refused.stderr.contains("The build misses files outside the module directory")
     }
     null
   }
@@ -276,7 +273,7 @@ type EngineE2e {
   one, calls from another repository, a subdirectory, by path and from a git
   source, a caller that reaches the module through a generated client, a
   module without files outside its directory, and a build that misses a file
-  that sources does not return.
+  that the manifest does not include.
   """
   let sourcesCalls(client: Container!): Void {
     let sdkDir = client.workdir
@@ -289,8 +286,12 @@ type EngineE2e {
         "[modules.include-app]\nsource = \"app\"\n\n[modules.include-caller]\nsource = \"caller\"\n\n[modules.include-control]\nsource = \"control\"\n")
       .withExec(["git", "-C", "/repo", "init", "-q"])
     let entrypoint = ready.file("/repo/app/internal/dagger/entrypoint/main.dang").contents
-    assert("the entrypoint does not declare sources:\n" + entrypoint) {
-      entrypoint.contains("pub sources(workspace: Workspace!): Directory!")
+    assert("the entrypoint declares sources:\n" + entrypoint) {
+      entrypoint.contains("pub sources(") == false
+    }
+    let manifest = ready.file("/repo/app/dagger-module.toml").contents
+    assert("the manifest does not include the files outside the module:\n" + manifest) {
+      manifest.contains("include = [\"../lib/go.mod\"")
     }
 
     let outside = runDagger(ready.withExec(["git", "init", "-q", "/other"]), "/other", ["-m", "/repo/app", "call", "greeting"])
@@ -323,7 +324,7 @@ type EngineE2e {
       succeeded(secondNonce) == succeeded(firstNonce)
     }
     let unrelated = runDagger(secondNonce.withNewFile("/repo/lib/unrelated.txt", "unrelated"), "/repo", nonce)
-    assert("a file outside sources invalidated the result: " + succeeded(unrelated)) {
+    assert("a file the manifest does not include invalidated the result: " + succeeded(unrelated)) {
       succeeded(unrelated) == succeeded(firstNonce)
     }
     let changed = runDagger(unrelated.withNewFile("/repo/lib/greet/greeting.txt", "two"), "/repo", greeting)
@@ -355,7 +356,7 @@ type EngineE2e {
     assert("a module without files outside its directory did not reuse its result") {
       succeeded(controlAgain) == succeeded(control)
     }
-    # Greeting starts importing a package that the generated sources do not return.
+    # Greeting starts importing a package that the generated include does not list.
     let appMain = controlAgain.file("/repo/app/main.go").contents
       .replace("\"example.com/lib/greet\"\n", "\"example.com/lib/greet\"\n\t\"example.com/lib/words\"\n")
       .replace("{ return greet.Greeting() }", "{ return greet.Greeting() + words.Word() }")

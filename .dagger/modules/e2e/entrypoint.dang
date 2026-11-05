@@ -434,7 +434,7 @@ type EntrypointChecks {
     )
     assert("unifiedClients = false did not migrate the runtime module to embedded entrypoint bindings") {
       embedded.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
-        embedded.file("internal/dagger/entrypoint/main.dang").contents.contains("  pub sources(workspace: Workspace!): Directory! {\n") and
+        embedded.file("internal/dagger/entrypoint/main.dang").contents.contains("  pub types(workspace: Workspace!): [TypeDef!]! {\n") and
         embedded.file("internal/dagger/dagger.gen.go").contents.contains("GraphQLClient() graphql.Client") and
         configures(embedded, sdkTarget)
     }
