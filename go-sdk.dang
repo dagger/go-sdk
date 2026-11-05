@@ -173,8 +173,8 @@ type GoSdk {
   Build new entrypoint modules with dagger/go, and keep what an existing
   module does unless the setting says otherwise. A manifest that lists an
   entrypoint's dependencies loads from Dagger versions.daggerGoFloor, so a
-  module that targets an older release builds with go build; target is ""
-  for an engine that is not a release.
+  module that targets an older release builds with go build. target is
+  always a release: targetRelease picks one on every path.
   """
   let usesDaggerGo(ws: Workspace!, hadManifest: Boolean!, name: String!, target: String!): Boolean! {
     let wanted = if (daggerGo != null) {
