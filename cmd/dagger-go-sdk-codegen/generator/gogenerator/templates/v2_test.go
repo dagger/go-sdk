@@ -68,6 +68,7 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.Contains(t, text, "pub sources(workspace: Workspace!): Directory!")
 	require.Contains(t, text, "pub types: [TypeDef!]!")
 	require.Contains(t, text, "  pub prebuild: File! {\n    dispatch\n  }")
+	require.NotContains(t, text, "withPlatform")
 	require.Contains(t, text, `.withWorkdir("/workspace/" + currentModule.sourceSubpath)`)
 	require.Contains(t, text, "fnArgs: JSON!,")
 	require.Contains(t, text, "fnArgs: fnArgs,")
@@ -403,4 +404,29 @@ func TestSdkFloorIsTheSourcesFloor(t *testing.T) {
 	match := regexp.MustCompile(`(?m)^sourcesFloor\s*=\s*"([^"]*)"`).FindSubmatch(data)
 	require.NotNil(t, match, "sourcesFloor not found in versions.toml")
 	require.Equal(t, sourcesFloor, string(match[1]))
+}
+
+// A module that targets platformFloor or later builds its process for a
+// platform it is given and declares the binary for it, so that an engine
+// image of another platform can ship it; its prebuild takes the platform.
+func TestEntrypointDeclaresPlatformFromFloor(t *testing.T) {
+	for _, daggerGo := range []bool{false, true} {
+		older, err := (&v2Module{daggerGo: daggerGo, targetVersion: "v1.0.0-beta.24"}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+		require.NoError(t, err)
+		require.Contains(t, string(older), "  pub prebuild: File! {\n    dispatch\n  }")
+		require.NotContains(t, string(older), "platform")
+
+		source, err := (&v2Module{daggerGo: daggerGo, targetVersion: platformFloor}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+		require.NoError(t, err)
+		text := string(source)
+		require.Contains(t, text, "  let dispatch(platform: Platform!): File! {\n")
+		require.Contains(t, text, "  pub prebuild(platform: Platform): File! {\n    dispatch(platform ?? defaultPlatform)\n  }")
+		require.Contains(t, text, "    let binary = dispatch(defaultPlatform).sync\n")
+		if daggerGo {
+			require.Contains(t, text, ".platforms.platform(name: `${platform}`.split(\"/\").takeFirst(2).join(\"/\")).binary(ws)")
+		} else {
+			require.Contains(t, text, `.withEnvVariable("GOARCH", target.takeFirst(2).takeLast(1).join(""))`)
+			require.Contains(t, text, "      .directory(\"/tmp/dispatch\")\n      .withPlatform(platform: platform)\n      .file(\"dispatch\")\n")
+		}
+	}
 }

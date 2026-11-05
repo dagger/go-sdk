@@ -15,6 +15,7 @@ import (
 
 	. "github.com/dave/jennifer/jen" //nolint:staticcheck
 	"github.com/iancoleman/strcase"
+	"golang.org/x/mod/semver"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 
@@ -45,6 +46,20 @@ type EntrypointSources struct {
 // sourcesFloor is the first Dagger release that calls the entrypoint's
 // sources function and passes no workspace to types and call.
 const sourcesFloor = "v1.0.0-beta.18"
+
+// platformFloor is the first Dagger release with Directory.withPlatform and
+// a prebuild for another platform (Module._prebuild's platform): an
+// entrypoint of a module that targets it declares its process's binary as
+// made for its platform, which an engine image of another platform can
+// then ship (not yet released).
+const platformFloor = "v1.0.0-beta.26"
+
+// declaresPlatform reports whether the entrypoint builds its process's
+// binary for a platform it is given and declares it for that platform:
+// whether the module targets platformFloor or later.
+func (mod *v2Module) declaresPlatform() bool {
+	return mod.targetVersion != "" && semver.Compare(mod.targetVersion, platformFloor) >= 0
+}
 
 // GenerateV2Artifacts analyzes a Go module with the existing parser and emits
 // a manifest-v2 entrypoint around its established static dispatcher. The
@@ -372,14 +387,23 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		buildTarget = "."
 	}
+	declares := mod.declaresPlatform()
 	if mod.daggerGo {
-		writeDaggerGoDispatch(&b, moduleSubpath, buildTarget)
+		writeDaggerGoDispatch(&b, moduleSubpath, buildTarget, declares)
 	} else {
-		writeGoBuildDispatch(&b, goImage, workdir, buildTarget)
+		writeGoBuildDispatch(&b, goImage, workdir, buildTarget, declares)
 	}
 	// The engine evaluates prebuild before the module's first call, so the
-	// call finds its binary built, or joins the build in flight.
-	b.WriteString("  pub prebuild: File! {\n    dispatch\n  }\n\n")
+	// call finds its binary built, or joins the build in flight. For another
+	// platform's engine, such as an engine image of another platform ships,
+	// the engine asks for that platform's.
+	dispatch := "dispatch"
+	if declares {
+		dispatch = "dispatch(defaultPlatform)"
+		b.WriteString("  pub prebuild(platform: Platform): File! {\n    dispatch(platform ?? defaultPlatform)\n  }\n\n")
+	} else {
+		b.WriteString("  pub prebuild: File! {\n    dispatch\n  }\n\n")
+	}
 	b.WriteString("  pub types: [TypeDef!]! {\n")
 	b.WriteString("    [\n")
 	for i, def := range defs {
@@ -405,7 +429,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
       fnArgs: fnArgs,
     }})
     # A build failure stays out of the rescue below, so it surfaces unchanged.
-    let binary = dispatch.sync
+    let binary = ` + dispatch + `.sync
     let result = container
 `)
 	runtimeImage := mod.runtimeImage
@@ -1014,9 +1038,19 @@ func developerArgEncoding(spec ParsedType) string {
 
 // writeGoBuildDispatch writes the entrypoint's dispatch member as a go build
 // of the module's process at buildTarget, in goImage, with the module's own
-// Go cache volumes.
-func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string) {
-	b.WriteString("  let dispatch: File! {\n")
+// Go cache volumes. With declares, it builds for a platform it is given,
+// which the engine's own Go toolchain compiles for, and declares the binary
+// as made for that platform (Directory.withPlatform): an engine of that
+// platform finds the one an engine of another platform made, such as in the
+// entries its image ships.
+func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string, declares bool) {
+	if declares {
+		b.WriteString("  let dispatch(platform: Platform!): File! {\n")
+		b.WriteString("    # Platform is its own scalar; a template is how Dang turns one into text.\n")
+		b.WriteString("    let target = `${platform}`.split(\"/\")\n")
+	} else {
+		b.WriteString("  let dispatch: File! {\n")
+	}
 	b.WriteString("    container\n")
 	fmt.Fprintf(b, "      .from(%s)\n", strconv.Quote(goImage))
 	b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
@@ -1025,14 +1059,26 @@ func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string)
 	fmt.Fprintf(b, "      .withWorkdir(%s)\n", workdir)
 	b.WriteString("      .withEnvVariable(\"CGO_ENABLED\", \"0\")\n")
 	b.WriteString("      .withEnvVariable(\"GOWORK\", \"off\")\n")
+	output := "/tmp/dispatch"
+	if declares {
+		b.WriteString("      .withEnvVariable(\"GOOS\", target.takeFirst(1).join(\"\"))\n")
+		b.WriteString("      .withEnvVariable(\"GOARCH\", target.takeFirst(2).takeLast(1).join(\"\"))\n")
+		output = "/tmp/dispatch/dispatch"
+	}
 	// Go reports a file that sources leaves out as a missing module or
 	// package and suggests go get; the fix is to generate again.
-	script := "go build -o /tmp/dispatch " + buildTarget + " 2>/tmp/build.log && exit 0; cat /tmp/build.log >&2; " +
+	script := "go build -o " + output + " " + buildTarget + " 2>/tmp/build.log && exit 0; cat /tmp/build.log >&2; " +
 		"grep -q -e 'no required module provides package' -e 'replacement directory' -e 'no matching files found' /tmp/build.log && " +
 		"echo 'The build misses files outside the module directory: run dagger generate after changing go.mod replace directives, " +
 		"the imports from a replace target or their embeds.' >&2; exit 1"
 	fmt.Fprintf(b, "      .withExec([\"sh\", \"-c\", %s])\n", strconv.Quote(script))
-	b.WriteString("      .file(\"/tmp/dispatch\")\n")
+	if declares {
+		b.WriteString("      .directory(\"/tmp/dispatch\")\n")
+		b.WriteString("      .withPlatform(platform: platform)\n")
+		b.WriteString("      .file(\"dispatch\")\n")
+	} else {
+		b.WriteString("      .file(\"/tmp/dispatch\")\n")
+	}
 	b.WriteString("  }\n\n")
 }
 
@@ -1041,8 +1087,12 @@ func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string)
 // cached the same way, as any dagger/go build, at the toolchain of the
 // module's go.mod. dagger/go is the module's client "go". moduleSubpath is
 // the module's directory under its Go module's.
-func writeDaggerGoDispatch(b *bytes.Buffer, moduleSubpath, buildTarget string) {
-	b.WriteString("  let dispatch: File! {\n")
+func writeDaggerGoDispatch(b *bytes.Buffer, moduleSubpath, buildTarget string, declares bool) {
+	if declares {
+		b.WriteString("  let dispatch(platform: Platform!): File! {\n")
+	} else {
+		b.WriteString("  let dispatch: File! {\n")
+	}
 	b.WriteString("    let ws = currentModule.contextDirectory.asWorkspace\n")
 	b.WriteString("    let src = currentModule.sourceSubpath\n")
 	// dagger/go keys a package by its directory in the workspace.
@@ -1058,6 +1108,12 @@ func writeDaggerGoDispatch(b *bytes.Buffer, moduleSubpath, buildTarget string) {
 	} else {
 		fmt.Fprintf(b, "    let pkg = if (src == \".\") { %s } else { src + %s }\n", strconv.Quote(pkg), strconv.Quote("/"+pkg))
 	}
-	b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).binary(ws)\n")
+	if declares {
+		// dagger/go compiles for any platform with the engine's toolchain,
+		// and declares the binary as made for it.
+		b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).platforms.platform(name: `${platform}`.split(\"/\").takeFirst(2).join(\"/\")).binary(ws)\n")
+	} else {
+		b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).binary(ws)\n")
+	}
 	b.WriteString("  }\n\n")
 }
