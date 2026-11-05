@@ -20,6 +20,10 @@ type Entrypoint implements ModuleEntrypoint {
       .file("/tmp/dispatch")
   }
 
+  pub prebuild: File! {
+    dispatch
+  }
+
   pub types: [TypeDef!]! {
     [
       typeDef.withObject("HelloWorld", description: "Greets.", sourceMap: sourceMap("main.go", 3, 6))
