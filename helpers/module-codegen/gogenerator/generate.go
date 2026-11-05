@@ -233,6 +233,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return fmt.Errorf("reload module package: %w", err)
 	}
+	if err := stdlibImportErrors(pkg); err != nil {
+		return fmt.Errorf("reload module package: %w", err)
+	}
 	artifacts, err := templates.GenerateV2Artifacts(
 		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.TargetVersion, sources,
 	)
