@@ -37,7 +37,7 @@ type TargetChecks {
   one query, so the engine runs the module's generated code.
   """
   let called(ws: Workspace!, scopePath: String!, query: String!): String! {
-    let ran = container.from("golang:1.26-alpine").withoutEntrypoint
+    let ran = container.from("golang:1.27-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/workspace", ws.directory("/", exclude: ["**/.git"]))

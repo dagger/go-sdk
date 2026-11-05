@@ -118,7 +118,7 @@ func run(args []string) error {
 		if err := mod.AddModuleStmt(moduleImport); err != nil {
 			return err
 		}
-		if err := mod.AddGoStmt("1.26.1"); err != nil {
+		if err := mod.AddGoStmt("1.27"); err != nil {
 			return err
 		}
 		body, err := mod.Format()
