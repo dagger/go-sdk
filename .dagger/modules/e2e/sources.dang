@@ -14,8 +14,10 @@ type SourcesChecks {
 
   """
   The generated entrypoint returns the files the build reads outside the
-  module from sources, builds from the module context with GOWORK=off, and
-  regenerates without changes. Generation writes no file outside the module.
+  module from sources, and the manifest includes the same files, for an
+  engine that reads include in place of sources. The entrypoint builds from
+  the module context with GOWORK=off, and the module regenerates without
+  changes. Generation writes no file outside the module.
   """
   generateCheck(ws: Workspace!): Void @check {
     let input = ws.withWorkdir(appPath)
@@ -40,7 +42,7 @@ type SourcesChecks {
     }
     assert("the manifest is not the entrypoint manifest") {
       ready.file("dagger-module.toml").contents ==
-        "name = \"include-app\"\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+        "name = \"include-app\"\ninclude = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
     }
     assert("generation changed main.go") {
       ready.file("main.go").contents == input.file("main.go").contents
@@ -119,8 +121,8 @@ type SourcesChecks {
   }
 
   """
-  Generation drops the include list of a migrated manifest: the local replace
-  directives of go.mod select the files outside the module directory.
+  Generation replaces the include list of a migrated manifest: the local
+  replace directives of go.mod select the files outside the module directory.
   """
   manifestIncludeCheck(ws: Workspace!): Void @check {
     [
@@ -129,8 +131,9 @@ type SourcesChecks {
     ].each { file =>
       let ready = generated(ws.withNewFile("/" + appPath + "/" + (file[0] ?? ""), file[1] ?? ""))
       let manifest = ready.file("dagger-module.toml").contents
-      assert((file[0] ?? "") + ": generation kept include or lacks the entrypoint:\n" + manifest) {
-        manifest.contains("include =") == false and manifest.contains("[entrypoint]") and
+      assert((file[0] ?? "") + ": generation kept the old include, lacks the replace's, or lacks the entrypoint:\n" + manifest) {
+        manifest.contains("../shared") == false and manifest.contains("./data") == false and
+          manifest.contains("include = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]") and manifest.contains("[entrypoint]") and
           ready.directory(".").exists("dagger.json") == false
       }
     }

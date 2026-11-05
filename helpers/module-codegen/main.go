@@ -41,6 +41,7 @@ func run() error {
 	flag.StringVar(&cfg.RuntimeImage, "runtime-image", "", "image the generated entrypoint runs the module's process in")
 	flag.BoolVar(&cfg.DaggerGo, "dagger-go", false, "build the module's process with dagger/go, the module's client \"go\"")
 	flag.StringVar(&cfg.RemovedPath, "removed-list", "", "file that receives the paths of removed generated files")
+	flag.StringVar(&cfg.IncludePath, "include-list", "", "file that receives the module manifest's include list, one pattern per line")
 	flag.BoolVar(&cfg.UnifiedClient, "unified", false, "reuse core bindings and shared sessions")
 	flag.BoolVar(&cfg.GlobalClient, "global-client", false, "generate the compatibility unqualified dag API")
 	flag.Parse()

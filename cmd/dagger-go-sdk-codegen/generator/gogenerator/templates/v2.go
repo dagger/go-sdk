@@ -10,6 +10,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"path"
 	"strconv"
 	"strings"
 
@@ -33,8 +34,10 @@ type V2Artifacts struct {
 
 // EntrypointSources is what a module's build reads outside its module
 // directory. The entrypoint's sources function returns these files beside the
-// module directory, and the engine builds the module and keys its results on
-// what sources returns.
+// module directory, and the module's manifest includes the same files (see
+// ManifestInclude). An engine that reads the manifest's include loads them
+// with the module and does not run sources; an older one runs sources. Either
+// way the engine builds the module and keys its results on these files.
 type EntrypointSources struct {
 	// Anchor is the directory that holds the module directory and every
 	// included path, relative to the module directory, such as "..".
@@ -512,6 +515,23 @@ func writeSources(b *bytes.Buffer, sources *EntrypointSources) {
   }
 
 `)
+}
+
+// ManifestInclude is the manifest's include list for what a module's build
+// reads outside its module directory, selecting what sources returns: each
+// pattern relative to the module directory, then every test file under the
+// anchor excluded, which the build never reads, and the module's own test
+// files kept, as part of the module directory. A module that reads nothing
+// outside gets an empty list, which still replaces sources.
+func ManifestInclude(sources *EntrypointSources) []string {
+	include := []string{}
+	if sources == nil || len(sources.Include) == 0 {
+		return include
+	}
+	for _, pattern := range sources.Include {
+		include = append(include, path.Join(sources.Anchor, pattern))
+	}
+	return append(include, "!"+path.Join(sources.Anchor, "**", "*_test.go"), "**/*_test.go")
 }
 
 func exposesModuleContext(schema *introspection.Schema) bool {

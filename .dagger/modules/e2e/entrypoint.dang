@@ -27,10 +27,13 @@ type EntrypointChecks {
       config.field(["imports", "Dagger", "dagger"]).asString == release
   }
 
-  """The manifest dangEntrypoint writes: the name and the entrypoint only."""
+  """
+  The manifest dangEntrypoint writes for a module that reads nothing outside
+  its directory: the name, an empty include, and the entrypoint.
+  """
   let entrypointManifest(name: String!): String! {
     "name = " + JSON.encode(name) +
-      "\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+      "\ninclude = []\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
   }
 
   """

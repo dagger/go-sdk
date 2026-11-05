@@ -715,6 +715,7 @@ type GoSdk {
       "--unified=" + JSON.encode(unified),
       "--global-client=" + JSON.encode(globalClient ?? false),
       "--removed-list", "/removed.txt",
+      "--include-list", "/include.txt",
     ])
     # The generator reports a development exception on its standard output.
     let notes = codegen.stdout.trimSpace
@@ -749,13 +750,33 @@ type GoSdk {
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
       .generate(withDangConfig(pruned, target), lock: false, legacyJson: false)
-    if (deps.length == 0) { return manifested }
+    let includedManifest = withManifestInclude(manifested, codegen.file("/include.txt"))
+    if (deps.length == 0) { return includedManifest }
     # The entrypoint's dependencies, which manifest version 2 lists without a
     # runtime; sdk-helpers writes dependencies only with one.
     let tables = deps.map { dep =>
       "\n[[dependencies]]\n  name = " + JSON.encode(dep.moduleOriginalName) + "\n  source = " + JSON.encode(dependencySource(dep, scopePath)) + "\n"
     }.join("")
-    manifested.withDirectory(".", directory.withNewFile("dagger-module.toml", manifested.file("dagger-module.toml").contents + tables))
+    includedManifest.withDirectory(".", directory.withNewFile("dagger-module.toml", includedManifest.file("dagger-module.toml").contents + tables))
+  }
+
+  """
+  The manifest at ws.cwd with the include list the generator wrote: the files
+  the module's build reads outside its directory, which the entrypoint's
+  sources also returns. An engine that reads include loads them with the
+  module and skips sources, even for an empty list; an older engine ignores
+  include and runs sources. sdk-helpers writes the name first, so include
+  follows it, before any table.
+  """
+  let withManifestInclude(ws: Workspace!, list: File!): Workspace! {
+    let patterns = lines(list)
+    let toml = ws.file("dagger-module.toml").contents
+    let withInclude = toml.split("\n").map { line =>
+      if (line.hasPrefix("name = ")) {
+        line + "\ninclude = [" + patterns.map { p => JSON.encode(p) }.join(", ") + "]"
+      } else { line }
+    }.join("\n")
+    ws.withDirectory(".", directory.withNewFile("dagger-module.toml", withInclude))
   }
 
   let withDangConfig(ws: Workspace!, target: String!): Workspace! {

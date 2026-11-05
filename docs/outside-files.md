@@ -23,6 +23,15 @@ Generation writes the patterns of these files into `sources`.
 For a module whose build reads nothing outside its directory, `sources`
 returns the module directory only.
 
+Generation also lists the same files in the module's `dagger-module.toml`, as
+`include`, relative to the module directory. The list excludes every test
+file outside the module and keeps the module's own, as `sources` does. A
+module whose build reads nothing outside gets `include = []`.
+An engine that reads a version 2 manifest's `include` loads those files with
+the module and does not run `sources`, even for an empty list, so loading the
+module evaluates no Dang code. A released engine ignores `include` and runs
+`sources`. The module loads on both.
+
 The `go mod tidy` of generation removes a requirement that nothing imports,
 so `sources` does not return the replace target of that requirement.
 When a dependency outside the workspace still needs packages of that replace

@@ -403,6 +403,28 @@ func TestEntrypointSourcesAvoidsResources(t *testing.T) {
 	}
 }
 
+// The manifest's include roots each pattern at the anchor, relative to the
+// module directory, then excludes every test file outside the module, embedded
+// directories' too, and keeps the module's own: what sources returns. A module
+// that reads nothing outside gets an empty list.
+func TestManifestInclude(t *testing.T) {
+	require.Equal(t, []string{}, ManifestInclude(nil))
+	require.Equal(t, []string{}, ManifestInclude(&EntrypointSources{Anchor: ".."}))
+	require.Equal(t, []string{
+		"../lib/go.mod",
+		"../lib/greet/*.go",
+		"../lib/greet/templates",
+		"!../**/*_test.go",
+		"**/*_test.go",
+	}, ManifestInclude(&EntrypointSources{Anchor: "..", Include: []string{"lib/go.mod", "lib/greet/*.go", "lib/greet/templates"}}))
+	require.Equal(t, []string{
+		"../../../go.mod",
+		"../../../greet/*.go",
+		"!../../../**/*_test.go",
+		"**/*_test.go",
+	}, ManifestInclude(&EntrypointSources{Anchor: "../../..", Include: []string{"go.mod", "greet/*.go"}}))
+}
+
 func TestExposesModuleContext(t *testing.T) {
 	schema := func(fields ...string) *introspection.Schema {
 		currentModule := &introspection.Type{Name: "CurrentModule"}
