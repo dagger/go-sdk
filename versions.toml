@@ -1,4 +1,4 @@
-defaultTarget = "v1.0.0-beta.24"
+defaultTarget = "v1.0.0-beta.25"
 # The newest release a scope can pin with targetVersion: the release in
 # flight (not yet released).
 newestTarget = "v1.0.0-beta.26"

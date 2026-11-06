@@ -81,12 +81,12 @@ type CurrentModule { source: Directory! }
 
 func TestSdkTargetRelease(t *testing.T) {
 	for _, c := range []struct{ setting, want string }{
-		{"", "v1.0.0-beta.24"},
-		{"v1.0.0-beta.24", "v1.0.0-beta.24"},
+		{"", "v1.0.0-beta.25"},
+		{"v1.0.0-beta.25", "v1.0.0-beta.25"},
+		{"1.0.0-beta.25+abc", "v1.0.0-beta.25"},
 		// The release in flight can be pinned before the default moves to it.
 		{"v1.0.0-beta.26", "v1.0.0-beta.26"},
-		{"v1.0.0-beta.25", "v1.0.0-beta.25"},
-		{"1.0.0-beta.24+abc", "v1.0.0-beta.24"},
+		{"v1.0.0-beta.24", "v1.0.0-beta.24"},
 		{"v1.0.0-beta.23", "v1.0.0-beta.23"},
 		{"v1.0.0-beta.21", "v1.0.0-beta.21"},
 		{"v1.0.0-beta.20", "v1.0.0-beta.20"},
@@ -109,7 +109,7 @@ func TestSdkTargetReleaseRefusals(t *testing.T) {
 		return `module "probe" pins targetVersion ` + v + ", which this release of the Go SDK cannot generate for: it targets v1.0.0-beta.26 at most. " + fix + ", or install the SDK release built for " + v
 	}
 	malformed := func(v string) string {
-		return `module "probe" pins targetVersion "` + v + `", which is not a Dagger release such as v1.0.0-beta.24. ` + fix
+		return `module "probe" pins targetVersion "` + v + `", which is not a Dagger release such as v1.0.0-beta.25. ` + fix
 	}
 	for _, c := range []struct{ setting, want string }{
 		{"v1.0.0-beta.17", below},
