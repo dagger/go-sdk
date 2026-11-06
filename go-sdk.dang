@@ -969,9 +969,12 @@ type GoSdk {
   """
   The image at ref, by its digest: the workspace's lock entry for it, or the
   registry's, which the lock then records.
+
+  Only the digest is taken from imageRef: released engines can report there
+  another tag that the session resolved to the same image.
   """
   let pinnedImage(ref: String!): String! {
-    container.from(ref).imageRef
+    ref + "@" + (container.from(ref).imageRef.split("@")[1] ?? "")
   }
 
   """
