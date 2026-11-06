@@ -319,6 +319,30 @@ type TargetChecks {
   }
 
   """
+  On an engine of v1.0.0-beta.26, the release that reads an entrypoint's
+  dependencies, a new module that targets it builds with dagger/go: its
+  entrypoint passes the contract check against dagger/go's schema, and the
+  engine runs it. That release's dagger.io/dagger is not published yet, so
+  the module replaces it, as the refusal to pin it suggests. Released
+  engines can't load such a module, so this is not a check: run it with
+  an engine of that release.
+  """
+  daggerGoEngineCheck(ws: Workspace!): Void {
+    let name = "target-dagger-go-engine"
+    let scopePath = outputRoot + "/" + name
+    let release = "v1.0.0-beta.26"
+    let input = ws.withWorkdir(scopePath)
+      .withNewFile("go.mod", "module example.com/target-dagger-go-engine\n\ngo 1.27\n\nreplace dagger.io/dagger " + release + " => dagger.io/dagger " + sdkTarget + "\n")
+    let generated = goSdk(targetVersion: release).generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the module does not list dagger/go as its entrypoint's dependency:\n" + generated.file("dagger-module.toml").contents) {
+      generated.file("dagger-module.toml").contents.contains("\"github.com/dagger/go@")
+    }
+    let out = called(generated, scopePath, "query($ws:ID!){targetDaggerGoEngine(ws:$ws){container{withExec(args:[\"cat\",\"/etc/alpine-release\"]){stdout}}}}")
+    assert("the generated module did not run: " + out) { out.contains("\"stdout\":\"3.") }
+    null
+  }
+
+  """
   On an engine that reads the entrypoint's dang.toml, the Dagger import
   sets the version the engine serves the module at, a module without the
   file gets the engine's fallback of v1.0.0-beta.24, and the engine runs
