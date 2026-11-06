@@ -404,6 +404,16 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	} else {
 		b.WriteString("  pub prebuild: File! {\n    dispatch\n  }\n\n")
 	}
+	runtimeImage := mod.runtimeImage
+	if runtimeImage == "" {
+		runtimeImage = defaultRuntimeImage
+	}
+	// The engine reads the image the module's calls run in from
+	// runtimeImage, as it reads prebuild, such as to ship it in an engine
+	// image of any platform; the calls start from it. It needs nothing newer
+	// than the entrypoint itself does, so every target declares it, and an
+	// engine that doesn't read it ignores it.
+	fmt.Fprintf(&b, "  pub runtimeImage(platform: Platform): Container! {\n    container(platform: platform ?? defaultPlatform).from(%s)\n  }\n\n", strconv.Quote(runtimeImage))
 	b.WriteString("  pub types: [TypeDef!]! {\n")
 	b.WriteString("    [\n")
 	for i, def := range defs {
@@ -430,14 +440,8 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
     }})
     # A build failure stays out of the rescue below, so it surfaces unchanged.
     let binary = ` + dispatch + `.sync
-    let result = container
-`)
-	runtimeImage := mod.runtimeImage
-	if runtimeImage == "" {
-		runtimeImage = defaultRuntimeImage
-	}
-	fmt.Fprintf(&b, "      .from(%s)\n", strconv.Quote(runtimeImage))
-	b.WriteString(`      .withFile("/usr/local/bin/dispatch", binary, permissions: 755)
+    let result = runtimeImage(defaultPlatform)
+      .withFile("/usr/local/bin/dispatch", binary, permissions: 755)
       .withMountedDirectory("/workspace", currentModule.contextDirectory)
 `)
 	fmt.Fprintf(&b, "      .withWorkdir(%s)\n", workdir)

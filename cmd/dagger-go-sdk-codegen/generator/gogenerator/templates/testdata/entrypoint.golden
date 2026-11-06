@@ -24,6 +24,10 @@ type Entrypoint implements ModuleEntrypoint {
     dispatch
   }
 
+  pub runtimeImage(platform: Platform): Container! {
+    container(platform: platform ?? defaultPlatform).from("alpine:3.22")
+  }
+
   pub types: [TypeDef!]! {
     [
       typeDef.withObject("HelloWorld", description: "Greets.", sourceMap: sourceMap("main.go", 3, 6))
@@ -72,8 +76,7 @@ type Entrypoint implements ModuleEntrypoint {
     }})
     # A build failure stays out of the rescue below, so it surfaces unchanged.
     let binary = dispatch.sync
-    let result = container
-      .from("alpine:3.22")
+    let result = runtimeImage(defaultPlatform)
       .withFile("/usr/local/bin/dispatch", binary, permissions: 755)
       .withMountedDirectory("/workspace", currentModule.contextDirectory)
       .withWorkdir("/workspace/" + currentModule.sourceSubpath)

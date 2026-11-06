@@ -406,6 +406,26 @@ func TestSdkFloorIsTheSourcesFloor(t *testing.T) {
 	require.Equal(t, sourcesFloor, string(match[1]))
 }
 
+// runtimeImageMember is the member that declares the image a module's calls
+// run in, for its fixtures' default runtime image.
+const runtimeImageMember = "  pub runtimeImage(platform: Platform): Container! {\n    container(platform: platform ?? defaultPlatform).from(\"alpine:3.22\")\n  }"
+
+// A module of any target declares the image its calls run in, for the
+// engine's platform or one it is given, as the one place it names it, and
+// its calls start from it.
+func TestEntrypointDeclaresRuntimeImage(t *testing.T) {
+	for _, target := range []string{"", "v1.0.0-beta.18", "v1.0.0-beta.24", platformFloor} {
+		for _, daggerGo := range []bool{false, true} {
+			source, err := (&v2Module{daggerGo: daggerGo, targetVersion: target}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+			require.NoError(t, err)
+			text := string(source)
+			require.Contains(t, text, runtimeImageMember)
+			require.Contains(t, text, "    let result = runtimeImage(defaultPlatform)\n      .withFile(")
+			require.Equal(t, 1, strings.Count(text, "alpine:3.22"), "the calls' image is named once, by runtimeImage")
+		}
+	}
+}
+
 // A module that targets platformFloor or later builds its process for a
 // platform it is given and declares the binary for it, so that an engine
 // image of another platform can ship it; its prebuild takes the platform.
@@ -414,7 +434,8 @@ func TestEntrypointDeclaresPlatformFromFloor(t *testing.T) {
 		older, err := (&v2Module{daggerGo: daggerGo, targetVersion: "v1.0.0-beta.24"}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
 		require.NoError(t, err)
 		require.Contains(t, string(older), "  pub prebuild: File! {\n    dispatch\n  }")
-		require.NotContains(t, string(older), "platform")
+		// Only the runtime image takes a platform below the floor.
+		require.NotContains(t, strings.ReplaceAll(string(older), runtimeImageMember, ""), "platform")
 
 		source, err := (&v2Module{daggerGo: daggerGo, targetVersion: platformFloor}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
 		require.NoError(t, err)
