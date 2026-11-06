@@ -179,10 +179,29 @@ func TestDangFunctionDefaultValueIsJSONText(t *testing.T) {
 			defaultValue:    "alpine:3.21",
 			hasDefaultValue: true,
 		}},
-	})
+	}, false)
 	require.NoError(t, err)
 	require.Contains(t, source, `defaultValue: ("\"alpine:3.21\"" :: Dagger.JSON!)`)
 	require.NotContains(t, source, "JSON.decode")
+}
+
+// From identifierCasingFloor on, the view names FunctionCachePolicy's
+// members by their values, and earlier views by their old names; no view
+// has both, so the entrypoint must use the one its target's view serves.
+func TestDangFunctionCachePolicyFollowsTargetCasing(t *testing.T) {
+	for _, c := range []struct {
+		target, never, session, ttl string
+	}{
+		{"v1.0.0-beta.24", "FunctionCachePolicy.Never)", "FunctionCachePolicy.PerSession)", "FunctionCachePolicy.Default, timeToLive:"},
+		{"v1.0.0-beta.26", "FunctionCachePolicy.NEVER)", "FunctionCachePolicy.PER_SESSION)", "FunctionCachePolicy.DEFAULT, timeToLive:"},
+	} {
+		cased := (&v2Module{targetVersion: c.target}).casesIdentifiers()
+		for policy, want := range map[string]string{"never": c.never, "session": c.session, "1h": c.ttl} {
+			source, err := renderDangFunction(&funcTypeSpec{name: "Get", cachePolicy: policy}, cased)
+			require.NoError(t, err)
+			require.Contains(t, source, ".withCachePolicy("+want, "%s %s", c.target, policy)
+		}
+	}
 }
 
 func TestDispatchForObjectWithoutFunctions(t *testing.T) {

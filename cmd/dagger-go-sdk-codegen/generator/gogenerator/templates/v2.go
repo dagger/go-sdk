@@ -54,6 +54,19 @@ const sourcesFloor = "v1.0.0-beta.18"
 // then ship (not yet released).
 const platformFloor = "v1.0.0-beta.26"
 
+// identifierCasingFloor is the first Dagger release whose view names enum
+// members by their values, FunctionCachePolicy.PER_SESSION rather than
+// PerSession; no view has both. The entrypoint of a module that targets it
+// is served at that view (not yet released).
+const identifierCasingFloor = "v1.0.0-beta.26"
+
+// casesIdentifiers reports whether the entrypoint names enum members as the
+// view of identifierCasingFloor and later does: whether the module targets
+// identifierCasingFloor or later.
+func (mod *v2Module) casesIdentifiers() bool {
+	return mod.targetVersion != "" && semver.Compare(mod.targetVersion, identifierCasingFloor) >= 0
+}
+
 // declaresPlatform reports whether the entrypoint builds its process's
 // binary for a platform it is given and declares it for that platform:
 // whether the module targets platformFloor or later.
@@ -349,7 +362,7 @@ func slicesSortStrings(values []string) {
 func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage string, packageNames ...string) ([]byte, error) {
 	var defs []string
 	for _, obj := range mod.objects {
-		def, err := renderDangObject(obj)
+		def, err := renderDangObject(obj, mod.casesIdentifiers())
 		if err != nil {
 			return nil, err
 		}
@@ -361,7 +374,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 		defs = append(defs, def)
 	}
 	for _, iface := range mod.interfaces {
-		def, err := renderDangInterface(iface)
+		def, err := renderDangInterface(iface, mod.casesIdentifiers())
 		if err != nil {
 			return nil, err
 		}
@@ -526,13 +539,13 @@ func dangStringList(values []string) string {
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
-func renderDangObject(spec *parsedObjectType) (string, error) {
+func renderDangObject(spec *parsedObjectType, cased bool) (string, error) {
 	base := "typeDef.withObject(" + strings.Join(append([]string{strconv.Quote(spec.name)}, objectOpts(spec.doc, spec.sourceMap, spec.deprecated)...), ", ") + ")"
 	if spec.isCollection {
 		base += "\n  .withCollection"
 	}
 	for _, method := range spec.methods {
-		fn, err := renderDangFunction(method)
+		fn, err := renderDangFunction(method, cased)
 		if err != nil {
 			return "", err
 		}
@@ -560,7 +573,7 @@ func renderDangObject(spec *parsedObjectType) (string, error) {
 		}
 	}
 	if spec.constructor != nil {
-		fn, err := renderDangFunctionNamed(spec.constructor, "")
+		fn, err := renderDangFunctionNamed(spec.constructor, "", cased)
 		if err != nil {
 			return "", err
 		}
@@ -569,12 +582,12 @@ func renderDangObject(spec *parsedObjectType) (string, error) {
 	return base, nil
 }
 
-func renderDangInterface(spec *parsedIfaceType) (string, error) {
+func renderDangInterface(spec *parsedIfaceType, cased bool) (string, error) {
 	args := []string{strconv.Quote(spec.name)}
 	args = append(args, objectOpts(spec.doc, spec.sourceMap, nil)...)
 	base := "typeDef.withInterface(" + strings.Join(args, ", ") + ")"
 	for _, method := range spec.methods {
-		fn, err := renderDangFunction(method)
+		fn, err := renderDangFunction(method, cased)
 		if err != nil {
 			return "", err
 		}
@@ -606,11 +619,13 @@ func renderDangEnum(spec *parsedEnumType) (string, error) {
 	return base, nil
 }
 
-func renderDangFunction(spec *funcTypeSpec) (string, error) {
-	return renderDangFunctionNamed(spec, spec.name)
+// renderDangFunction renders a function's definition. cased names enum
+// members as the view of identifierCasingFloor and later does.
+func renderDangFunction(spec *funcTypeSpec, cased bool) (string, error) {
+	return renderDangFunctionNamed(spec, spec.name, cased)
 }
 
-func renderDangFunctionNamed(spec *funcTypeSpec, name string) (string, error) {
+func renderDangFunctionNamed(spec *funcTypeSpec, name string, cased bool) (string, error) {
 	returnType := "typeDef.withKind(TypeDefKind.VOID_KIND).withOptional(true)"
 	if spec.returnSpec != nil {
 		var err error
@@ -623,14 +638,18 @@ func renderDangFunctionNamed(spec *funcTypeSpec, name string) (string, error) {
 	if spec.doc != "" {
 		base += "\n  .withDescription(" + strconv.Quote(strings.TrimSpace(spec.doc)) + ")"
 	}
+	never, perSession, defaultPolicy := "Never", "PerSession", "Default"
+	if cased {
+		never, perSession, defaultPolicy = "NEVER", "PER_SESSION", "DEFAULT"
+	}
 	switch spec.cachePolicy {
 	case "never":
-		base += "\n  .withCachePolicy(FunctionCachePolicy.Never)"
+		base += "\n  .withCachePolicy(FunctionCachePolicy." + never + ")"
 	case "session":
-		base += "\n  .withCachePolicy(FunctionCachePolicy.PerSession)"
+		base += "\n  .withCachePolicy(FunctionCachePolicy." + perSession + ")"
 	case "":
 	default:
-		base += "\n  .withCachePolicy(FunctionCachePolicy.Default, timeToLive: " + strconv.Quote(strings.TrimSpace(spec.cachePolicy)) + ")"
+		base += "\n  .withCachePolicy(FunctionCachePolicy." + defaultPolicy + ", timeToLive: " + strconv.Quote(strings.TrimSpace(spec.cachePolicy)) + ")"
 	}
 	if spec.sourceMap != nil {
 		base += "\n  .withSourceMap(" + renderDangSourceMap(spec.sourceMap) + ")"
