@@ -83,6 +83,9 @@ func TestSdkTargetRelease(t *testing.T) {
 	for _, c := range []struct{ setting, want string }{
 		{"", "v1.0.0-beta.24"},
 		{"v1.0.0-beta.24", "v1.0.0-beta.24"},
+		// The release in flight can be pinned before the default moves to it.
+		{"v1.0.0-beta.26", "v1.0.0-beta.26"},
+		{"v1.0.0-beta.25", "v1.0.0-beta.25"},
 		{"1.0.0-beta.24+abc", "v1.0.0-beta.24"},
 		{"v1.0.0-beta.23", "v1.0.0-beta.23"},
 		{"v1.0.0-beta.21", "v1.0.0-beta.21"},
@@ -100,10 +103,10 @@ func TestSdkTargetReleaseAsserts(t *testing.T) {
 }
 
 func TestSdkTargetReleaseRefusals(t *testing.T) {
-	const fix = "Set targetVersion between v1.0.0-beta.18 and v1.0.0-beta.24 in the scope's settings in dagger.toml, or remove it"
+	const fix = "Set targetVersion between v1.0.0-beta.18 and v1.0.0-beta.26 in the scope's settings in dagger.toml, or remove it"
 	const below = `module "probe" pins targetVersion v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below v1.0.0-beta.18, the oldest engine the generated entrypoint loads on. ` + fix
 	above := func(v string) string {
-		return `module "probe" pins targetVersion ` + v + ", which this release of the Go SDK cannot generate for: it targets v1.0.0-beta.24 at most. " + fix + ", or install the SDK release built for " + v
+		return `module "probe" pins targetVersion ` + v + ", which this release of the Go SDK cannot generate for: it targets v1.0.0-beta.26 at most. " + fix + ", or install the SDK release built for " + v
 	}
 	malformed := func(v string) string {
 		return `module "probe" pins targetVersion "` + v + `", which is not a Dagger release such as v1.0.0-beta.24. ` + fix
@@ -111,7 +114,7 @@ func TestSdkTargetReleaseRefusals(t *testing.T) {
 	for _, c := range []struct{ setting, want string }{
 		{"v1.0.0-beta.17", below},
 		{"1.0.0-beta.17+abc", below},
-		{"v1.0.0-beta.25", above("v1.0.0-beta.25")},
+		{"v1.0.0-beta.27", above("v1.0.0-beta.27")},
 		{"99.0.0", above("v99.0.0")},
 		{"v1.0.0", above("v1.0.0")},
 		{"latest", malformed("latest")},

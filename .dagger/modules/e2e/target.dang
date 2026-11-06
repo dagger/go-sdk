@@ -12,6 +12,9 @@ type TargetChecks {
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.24"
 
+  """The newest release a scope can pin: newestTarget in versions.toml."""
+  let newestTarget: String! = "v1.0.0-beta.26"
+
   let pins(ws: Workspace!, release: String!): Boolean! {
     ws.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
   }
@@ -352,11 +355,11 @@ type TargetChecks {
     let scopePath = outputRoot + "/" + name
     let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
     let subject = "module " + JSON.encode(name) + " pins targetVersion "
-    let fix = "Set targetVersion between " + floor + " and " + sdkTarget + " in the scope's settings in dagger.toml, or remove it"
+    let fix = "Set targetVersion between " + floor + " and " + newestTarget + " in the scope's settings in dagger.toml, or remove it"
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.17"), input, name,
       subject + "v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below " + floor + ", the oldest engine the generated entrypoint loads on. " + fix)
-    let above = ", which this release of the Go SDK cannot generate for: it targets " + sdkTarget + " at most. " + fix + ", or install the SDK release built for "
-    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.25"), input, name, subject + "v1.0.0-beta.25" + above + "v1.0.0-beta.25")
+    let above = ", which this release of the Go SDK cannot generate for: it targets " + newestTarget + " at most. " + fix + ", or install the SDK release built for "
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.27"), input, name, subject + "v1.0.0-beta.27" + above + "v1.0.0-beta.27")
     expectRefusal(goSdk(targetVersion: "99.0.0"), input, name, subject + "v99.0.0" + above + "v99.0.0")
     let malformed = ", which is not a Dagger release such as " + sdkTarget + ". " + fix
     expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)

@@ -114,8 +114,11 @@ Dependency clients still read the running engine's schema.
 An engine update can change a dependency client if the engine's view of
 that dependency changes.
 An SDK update changes the targeted release unless `targetVersion` pins it.
-The `targetVersion` setting pins an older release, between v1.0.0-beta.18
-and the SDK's release; generation refuses a setting outside that range.
+The `targetVersion` setting pins a release between v1.0.0-beta.18 and
+v1.0.0-beta.26, the release in flight; generation refuses a setting outside
+that range.
+A release after the SDK's own generates on an engine of that release, and
+with unified clients needs its `dagger.io/dagger` published or replaced.
 An engine older than the targeted release is not refused: a call to a
 function that engine lacks fails when the module runs.
 

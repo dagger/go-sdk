@@ -7,10 +7,11 @@ type GoSdk {
   the v prefix and build metadata are optional. Empty means
   the release this Go SDK is built for, v1.0.0-beta.24. Generation accepts
   a release from v1.0.0-beta.18, the oldest engine the entrypoint loads on,
-  up to the SDK's release. A module with a Dang entrypoint and unified
-  clients pins dagger.io/dagger to exactly the targeted release. A Dang
-  entrypoint with embedded bindings targets the same release: its bindings
-  come from that release's schema, and its entrypoint declares it.
+  up to v1.0.0-beta.26, the release in flight. A module with a Dang
+  entrypoint and unified clients pins dagger.io/dagger to exactly the
+  targeted release. A Dang entrypoint with embedded bindings targets the
+  same release: its bindings come from that release's schema, and its
+  entrypoint declares it.
   A generated entrypoint declares the release twice: in
   DAGGER_CLIENT_VERSION for the module process, and as the Dagger import
   of the dang.toml beside it.
@@ -322,7 +323,7 @@ type GoSdk {
   """
   let targetRelease(subject: String!, versions: Versions!): String! {
     if (targetVersion == "") { return versions.defaultTarget }
-    let fix = "Set targetVersion between " + versions.sourcesFloor + " and " + versions.defaultTarget + " in the scope's settings in dagger.toml, or remove it"
+    let fix = "Set targetVersion between " + versions.sourcesFloor + " and " + versions.newestTarget + " in the scope's settings in dagger.toml, or remove it"
     if (isRelease(targetVersion) == false) {
       raise subject + " pins targetVersion " + JSON.encode(targetVersion) + ", which is not a Dagger release such as " + versions.defaultTarget + ". " + fix
     }
@@ -330,8 +331,8 @@ type GoSdk {
     if (releasePrecedes(target, versions.sourcesFloor)) {
       raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it is below " + versions.sourcesFloor + ", the oldest engine the generated entrypoint loads on. " + fix
     }
-    if (releasePrecedes(versions.defaultTarget, target)) {
-      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it targets " + versions.defaultTarget + " at most. " + fix + ", or install the SDK release built for " + target
+    if (releasePrecedes(versions.newestTarget, target)) {
+      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it targets " + versions.newestTarget + " at most. " + fix + ", or install the SDK release built for " + target
     }
     target
   }
@@ -1188,6 +1189,14 @@ type Versions {
   release; a test checks that the library release exists.
   """
   pub defaultTarget: String!
+  """
+  The newest Dagger release a scope can pin with targetVersion: the release
+  in flight, which a module can target before defaultTarget moves to it. It
+  is defaultTarget or later. A module that pins a release after
+  defaultTarget generates on an engine of that release, and with unified
+  clients needs that release's dagger.io/dagger published or replaced.
+  """
+  pub newestTarget: String!
   """
   The dagger/go module this Go SDK release builds generated entrypoint
   modules with (daggerGo), by its address with a pinned commit.
