@@ -493,3 +493,16 @@ func TestReadIncludesWarnsAboutRequiredReplaceWithoutImport(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalReplaceInputsPreservesPositionsAndRequirements(t *testing.T) {
+	root := t.TempDir()
+	writeModuleFiles(t, root, map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\nreplace example.com/optional v0.1.0 => ../optional\n",
+	})
+	targets, err := LocalReplaceInputs(root)
+	require.NoError(t, err)
+	require.Equal(t, []LocalReplaceTarget{
+		{Path: "../lib", Position: "go.mod:7", Required: true},
+		{Path: "../optional", Position: "go.mod:8", Required: false},
+	}, targets)
+}

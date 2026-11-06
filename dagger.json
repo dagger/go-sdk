@@ -7,7 +7,7 @@
   "dependencies": [
     {
       "name": "sdk-helpers",
-      "source": "dagger.io/sdk/helpers@v1.0.8"
+      "source": "dagger.io/sdk/helpers@7aff2ba04376b0aab33ec859bb358599c7aea1d9"
     }
   ]
 }
