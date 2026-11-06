@@ -1,7 +1,7 @@
 """
 Generation must not upload ignored files, including the destination baseline
-when generated files are merged back. The nested CLI trace rejects uploads
-of the ignored cache even if the final files would be unchanged.
+when generated files are merged back. A nested CLI rejects uploads of the
+ignored cache even if the final files would be unchanged.
 """
 type IgnoreChecks {
   let client(ws: Workspace!, tree: Directory!): Container! {
@@ -11,6 +11,7 @@ type IgnoreChecks {
       .withFile("/usr/local/bin/dagger", container.from(image).file("/usr/local/bin/dagger"))
       .withFile("/check-uploads.py", currentModule.source.file("check_uploads.py"))
       .withDirectory("/repo/.sdk-source", ws.directory("/", exclude: [".git", ".dagger"], gitignore: true))
+      .withDirectory("/repo/.sdk-source/.upload-driver", currentModule.source.directory("upload-driver"))
       .withDirectory("/repo", tree)
       .withNewFile("/repo/gitignore-upload-poison/keep.txt", "keep\n")
       .withNewFile("/repo/keep.txt", "user file\n")
@@ -19,8 +20,19 @@ type IgnoreChecks {
       .withExec(["git", "init", "--quiet"])
   }
 
-  let generate(client: Container!): Container! {
-    client.withExec(["python3", "/check-uploads.py", "dagger", "generate", "go-sdk", "-y"], experimentalPrivilegedNesting: true)
+  let command(args: [String!]!): [String!]! {
+    # Before beta.25, provider loading itself uploads ignored files. Call the
+    # SDK directly there; newer engines exercise the full generate command.
+    # Keep the CLI default host Workspace: --ws . uploads a Directory value.
+    if (version.containsMatch(Regexp("^v1[.]0[.]0-beta[.](1[89]|2[0-4])([+]|$)"))) {
+      ["dagger", "-m", ".sdk-source/.upload-driver", "call", "generate"] + args + ["export", "--path", "/repo"]
+    } else {
+      ["dagger", "generate", "go-sdk", "-y"]
+    }
+  }
+
+  let generate(client: Container!, args: [String!]!): Container! {
+    client.withExec(["python3", "/check-uploads.py"] + command(args), experimentalPrivilegedNesting: true)
   }
 
   let assertPreserved(client: Container!): Void {
@@ -43,7 +55,7 @@ type IgnoreChecks {
       let tree = directory
         .withNewFile("dagger.toml", config(".", fields))
         .withNewFile(".gitignore", "gitignore-upload-poison/\n")
-      let generated = generate(client(ws, tree))
+      let generated = generate(client(ws, tree), ["--is-module=true", "--name", "ignored-init", "--entrypoint=" + JSON.encode(entrypoint)])
         .withExec(["test", "-f", "main.go"])
         .withExec(["test", "-f", "dagger.gen.go"])
         .withExec(["test", "-f", "dagger-module.toml"])
@@ -63,10 +75,10 @@ type IgnoreChecks {
       .withNewFile("ignored.go", "this ignored Go file does not parse\n")
       .withNewFile("dep/dagger-module.toml", "name = \"dep\"\n[runtime]\nsource = \"dang\"\n")
       .withNewFile("dep/main.dang", "type Dep { hello: String! { \"hello\" } }\n")
-    let generated = generate(client(ws, tree))
+    let generated = generate(client(ws, tree), ["--clients", "./dep"])
       .withExec(["test", "-f", "internal/dagger/clients/dep/dagger.gen.go"])
     assertPreserved(generated)
-    assertPreserved(generate(generated))
+    assertPreserved(generate(generated, ["--clients", "./dep"]))
     null
   }
 
@@ -81,11 +93,11 @@ type IgnoreChecks {
       .withNewFile("dep/main.dang", "type Dep { hello: String! { \"hello\" } }\n")
       .withNewFile("other/dagger-module.toml", "name = \"other\"\n[runtime]\nsource = \"dang\"\n")
       .withNewFile("other/main.dang", "type Other { hello: String! { \"hello\" } }\n")
-    let generated = generate(client(ws, tree))
+    let generated = generate(client(ws, tree), ["--clients", "./dep,./other"])
       .withNewFile("/repo/.gitignore", "gitignore-upload-poison/\ninternal/dagger/clients/\n")
       .withNewFile("/repo/internal/dagger/clients/dep/user.txt", "keep this client file\n")
-    let repeated = generate(generated)
-    let removed = generate(repeated.withNewFile("/repo/dagger.toml", config(".", "clients = [\"./other\"]\n")))
+    let repeated = generate(generated, ["--clients", "./dep,./other"])
+    let removed = generate(repeated.withNewFile("/repo/dagger.toml", config(".", "clients = [\"./other\"]\n")), ["--clients", "./other"])
       .withExec(["test", "!", "-e", "internal/dagger/clients/dep/dagger.gen.go"])
       .withExec(["test", "-f", "internal/dagger/clients/other/dagger.gen.go"])
     assert("pruning an ignored client deleted a user file") {
@@ -94,14 +106,14 @@ type IgnoreChecks {
     assertPreserved(removed)
     let invalid = removed
       .withNewFile("/repo/internal/dagger/clients/other/.dagger-generated.json", "{\"version\":1,\"files\":{\"../../outside.go\":\"" + "0000000000000000000000000000000000000000000000000000000000000000" + "\"}}")
-      .withExec(["dagger", "generate", "go-sdk", "-y"], experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+      .withExec(command(["--clients", "./other"]), experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
     assert("an ownership record could read outside its generated directory") {
       invalid.exitCode != 0 and invalid.stderr.contains("invalid generated ownership entry")
     }
     let untracked = client(ws, tree
       .withNewFile(".gitignore", "gitignore-upload-poison/\ninternal/dagger/clients/\n")
       .withNewFile("internal/dagger/clients/dep/dagger.gen.go", "package user\n"))
-      .withExec(["dagger", "generate", "go-sdk", "-y"], experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+      .withExec(command(["--clients", "./dep,./other"]), experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
     assert("generation overwrote an ignored user file without an ownership record") {
       untracked.exitCode != 0 and untracked.stderr.contains("contains user changes; refusing to overwrite it") and
         untracked.file("/repo/internal/dagger/clients/dep/dagger.gen.go").contents == "package user\n"
@@ -117,16 +129,16 @@ type IgnoreChecks {
       .withNewFile("main.go", "package main\n\ntype IgnoredApp struct{}\n\nfunc (*IgnoredApp) Hello() string { return \"hello\" }\n")
       .withNewFile(".gitignore", "gitignore-upload-poison/\nignored.go\n")
       .withNewFile("ignored.go", "this ignored Go file does not parse\n")
-    let generated = generate(client(ws, tree))
+    let generated = generate(client(ws, tree), ["--is-module=true"])
       .withExec(["test", "-f", "internal/dagger/entrypoint/main.dang"])
       .withExec(["test", "-f", "dagger.gen.go"])
     assertPreserved(generated)
-    assertPreserved(generate(generated))
+    assertPreserved(generate(generated, ["--is-module=true"]))
     let edited = generated.file("/repo/dagger.gen.go").contents + "\n// user edit\n"
     let refused = generated
       .withNewFile("/repo/.gitignore", "gitignore-upload-poison/\nignored.go\n/dagger.gen.go\n/.dagger-generated.json\n/internal/dagger/\n/cmd/\n")
       .withNewFile("/repo/dagger.gen.go", edited)
-      .withExec(["dagger", "generate", "go-sdk", "-y"], experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+      .withExec(command(["--is-module=true"]), experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
     assert("generation overwrote an ignored generated file with user changes") {
       refused.exitCode != 0 and refused.stderr.contains("contains user changes; refusing to overwrite it") and
         refused.file("/repo/dagger.gen.go").contents == edited
@@ -145,8 +157,86 @@ type IgnoreChecks {
       .withNewFile("lib/gitignore-upload-poison/ignored.go", "this ignored Go file does not parse\n")
       .withNewFile(".gitignore", "gitignore-upload-poison/\n")
     let input = client(ws, tree)
-    let generated = generate(input).withExec(["test", "-f", "app/internal/dagger/entrypoint/main.dang"])
+    let generated = generate(input, ["--scope", "app", "--is-module=true"]).withExec(["test", "-f", "app/internal/dagger/entrypoint/main.dang"])
     assertPreserved(generated)
+    null
+  }
+
+  let committed(tree: Directory!): Workspace! {
+    let repository = container.from("alpine:3.22").withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
+      .withDirectory("/srv/repo", tree)
+      .withWorkdir("/srv/repo")
+      .withExec(["git", "init", "-q", "-b", "main"])
+      .withExec(["git", "config", "user.name", "Ignore fixture"])
+      .withExec(["git", "config", "user.email", "fixture@example.com"])
+      .withExec(["git", "add", "-f", "."])
+      .withExec(["git", "commit", "-q", "-m", "fixture"])
+      .withExec(["git", "clone", "-q", "--bare", ".", "/srv/repo.git"])
+    let revision = repository.withExec(["git", "rev-parse", "HEAD"]).stdout.trimSpace
+    let server = repository.withExposedPort(9418)
+      .withDefaultArgs(["git", "daemon", "--export-all", "--base-path=/srv", "/srv"])
+      .asService
+    git("git://" + server.hostname + "/repo.git", experimentalServiceHost: server).ref(revision).asWorkspace
+  }
+
+  """Committed source remains part of generation even when ignore rules match it."""
+  trackedIgnoredSourceCheck(ws: Workspace!): Void @check {
+    let source = directory
+      .withNewFile(".gitignore", "main.go\n")
+      .withNewFile("main.go", "package main\n\nimport \"rsc.io/quote\"\n\nfunc main() { println(quote.Hello()) }\n")
+      .withNewFile("go.mod", "module example.com/review\n\ngo 1.26.1\n\nrequire rsc.io/quote v1.5.2\n")
+    let generated = goSdk.generateScope(ws: committed(source), isModule: false, name: "review", clients: [ws.moduleSource("/.dagger/modules/e2e/fixtures/manifest/dep")])
+    assert("generation dropped the dependency of a tracked source file") { generated.file("go.mod").contents.contains("rsc.io/quote") }
+    null
+  }
+
+  """An explicit source tree keeps the dependencies its supplied source needs."""
+  suppliedIgnoredSourceCheck(ws: Workspace!): Void @check {
+    let source = directory
+      .withNewFile(".gitignore", "main.go\n")
+      .withNewFile("main.go", "package main\n\nimport \"rsc.io/quote\"\n\nfunc main() { println(quote.Hello()) }\n")
+      .withNewFile("go.mod", "module example.com/review\n\ngo 1.26.1\n\nrequire rsc.io/quote v1.5.2\n")
+    let generated = goSdk.generateScope(ws: source.asWorkspace, isModule: false, name: "review", clients: [ws.moduleSource("/.dagger/modules/e2e/fixtures/manifest/dep")])
+    assert("generation dropped a dependency still imported by supplied source") { generated.file("go.mod").contents.contains("rsc.io/quote") }
+    null
+  }
+
+  """Ownership paths cannot reintroduce Git metadata, including nested .git directories."""
+  gitMetadataOwnershipCheck: Void @check {
+    [".git/config", "nested/.git/config", ".git"].each { path =>
+      let source = directory
+        .withNewFile("go.mod", "module example.com/git-metadata\n\ngo 1.26.1\n")
+        .withNewFile("main.go", "package main\n\ntype GitMetadata struct{}\n")
+        .withNewFile(path, "synthetic Git metadata\n")
+        .withNewFile(".dagger-generated.json", "{\"version\":1,\"files\":{" + JSON.encode(path) + ":\"0000000000000000000000000000000000000000000000000000000000000000\"}}")
+      let refused = goSdk(dangEntrypoint: true, unifiedClients: false)
+        .generateScope(ws: source.asWorkspace, isModule: true, name: "git-metadata", clients: [])
+        .file("dagger.gen.go").contents rescue { err: Error => err.message }
+      assert("ownership accepted Git metadata: " + path + ": " + refused) {
+        refused.contains("invalid generated ownership entry " + JSON.encode(path))
+      }
+      null
+    }
+    null
+  }
+
+  """Ignored replacement sources in explicit trees and Git commits remain build inputs."""
+  suppliedIgnoredReplacementCheck: Void @check {
+    let source = directory
+      .withNewFile(".gitignore", "lib/\n")
+      .withNewFile("app/go.mod", "module example.com/ignored-app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n")
+      .withNewFile("app/main.go", "package main\n\nimport \"example.com/lib/greet\"\n\ntype IgnoredApp struct{}\n\nfunc (*IgnoredApp) Hello() string { return greet.Hello() }\n")
+      .withNewFile("lib/go.mod", "module example.com/lib\n\ngo 1.26.1\n")
+      .withNewFile("lib/greet/greet.go", "package greet\n\nfunc Hello() string { return \"hello\" }\n")
+    [source.asWorkspace, committed(source)].each { input =>
+      let generated = goSdk(dangEntrypoint: true, unifiedClients: false)
+        .generateScope(ws: input.withWorkdir("app"), isModule: true, name: "ignored-app", clients: [])
+      assert("generation lost the ignored replacement's import") { generated.file("go.mod").contents.contains("example.com/lib") }
+      assert("generation did not produce an entrypoint") { generated.file("internal/dagger/entrypoint/main.dang").contents != "" }
+      assert("generation changed supplied dependency source") { generated.file("/lib/greet/greet.go").contents == source.file("lib/greet/greet.go").contents }
+      null
+    }
     null
   }
 }

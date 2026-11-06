@@ -27,6 +27,26 @@ type EngineE2e {
     ignoredCheck(ws, "ignores:ignored-generated-check")
   }
 
+  """A supplied value workspace keeps source matching .gitignore."""
+  ignoredSuppliedSourceCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:supplied-ignored-source-check")
+  }
+
+  """A Git workspace keeps committed source matching .gitignore."""
+  ignoredTrackedSourceCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:tracked-ignored-source-check")
+  }
+
+  """Replacement discovery keeps supplied and committed ignored dependencies."""
+  ignoredSuppliedReplacementCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:supplied-ignored-replacement-check")
+  }
+
+  """Ownership records cannot import Git metadata."""
+  ignoredGitMetadataOwnershipCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:git-metadata-ownership-check")
+  }
+
   let ignoredCheck(ws: Workspace!, name: String!): Void {
     let client = sdkClient(ws, engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase), engineCommit)
     client.withExec([
