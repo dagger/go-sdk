@@ -668,23 +668,24 @@ type EntrypointChecks {
   goImageTagCheck(ws: Workspace!): Void @check {
     let name = "go-image-tag"
     let scopePath = outputRoot + "/" + name
-    # The digest is read on another platform, which the engine keeps apart,
-    # so the session has not resolved golang:1.27-alpine before generating.
-    let digest = container(platform: "linux/s390x").from("golang:1.27-alpine").imageRef.split("@")[1] ?? ""
+    # The e2e checks share a session, so the module declares a Go version no
+    # other check uses: the session resolves golang:1.27.0-alpine only here.
+    # Its digest is read on another platform, which the engine keeps apart.
+    let digest = container(platform: "linux/s390x").from("golang:1.27.0-alpine").imageRef.split("@")[1] ?? ""
     let other = "docker.io/library/golang:another-tag@" + digest
     assert("the image's other tag did not resolve") {
       container.from(other).imageRef == other
     }
     let input = ws.withWorkdir(scopePath)
-      .withNewFile("go.mod", "module example.com/go-image-tag\n\ngo 1.27\n")
+      .withNewFile("go.mod", "module example.com/go-image-tag\n\ngo 1.27.0\n")
       .withNewFile("dagger-module.toml", "name = 'go-image-tag'\n[runtime]\nsource = 'go'\n")
       .withNewFile("main.go", "package go_image_tag\n\ntype GoImageTag struct{}\n\nfunc (m *GoImageTag) Echo(value string) string { return value }\n")
     let generated = goSdk(dangEntrypoint: true).generateScope(
       ws: input, isModule: true, name: name, clients: [],
     )
     let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
-    assert("the entrypoint does not name golang:1.27-alpine by its digest") {
-      entrypoint.contains(".from(\"golang:1.27-alpine@" + digest + "\")")
+    assert("the entrypoint does not name golang:1.27.0-alpine by its digest") {
+      entrypoint.contains(".from(\"golang:1.27.0-alpine@" + digest + "\")")
     }
     null
   }
