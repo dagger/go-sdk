@@ -158,6 +158,42 @@ type EntrypointChecks {
   }
 
   """
+  generated-imports.txt lists exactly the packages outside the standard
+  library that a new module's generated code imports. Engines pre-warm the
+  builds of the packages it lists, so a package the generator adds or drops
+  must be added to it or dropped from it too.
+  """
+  generatedImportsCheck(ws: Workspace!): Void @check {
+    let scopePath = outputRoot + "/generated-imports"
+    let generated = goSdk.generateScope(
+      ws: ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath),
+      isModule: true,
+      name: "generated-imports",
+      clients: [],
+    )
+    # main.go is the starter, the author's code: every other Go file is
+    # generated. A package's imports are read from its files without building
+    # it, so the root package without its starter still lists them.
+    let compared = container.from("golang:1.27-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withDirectory("/module", generated.directory(".").withoutFile("main.go"))
+      .withFile("/listed.txt", ws.file("/generated-imports.txt"))
+      .withWorkdir("/module")
+      .withExec(["sh", "-ec",
+        "mod=$(go list -m)\n" +
+        "go list -e -f '{{join .Imports \"\\n\"}}' ./... | sort -u > /imports\n" +
+        "go list std | sort -u > /std\n" +
+        "comm -23 /imports /std | grep -v -e \"^$mod\\$\" -e \"^$mod/\" > /generated || true\n" +
+        "grep -v -e '^#' -e '^$' /listed.txt | sort -u > /listed\n" +
+        "diff -u /listed /generated\n",
+      ], expect: ReturnType.ANY)
+    assert("generated-imports.txt (-) differs from what a new module's generated code imports (+):\n" + compared.stdout + compared.stderr) {
+      compared.exitCode == 0
+    }
+    null
+  }
+
+  """
   An existing Go runtime module moves to a Dang entrypoint. The entrypoint
   describes its types, and the dispatch command serves the requests the
   entrypoint sends, in engine mode and in developer mode.
