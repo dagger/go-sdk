@@ -1115,7 +1115,7 @@ func writeDaggerGoDispatch(b *bytes.Buffer, moduleSubpath, buildTarget string, d
 	if declares {
 		// dagger/go compiles for any platform with the engine's toolchain,
 		// and declares the binary as made for it.
-		b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).platforms.platform(name: `${platform}`.split(\"/\").takeFirst(2).join(\"/\")).binary(ws)\n")
+		b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).platforms.get(`${platform}`.split(\"/\").takeFirst(2).join(\"/\")).binary(ws)\n")
 	} else {
 		b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).binary(ws)\n")
 	}

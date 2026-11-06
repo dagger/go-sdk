@@ -444,7 +444,7 @@ func TestEntrypointDeclaresPlatformFromFloor(t *testing.T) {
 		require.Contains(t, text, "  pub prebuild(platform: Platform): File! {\n    dispatch(platform ?? defaultPlatform)\n  }")
 		require.Contains(t, text, "    let binary = dispatch(defaultPlatform).sync\n")
 		if daggerGo {
-			require.Contains(t, text, ".platforms.platform(name: `${platform}`.split(\"/\").takeFirst(2).join(\"/\")).binary(ws)")
+			require.Contains(t, text, ".platforms.get(`${platform}`.split(\"/\").takeFirst(2).join(\"/\")).binary(ws)")
 		} else {
 			require.Contains(t, text, `.withEnvVariable("GOARCH", target.takeFirst(2).takeLast(1).join(""))`)
 			require.Contains(t, text, "      .directory(\"/tmp/dispatch\")\n      .withPlatform(platform: platform)\n      .file(\"dispatch\")\n")
