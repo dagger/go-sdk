@@ -162,6 +162,7 @@ func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
 		"IsSharedCoreObject":      funcs.isSharedCoreObject,
 		"IsSharedCoreObjectType":  funcs.isSharedCoreObjectType,
 		"IsSharedCoreHandle":      funcs.isSharedCoreHandle,
+		"KeepsLoadedIDs":          funcs.keepsLoadedIDs,
 		"IsCoreLibrary":           funcs.isCoreLibrary,
 		"IsUnifiedClient":         funcs.isUnifiedClient,
 		"CoreConstructorName":     funcs.coreConstructorName,

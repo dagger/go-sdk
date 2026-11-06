@@ -178,8 +178,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		GlobalClient:  cfg.GlobalClient,
 		ClientConfig:  &generator.ClientGeneratorConfig{},
 		ModuleConfig: &generator.ModuleGeneratorConfig{
-			ModuleName: cfg.ModuleName,
-			LibVersion: cfg.DaggerVersion,
+			ModuleName:    cfg.ModuleName,
+			LibVersion:    cfg.DaggerVersion,
+			TargetVersion: cfg.TargetVersion,
 		},
 	}
 	client := &clientgen.GoGenerator{Config: genCfg}
