@@ -757,6 +757,10 @@ type parseState struct {
 	legacyGoSDKCompat bool
 	objs              []types.Object
 
+	// namer gives the schema names the engine gives the module's
+	// declarations (see moduleNamer).
+	namer moduleNamer
+
 	// dependencyTypes are the dependency client types referenced through
 	// global client aliases. The module's schema has no dependencies, so its
 	// API cannot use them; private fields and function bodies can.
@@ -774,8 +778,10 @@ type parseState struct {
 	daggerObjectIfaceType *types.Interface
 }
 
+// isMainModuleObject reports whether the object named name is the module's
+// main object, as the engine finds it (see moduleNamer.isMainObject).
 func (ps *parseState) isMainModuleObject(name string) bool {
-	return strcase.ToCamel(ps.moduleName) == strcase.ToCamel(name)
+	return ps.namer.isMainObject(name)
 }
 
 // pkgDoc returns the package level documentation comment, if any,

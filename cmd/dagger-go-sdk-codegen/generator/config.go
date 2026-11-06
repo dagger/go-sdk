@@ -1,8 +1,17 @@
 package generator
 
+import "github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
+
 type Config struct {
 	// OutputDir is the path to put the generated code.
 	OutputDir string
+
+	// Names are the names formatted by the engine's naming rules for the
+	// version Go identifiers follow: the generated schema's, or for unified
+	// module bindings, which alias dagger.io/dagger/core, that runtime's.
+	// Generation needs them. The generator formats the schema's names
+	// through them up front, and any other it renders as it's looked up.
+	Names *identifiers.Names
 
 	// PackageImport is the import path for the generated package inside its Go
 	// module.
@@ -49,6 +58,11 @@ type ModuleGeneratorConfig struct {
 
 	// LibVersion is the dagger.io/dagger version used by the generated module.
 	LibVersion string
+
+	// Naming is the engine's naming of the module's own declarations
+	// (identifiers.NameModule, for the names templates.ModuleDeclarations
+	// lists), which its interface bindings and main object follow.
+	Naming identifiers.ModuleNames
 }
 
 // ModuleSourceDependency describes one dependency in a module schema.

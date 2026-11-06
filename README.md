@@ -3,7 +3,7 @@
 > [!NOTE]
 >
 > By default, this version of the Go SDK targets Dagger engine
-> `v1.0.0-beta.25`. See
+> `v1.0.0-beta.26`. See
 > [The release the generated code targets](docs/outside-files.md#the-release-the-generated-code-targets).
 
 A Dagger module for managing Dagger modules and module clients that use the
@@ -20,11 +20,11 @@ generated Dang entrypoint:
 dang = "2.1"
 
 [imports.Dagger]
-dagger = "v1.0.0-beta.25"
+dagger = "v1.0.0-beta.26"
 ```
 
 The `dagger` value is the release the module targets: the SDK's own release,
-v1.0.0-beta.25, or the `targetVersion` setting.
+v1.0.0-beta.26, or the `targetVersion` setting.
 It equals the `DAGGER_CLIENT_VERSION` value in the generated `main.dang`.
 The `dang` value is the Dang language version of the entrypoint source,
 which stays `2.1`.
@@ -99,7 +99,10 @@ module at their own version.
 not merged, make the engine read the `Dagger` version of this file and serve
 the module at that release.
 With those changes, an entrypoint without a Dagger version gets
-v1.0.0-beta.24, so a module that targets any other release needs the file.
+v1.0.0-beta.25, and the identifier-casing cut is in v1.0.0-beta.26.
+The default target of this SDK is at the cut, so the generated file must
+already be present when codegen asks the engine for the module's names.
+Generation writes it before querying that source and publishes the same file.
 Run `dagger generate` to add the file to a module whose entrypoint an older
 SDK generated.
 

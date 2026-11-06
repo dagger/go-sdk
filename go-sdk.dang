@@ -3,21 +3,29 @@ Manage Dagger modules and module clients that use the Go SDK.
 """
 type GoSdk {
   """
-  The Dagger release the generated code targets, such as v1.0.0-beta.20;
-  the v prefix and build metadata are optional. Empty means
-  the release this Go SDK is built for, v1.0.0-beta.25. Generation accepts
-  a release from v1.0.0-beta.18, the oldest engine the entrypoint loads on,
-  up to the SDK's release. A module with a Dang entrypoint and unified
-  clients pins dagger.io/dagger to exactly the targeted release. A Dang
-  entrypoint with embedded bindings targets the same release: its bindings
-  come from that release's schema, and its entrypoint declares it.
+  The Dagger release the module's generated code targets, such as
+  v1.0.0-beta.26; the v prefix and build metadata are optional. Empty means
+  the release this Go SDK is built for, v1.0.0-beta.26. A module with a
+  Dang entrypoint and unified clients pins dagger.io/dagger to exactly the
+  targeted release. An engine update leaves that core library and the
+  module's own bindings unchanged. Dependency clients read the running
+  engine's schema and can change when its view of a dependency changes.
+  An SDK update changes the targeted release unless this setting pins it.
   A generated entrypoint declares the release twice: in
   DAGGER_CLIENT_VERSION for the module process, and as the Dagger import
   of the dang.toml beside it.
-  The Go runtime refuses this setting: a new manifest declares the SDK's
-  release as its engineVersion, and an existing one keeps its own, or gets
-  the running engine's when it declares none. In a scope without a module,
-  it pins the library of the standalone clients. See docs/outside-files.md.
+  A go.mod requirement that needs a later release is refused until the
+  target is raised; a replace directive for dagger.io/dagger is a
+  development exception that generation reports. The setting pins an older
+  release, from v1.0.0-beta.26, the first whose Go library spells its
+  identifiers as the engine names them, up to the SDK's; outside that range,
+  generation refuses it. A Dang entrypoint with embedded bindings targets
+  the same release: its bindings come from that release's schema, and its
+  entrypoint declares it. The Go runtime refuses this setting: a new
+  manifest declares the SDK's release as its engineVersion, and an existing
+  one keeps its own, or gets the running engine's when it declares none.
+  In a scope without a module, it pins the library of the standalone clients
+  the same way, by default for unified clients only.
   """
   targetVersion: String! = ""
 
@@ -56,10 +64,32 @@ type GoSdk {
   dualClients: Boolean! = false
 
   """
-  Unset enables entrypoints for new modules and preserves existing runners.
-  Set true to migrate a supported existing module, or false to keep the Go
-  runtime. A remote entrypoint is replaced even when false. Migrating code
-  that uses the global `dag` also requires globalClient = true.
+  Generate a Dang entrypoint and a static dispatch command, so the engine
+  loads the module's types without running it. Supports package main and
+  importable packages with a go.mod in the module directory. The entrypoint
+  needs Dagger v1.0.0-beta.26 or later; engines before v1.0.0-beta.18 refuse
+  it at load with
+  `field "types": missing argument "workspace" required by interface`.
+  Unset enables entrypoints for new modules and keeps existing runtimes and
+  local entrypoints. A remote entrypoint is replaced with the generated one,
+  even when this setting is false. Explicit true migrates a supported existing
+  module; false keeps the Go runtime. A migrated module whose code uses the
+  global `dag` also needs globalClient = true.
+
+  The entrypoint's sources function returns what the build reads: the module
+  directory and the files outside it that reach the build through the local
+  replace directives of go.mod. Generation finds the go.mod of each replace
+  target the module requires, the Go files of each package it imports from
+  one, and the files those packages embed, and writes their patterns into
+  sources. The engine calls sources when it loads the module and reuses
+  function results until a file that sources returns changes; exported
+  functions need no workspace argument for the build. Generation computes the
+  patterns, so run `dagger generate` again after changing the replace
+  directives, the imports from a replace target, or the embeds of an imported
+  package. Other files outside the module directory are not available when a
+  function runs: reading one fails with `open ../x: no such file or
+  directory`. Local replace targets must stay inside the workspace. See
+  docs/outside-files.md for an example.
   """
   dangEntrypoint: Boolean
 
@@ -269,7 +299,7 @@ type GoSdk {
     }
     let target = release(targetVersion)
     if (releasePrecedes(target, versions.sourcesFloor)) {
-      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it is below " + versions.sourcesFloor + ", the oldest engine the generated entrypoint loads on. " + fix
+      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it is below " + versions.sourcesFloor + ", the first release whose Go library spells its identifiers as the engine names them, which the generated code follows. " + fix
     }
     if (releasePrecedes(versions.defaultTarget, target)) {
       raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it targets " + versions.defaultTarget + " at most. " + fix + ", or install the SDK release built for " + target
@@ -409,13 +439,13 @@ type GoSdk {
     let stable = if (source.kind == GIT_SOURCE) {
       codegenBuilder
         .withDirectory("/out", generated)
-        .withFile("/schema.json", source.introspectionSchemaJSON)
+        .withFile("/schema.json", source.introspectionSchemaJson)
         .withExec([
           "dagger-go-sdk-codegen", "normalize-source-links",
           "--introspection-json-path", "/schema.json",
           "--output", "/out",
           "--scope", scopePath,
-          "--workspace-repo-url", source.htmlRepoURL,
+          "--workspace-repo-url", source.htmlRepoUrl,
           "--workspace-pin", source.pin,
         ])
         .directory("/out")
@@ -587,7 +617,10 @@ type GoSdk {
   command, and the entrypoint into the module's Go root. sdk-helpers then
   writes the manifest that names the entrypoint and removes dagger.json.
   """
-  let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!, target: String!): Workspace! {
+  let entrypointModule(input: Workspace!, name: String!, unified: Boolean!, target: String!): Workspace! {
+    # Name and validate the module with the exact dang.toml we publish.
+    # Writing it after codegen would query the previous version's names.
+    let ws = withDangConfig(input, target)
     let scopePath = normalizePath(ws.cwd)
     # A module whose manifest names an entrypoint and no dependencies loads
     # through that entrypoint, which is not generated yet. A fresh runtime
@@ -599,6 +632,8 @@ type GoSdk {
       .generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
+    let served = entrypointModuleSource(ws, name, scopePath)
+    let naming = served.naming
 
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
@@ -618,17 +653,23 @@ type GoSdk {
     # anchor, beside the paths it includes.
     let buildRoot = if (included) { "/src/" + includes.file("module").contents } else { "/src" }
     let tree = if (included) { includedTree(ws, moduleSource, includes) } else { moduleSource }
+    # The entrypoint is checked against the schema it's served at, the
+    # entrypoint source's, which can differ from the bindings' (an enum's
+    # members are spelled by the view).
     let inputs = builder
       .withDirectory("/src", tree)
-      .withFile("/schema.json", source.introspectionSchemaJSON)
+      .withFile("/schema.json", source.introspectionSchemaJson)
+      .withFile("/entrypoint-schema.json", served.introspectionSchemaJson)
     let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
       "module-codegen",
       "--module-root", buildRoot + "/" + moduleRoot,
       "--build-root", "/src",
-      "--module-name", name,
+      "--module-name", naming.name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
+      "--naming-version", naming.version,
+      "--module-original-name", naming.originalName,
       "--go-image", goImage,
       "--dagger-version", target,
       "--target-version", target,
@@ -642,7 +683,7 @@ type GoSdk {
     let generated = runTool(codegen, [
       "entrypoint-contract",
       "--entrypoint-dir", buildRoot + "/" + prefix + entrypointPath,
-      "--introspection-json-path", "/schema.json",
+      "--introspection-json-path", "/entrypoint-schema.json",
     ]).directory(buildRoot)
     # Merge only what the generator owns, so the user's files are not
     # written back.
@@ -668,7 +709,7 @@ type GoSdk {
     sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
-      .generate(withDangConfig(pruned, target), lock: false, legacyJson: false)
+      .generate(pruned, lock: false, legacyJson: false)
   }
 
   let withDangConfig(ws: Workspace!, target: String!): Workspace! {
@@ -748,6 +789,23 @@ type GoSdk {
   """A field in its JSON form, which tells a string from true; empty when unset."""
   let rawField(value: Dagger.JSONValue!, key: String!): String! {
     if (value.fields.contains(key)) { toString(value.field([key]).contents) } else { "" }
+  }
+
+  """
+  The module source the engine serves the module as: the module with the
+  generated entrypoint, whose dang.toml decides the version the engine names
+  its declarations by. The staged schema's source isn't it: the bindings' Go
+  identifiers follow the schema, but the module's schema names come from this
+  source's naming (ModuleSource.naming). Loading it needs no generated
+  entrypoint.
+  """
+  let entrypointModuleSource(ws: Workspace!, name: String!, scopePath: String!): ModuleSource! {
+    sdkHelpers.moduleManifest
+      .withName(name: name)
+      .withDangEntrypoint(source: "./" + entrypointPath)
+      .generate(ws, lock: false, legacyJson: false)
+      .withWorkdir(".")
+      .moduleSource(rootedPath(scopePath))
   }
 
   """
@@ -834,6 +892,9 @@ type GoSdk {
   Run one generator tool. A failure raises the tool's own message: an exec
   error reports only the exit code, and the message is what tells the user
   how to fix the module.
+
+  The tool runs as a nested client of the session, as every v1 exec does:
+  the generators ask the engine to name identifiers.
   """
   let runTool(ctr: Container!, args: [String!]!): Container! {
     let ran = ctr.withExec(args, expect: ReturnType.ANY)
@@ -891,7 +952,11 @@ type GoSdk {
   """
   let minimumGoVersion: String! = "1.26.1"
 
-  """Build the engine-free standalone client generator."""
+  """
+  Build the standalone client generator. It runs nested in the session, to
+  format identifiers through the engine for schemas at or past
+  v1.0.0-beta.26.
+  """
   let codegenBuilder: Container! {
     container
       .from("golang:" + minimumGoVersion + "-alpine")
@@ -931,7 +996,7 @@ type GoSdk {
     if (target.kind != GIT_SOURCE) { return "" }
     let commit = ws.git.head.commit rescue { err: Error => "" }
     ",\"workspace\":{\"address\":" + JSON.encode(ws.address) + ",\"commit\":" + JSON.encode(commit) + "}" +
-      ",\"git\":{\"cloneRef\":" + JSON.encode(target.cloneRef) + ",\"htmlRepoURL\":" + JSON.encode(target.htmlRepoURL) + "}"
+      ",\"git\":{\"cloneRef\":" + JSON.encode(target.cloneRef) + ",\"htmlRepoURL\":" + JSON.encode(target.htmlRepoUrl) + "}"
   }
 
   """Whether a client uses shared core types, from the client package that scoped already has."""
@@ -958,7 +1023,7 @@ type GoSdk {
         client.pin,
       ) + gitMetaJSON(client, ws) + "}"
     ctr
-      .withFile("/schema.json", client.clientSchemaIntrospectionJSON)
+      .withFile("/schema.json", client.clientSchemaIntrospectionJson)
       .withNewFile("/meta.json", metaJSON)
       .withExec([
         "dagger-go-sdk-codegen", "client",
@@ -1062,7 +1127,9 @@ type GoSdk {
 
 type Versions {
   """
-  The oldest engine the generated entrypoint loads on: sourcesFloor in
+  The oldest release the generated code targets: the first whose Go library
+  spells its identifiers as the engine names them, which the generated code
+  follows. It is sourcesFloor in
   cmd/dagger-go-sdk-codegen/generator/gogenerator/templates/v2.go; a test
   there keeps this literal equal to it.
   """
