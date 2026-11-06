@@ -365,6 +365,10 @@ type TargetChecks {
     expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta..1"), input, name, subject + "\"v1.0.0-beta..1\"" + malformed)
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.21+???"), input, name, subject + "\"v1.0.0-beta.21+???\"" + malformed)
+    # v1.0.0-beta.25 shipped without an entrypoint's dependencies in the
+    # manifest, which daggerGo writes.
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.25", daggerGo: true), input, name,
+      "module " + JSON.encode(name) + " sets daggerGo, which needs Dagger v1.0.0-beta.26 or later: its manifest lists the entrypoint's dependencies, and the module targets v1.0.0-beta.25. Set targetVersion to v1.0.0-beta.26 or later in the scope's settings in dagger.toml, or set daggerGo = false")
     expectRefusal(goSdk(targetVersion: sdkTarget, dangEntrypoint: false, unifiedClients: false), input, name,
       "targetVersion applies to a module with a Dang entrypoint; the Go runtime generates this module's code for the engineVersion of its manifest: set dangEntrypoint = true in the module's dagger.toml settings to migrate, or remove targetVersion")
     null

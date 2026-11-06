@@ -7,5 +7,5 @@ sourcesFloor = "v1.0.0-beta.18"
 # per-package build's branch until a dagger/go release carries it.
 daggerGo = "github.com/dagger/go@40b4d0d4b1f79fd8844c4e588ac6f7dc91f4f40d"
 # The first Dagger release whose manifests list an entrypoint's dependencies:
-# set to the release that ships them (not yet released).
-daggerGoFloor = "v1.0.0-beta.25"
+# the release that ships them (not yet released). v1.0.0-beta.25 does not.
+daggerGoFloor = "v1.0.0-beta.26"
