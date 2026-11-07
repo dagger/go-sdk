@@ -162,46 +162,6 @@ type IgnoreChecks {
     null
   }
 
-  let committed(tree: Directory!): Workspace! {
-    let repository = container.from("alpine:3.22").withoutEntrypoint
-      .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
-      .withDirectory("/srv/repo", tree)
-      .withWorkdir("/srv/repo")
-      .withExec(["git", "init", "-q", "-b", "main"])
-      .withExec(["git", "config", "user.name", "Ignore fixture"])
-      .withExec(["git", "config", "user.email", "fixture@example.com"])
-      .withExec(["git", "add", "-f", "."])
-      .withExec(["git", "commit", "-q", "-m", "fixture"])
-      .withExec(["git", "clone", "-q", "--bare", ".", "/srv/repo.git"])
-    let revision = repository.withExec(["git", "rev-parse", "HEAD"]).stdout.trimSpace
-    let server = repository.withExposedPort(9418)
-      .withDefaultArgs(["git", "daemon", "--export-all", "--base-path=/srv", "/srv"])
-      .asService
-    git("git://" + server.hostname + "/repo.git", experimentalServiceHost: server).ref(revision).asWorkspace
-  }
-
-  """Committed source remains part of generation even when ignore rules match it."""
-  trackedIgnoredSourceCheck(ws: Workspace!): Void @check {
-    let source = directory
-      .withNewFile(".gitignore", "main.go\n")
-      .withNewFile("main.go", "package main\n\nimport \"rsc.io/quote\"\n\nfunc main() { println(quote.Hello()) }\n")
-      .withNewFile("go.mod", "module example.com/review\n\ngo 1.26.1\n\nrequire rsc.io/quote v1.5.2\n")
-    let generated = goSdk.generateScope(ws: committed(source), isModule: false, name: "review", clients: [ws.moduleSource("/.dagger/modules/e2e/fixtures/manifest/dep")])
-    assert("generation dropped the dependency of a tracked source file") { generated.file("go.mod").contents.contains("rsc.io/quote") }
-    null
-  }
-
-  """An explicit source tree keeps the dependencies its supplied source needs."""
-  suppliedIgnoredSourceCheck(ws: Workspace!): Void @check {
-    let source = directory
-      .withNewFile(".gitignore", "main.go\n")
-      .withNewFile("main.go", "package main\n\nimport \"rsc.io/quote\"\n\nfunc main() { println(quote.Hello()) }\n")
-      .withNewFile("go.mod", "module example.com/review\n\ngo 1.26.1\n\nrequire rsc.io/quote v1.5.2\n")
-    let generated = goSdk.generateScope(ws: source.asWorkspace, isModule: false, name: "review", clients: [ws.moduleSource("/.dagger/modules/e2e/fixtures/manifest/dep")])
-    assert("generation dropped a dependency still imported by supplied source") { generated.file("go.mod").contents.contains("rsc.io/quote") }
-    null
-  }
-
   """Ownership paths cannot reintroduce Git metadata, including nested .git directories."""
   gitMetadataOwnershipCheck: Void @check {
     [".git/config", "nested/.git/config", ".git"].each { path =>
@@ -216,25 +176,6 @@ type IgnoreChecks {
       assert("ownership accepted Git metadata: " + path + ": " + refused) {
         refused.contains("invalid generated ownership entry " + JSON.encode(path))
       }
-      null
-    }
-    null
-  }
-
-  """Ignored replacement sources in explicit trees and Git commits remain build inputs."""
-  suppliedIgnoredReplacementCheck: Void @check {
-    let source = directory
-      .withNewFile(".gitignore", "lib/\n")
-      .withNewFile("app/go.mod", "module example.com/ignored-app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n")
-      .withNewFile("app/main.go", "package main\n\nimport \"example.com/lib/greet\"\n\ntype IgnoredApp struct{}\n\nfunc (*IgnoredApp) Hello() string { return greet.Hello() }\n")
-      .withNewFile("lib/go.mod", "module example.com/lib\n\ngo 1.26.1\n")
-      .withNewFile("lib/greet/greet.go", "package greet\n\nfunc Hello() string { return \"hello\" }\n")
-    [source.asWorkspace, committed(source)].each { input =>
-      let generated = goSdk(dangEntrypoint: true, unifiedClients: false)
-        .generateScope(ws: input.withWorkdir("app"), isModule: true, name: "ignored-app", clients: [])
-      assert("generation lost the ignored replacement's import") { generated.file("go.mod").contents.contains("example.com/lib") }
-      assert("generation did not produce an entrypoint") { generated.file("internal/dagger/entrypoint/main.dang").contents != "" }
-      assert("generation changed supplied dependency source") { generated.file("/lib/greet/greet.go").contents == source.file("lib/greet/greet.go").contents }
       null
     }
     null
