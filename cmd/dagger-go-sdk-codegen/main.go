@@ -74,6 +74,8 @@ func run(args []string) error {
 		return runNormalizeSourceLinks(args[1:])
 	case "prune-clients":
 		return runPruneClients(args[1:])
+	case "validate-owned":
+		return runValidateOwned(args[1:])
 	case "go-version":
 		flags := flag.NewFlagSet("go-version", flag.ContinueOnError)
 		path := flags.String("go-mod", "go.mod", "consumer go.mod")
