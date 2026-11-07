@@ -381,14 +381,24 @@ type GoSdk {
   """
   let generationInputs(ws: Workspace!, records: [String!]!): Directory! {
     let filtered = ws.directory(".", exclude: ["**/.git"], gitignore: hostWorkspace(ws))
-    let metadata = ws.directory(".", include: records, exclude: ["**/.git"])
+    let metadata = ownershipDirectory(ws, records)
     let manifests = metadata.glob("**").filter { path => path.hasSuffix(".dagger-generated.json") }
+      .map { path => checkedOwnershipPath(path) }
     let paths = manifests.reduce(["go.mod", "go.sum"]) { found, manifest =>
       let owned = ownershipFiles(ws.file(manifest).contents)
       let base = manifest.trimSuffix(".dagger-generated.json")
       found + [manifest] + owned.map { path => base + path }
     }
-    filtered.withDirectory(".", ws.directory(".", include: paths, exclude: ["**/.git"]))
+    filtered.withDirectory(".", ownershipDirectory(ws, paths))
+  }
+
+  """
+  Include patterns also select a directory's descendants. Ownership names
+  files, so a malformed directory entry must not import its ignored children.
+  """
+  let ownershipDirectory(ws: Workspace!, patterns: [String!]!): Directory! {
+    ws.directory(".", include: patterns,
+      exclude: ["**/.git"] + patterns.map { pattern => pattern + "/**" })
   }
 
   """Only local file addresses represent host uploads; value and Git trees are authoritative."""
@@ -399,15 +409,22 @@ type GoSdk {
     let owned = if (value.fields.contains("files") and toString(value.field(["files"]).contents) != "null") {
       value.field(["files"]).fields
     } else { [] :: [String!]! }
-    # These names become include patterns before codegen validates ownership.
-    owned.each { path =>
-      if (path == ".dagger-generated.json" or path.contains("\\") or path.contains("*") or path.contains("?") or path.contains("[") or path.contains("]") or
-        path.split("/").filter { part => part == "" or part == "." or part == ".." or part == ".git" }.length > 0) {
+    owned.map { path =>
+      if (path == ".dagger-generated.json") {
         raise "invalid generated ownership entry " + JSON.encode(path)
       }
-      null
+      checkedOwnershipPath(path)
     }
-    owned
+  }
+
+  """Ownership entries and manifest parents must name literal paths in include patterns."""
+  let checkedOwnershipPath(path: String!): String! {
+    if (path != path.trimSpace or path.hasPrefix("!") or
+      path.contains("\\") or path.contains("*") or path.contains("?") or path.contains("[") or path.contains("]") or
+      path.split("/").filter { part => part == "" or part == "." or part == ".." or part == ".git" }.length > 0) {
+      raise "invalid generated ownership entry " + JSON.encode(path)
+    }
+    path
   }
 
   """
@@ -418,6 +435,7 @@ type GoSdk {
   let checkGenerated(ws: Workspace!, generated: Directory!, records: [String!]!): Void {
     let metadata = generated.filter(include: records)
     let manifests = metadata.glob("**").filter { path => path.hasSuffix(".dagger-generated.json") }
+      .map { path => checkedOwnershipPath(path) }
     manifests.each { manifest =>
       let owned = ownershipFiles(generated.file(manifest).contents)
       if (owned.isEmpty == false) {
@@ -425,7 +443,7 @@ type GoSdk {
         let prefix = if (base == ".") { "" } else { base + "/" }
         let paths = [manifest] + owned.map { path => prefix + path }
         let existing = directory.withNewDirectory(base)
-          .withDirectory(".", ws.directory(".", include: paths, exclude: ["**/.git"]))
+          .withDirectory(".", ownershipDirectory(ws, paths))
           .directory(base)
         codegenBuilder
           .withDirectory("/existing", existing)
