@@ -7,10 +7,11 @@ type GoSdk {
   the v prefix and build metadata are optional. Empty means
   the release this Go SDK is built for, v1.0.0-beta.25. Generation accepts
   a release from v1.0.0-beta.18, the oldest engine the entrypoint loads on,
-  up to the SDK's release. A module with a Dang entrypoint and unified
-  clients pins dagger.io/dagger to exactly the targeted release. A Dang
-  entrypoint with embedded bindings targets the same release: its bindings
-  come from that release's schema, and its entrypoint declares it.
+  up to v1.0.0-beta.26, the release in flight. A module with a Dang
+  entrypoint and unified clients pins dagger.io/dagger to exactly the
+  targeted release. A Dang entrypoint with embedded bindings targets the
+  same release: its bindings come from that release's schema, and its
+  entrypoint declares it.
   A generated entrypoint declares the release twice: in
   DAGGER_CLIENT_VERSION for the module process, and as the Dagger import
   of the dang.toml beside it.
@@ -37,6 +38,17 @@ type GoSdk {
   its existing global API.
   """
   globalClient: Boolean
+  """
+  Build the module's process with dagger/go, the release this Go SDK pins
+  (versions.toml), which the generated entrypoint lists as its own
+  dependency: the same per-package builds, cached the same way, as any
+  dagger/go build. The module itself compiles none of dagger/go's API.
+  Unset uses it for new entrypoint modules and keeps what an existing module
+  does. Set true to migrate, or false to build with go build. Applies to
+  Dang entrypoints.
+  """
+  daggerGo: Boolean
+
   """
   Starter template used when a new module scope is initialized.
 
@@ -129,10 +141,13 @@ type GoSdk {
       # fields that view lacks.
       let target = targetRelease("module " + JSON.encode(name), versions)
       checkDangConfig(initialized, target)
+      # dagger/go, which builds the module's process, is the entrypoint's
+      # own dependency, not a client of the module's.
+      let entrypointDeps = if (usesDaggerGo(ws, hadManifest, name, target)) { [moduleSource(versions.daggerGo)] } else { [] :: [ModuleSource!]! }
       let withClients = if (unified) {
         generateStandaloneClients(initialized, clients, true, target, false)
       } else { initialized }
-      entrypointModule(withClients, name, unified, target)
+      entrypointModule(withClients, name, unified, target, entrypointDeps)
     } else if (isModule and hasCustomRunner(initialized)) {
       # A runtime or entrypoint the user chose remains theirs. Only explicitly
       # requested standalone clients are generated beside it.
@@ -152,6 +167,51 @@ type GoSdk {
     } else {
       # Standalone clients are the only output here, so dualClients does not apply.
       generateStandaloneClients(initialized, clients, false, "", false)
+    }
+  }
+
+  """
+  Build new entrypoint modules with dagger/go, and keep what an existing
+  module does unless the setting says otherwise. A manifest that lists an
+  entrypoint's dependencies loads from Dagger versions.daggerGoFloor, so a
+  module that targets an older release builds with go build. target is
+  always a release: targetRelease picks one on every path.
+  """
+  let usesDaggerGo(ws: Workspace!, hadManifest: Boolean!, name: String!, target: String!): Boolean! {
+    let wanted = if (daggerGo != null) {
+      daggerGo ?? false
+    } else if (hadManifest) {
+      listsDaggerGo(ws)
+    } else {
+      true
+    }
+    if (wanted and target != "" and releasePrecedes(target, versions.daggerGoFloor)) {
+      if (daggerGo ?? false) {
+        raise "module " + JSON.encode(name) + " sets daggerGo, which needs Dagger " + versions.daggerGoFloor + " or later: its manifest lists the entrypoint's dependencies, and the module targets " + target + ". Set targetVersion to " + versions.daggerGoFloor + " or later in the scope's settings in dagger.toml, or set daggerGo = false"
+      }
+      return false
+    }
+    wanted
+  }
+
+  """
+  The name a manifest gives the dagger/go dependency the generator writes,
+  and the module it names.
+  """
+  let daggerGoName: String! = "go"
+  let daggerGoModule: String! = "github.com/dagger/go"
+
+  """Whether the module's manifest lists the dagger/go dependency the generator writes."""
+  let listsDaggerGo(ws: Workspace!): Boolean! {
+    let optionalManifest = decodedManifest(ws)
+    if (optionalManifest == null) { return false }
+    let manifest = optionalManifest :: Dagger.JSONValue!
+    if (manifest.fields.contains("dependencies") == false) { return false }
+    let entries = manifest.field(["dependencies"]).contents :: String!
+    let objects = ((JSON.decode(entries) :: [{{name: String, source: String}}!]!).length >= 0) rescue { err: Error => false }
+    if (objects == false) { return false }
+    (JSON.decode(entries) :: [{{name: String, source: String}}!]!).any { dependency =>
+      (dependency.name ?? "") == daggerGoName and (dependency.source ?? "").hasPrefix(daggerGoModule)
     }
   }
 
@@ -263,7 +323,7 @@ type GoSdk {
   """
   let targetRelease(subject: String!, versions: Versions!): String! {
     if (targetVersion == "") { return versions.defaultTarget }
-    let fix = "Set targetVersion between " + versions.sourcesFloor + " and " + versions.defaultTarget + " in the scope's settings in dagger.toml, or remove it"
+    let fix = "Set targetVersion between " + versions.sourcesFloor + " and " + versions.newestTarget + " in the scope's settings in dagger.toml, or remove it"
     if (isRelease(targetVersion) == false) {
       raise subject + " pins targetVersion " + JSON.encode(targetVersion) + ", which is not a Dagger release such as " + versions.defaultTarget + ". " + fix
     }
@@ -271,8 +331,8 @@ type GoSdk {
     if (releasePrecedes(target, versions.sourcesFloor)) {
       raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it is below " + versions.sourcesFloor + ", the oldest engine the generated entrypoint loads on. " + fix
     }
-    if (releasePrecedes(versions.defaultTarget, target)) {
-      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it targets " + versions.defaultTarget + " at most. " + fix + ", or install the SDK release built for " + target
+    if (releasePrecedes(versions.newestTarget, target)) {
+      raise subject + " pins targetVersion " + target + ", which this release of the Go SDK cannot generate for: it targets " + versions.newestTarget + " at most. " + fix + ", or install the SDK release built for " + target
     }
     target
   }
@@ -452,7 +512,10 @@ type GoSdk {
       if (!hadManifest and template == "legacy") {
         raise "the legacy template is not available with a Dang entrypoint; choose another template or set dangEntrypoint = false and unifiedClients = false"
       }
-      let clientNames = clients.map { client => client.moduleOriginalName }
+      # The dagger/go dependency is the generator's own, which it writes again
+      # or drops by the daggerGo setting.
+      let ownNames = if (listsDaggerGo(ws)) { [daggerGoName] } else { [] :: [String!]! }
+      let clientNames = clients.map { client => client.moduleOriginalName } + ownNames
       let clientSources = clients.map { client => client.asString }
       refuseManifestSettings("dagger-module.toml", decodedManifest(ws), "runtime", clientNames, clientSources)
       let legacyJSON = if (exists(ws, "dagger.json")) {
@@ -587,18 +650,29 @@ type GoSdk {
   command, and the entrypoint into the module's Go root. sdk-helpers then
   writes the manifest that names the entrypoint and removes dagger.json.
   """
-  let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!, target: String!): Workspace! {
+  let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!, target: String!, deps: [ModuleSource!]!): Workspace! {
     let scopePath = normalizePath(ws.cwd)
     # A module whose manifest names an entrypoint and no dependencies loads
     # through that entrypoint, which is not generated yet. A fresh runtime
     # manifest of the targeted release gives the engine a module it can
     # serve a schema for.
-    let staged = sdkHelpers.moduleManifest
+    let stagedManifest = sdkHelpers.moduleManifest
       .withName(name: name)
       .withLegacyGoRuntime(engineVersion: target)
-      .generate(ws, lock: false, legacyJson: false)
+    let staged = stagedManifest.generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
+    # The entrypoint is checked against a schema with its dependencies; the
+    # module's Go bindings come from the one without, so the module compiles
+    # none of a dependency only its entrypoint calls.
+    let contractSchema = if (deps.length == 0) { source.introspectionSchemaJSON } else {
+      stagedManifest
+        .withLegacyRuntimeDependencies(modules: deps)
+        .generate(ws, lock: false, legacyJson: false)
+        .withWorkdir(".")
+        .moduleSource(rootedPath(scopePath))
+        .introspectionSchemaJSON
+    }
 
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
@@ -608,8 +682,11 @@ type GoSdk {
     let workspaceRoot = ws.withWorkdir(goRoot)
     let goVersion = if (exists(workspaceRoot, "go.mod")) {
       requiredGoVersion(workspaceRoot.file("go.mod"))
-    } else { minimumGoVersion }
-    let goImage = "golang:" + goVersion + "-alpine"
+    } else { defaultGoVersion }
+    # The entrypoint names its images by digest, as this generation resolved
+    # them: a tag would be looked up in the registry again in every session
+    # that builds or runs the module.
+    let goImage = pinnedImage("golang:" + goVersion + "-alpine")
     let builder = moduleCodegenBuilder(goImage)
     let moduleSource = workspaceRoot.directory(".", exclude: ["**/.git"])
     let includes = moduleIncludes(ws, builder, moduleSource, goRoot, moduleRoot, scopePath)
@@ -621,6 +698,7 @@ type GoSdk {
     let inputs = builder
       .withDirectory("/src", tree)
       .withFile("/schema.json", source.introspectionSchemaJSON)
+      .withFile("/contract-schema.json", contractSchema)
     let goInputs = inputs.withEnvVariable("GOWORK", "off")
     let codegen = runTool(goInputs, [
       "module-codegen",
@@ -630,11 +708,14 @@ type GoSdk {
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
       "--go-image", goImage,
+      "--runtime-image", pinnedImage("alpine:3.22"),
+      "--dagger-go=" + JSON.encode(deps.length > 0),
       "--dagger-version", target,
       "--target-version", target,
       "--unified=" + JSON.encode(unified),
       "--global-client=" + JSON.encode(globalClient ?? false),
       "--removed-list", "/removed.txt",
+      "--include-list", "/include.txt",
     ])
     # The generator reports a development exception on its standard output.
     let notes = codegen.stdout.trimSpace
@@ -642,7 +723,7 @@ type GoSdk {
     let generated = runTool(codegen, [
       "entrypoint-contract",
       "--entrypoint-dir", buildRoot + "/" + prefix + entrypointPath,
-      "--introspection-json-path", "/schema.json",
+      "--introspection-json-path", "/contract-schema.json",
     ]).directory(buildRoot)
     # Merge only what the generator owns, so the user's files are not
     # written back.
@@ -665,10 +746,37 @@ type GoSdk {
     # are removed here, relative to the module.
     let removed = codegen.file("/removed.txt").contents.split("\n").filter { p => p != "" }
     let pruned = removed.reduce(merged) { current, p => current.withoutFile(p) }
-    sdkHelpers.moduleManifest
+    let manifested = sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointPath)
       .generate(withDangConfig(pruned, target), lock: false, legacyJson: false)
+    let includedManifest = withManifestInclude(manifested, codegen.file("/include.txt"))
+    if (deps.length == 0) { return includedManifest }
+    # The entrypoint's dependencies, which manifest version 2 lists without a
+    # runtime; sdk-helpers writes dependencies only with one.
+    let tables = deps.map { dep =>
+      "\n[[dependencies]]\n  name = " + JSON.encode(dep.moduleOriginalName) + "\n  source = " + JSON.encode(dependencySource(dep, scopePath)) + "\n"
+    }.join("")
+    includedManifest.withDirectory(".", directory.withNewFile("dagger-module.toml", includedManifest.file("dagger-module.toml").contents + tables))
+  }
+
+  """
+  The manifest at ws.cwd with the include list the generator wrote: the files
+  the module's build reads outside its directory, which the entrypoint's
+  sources also returns. An engine that reads include loads them with the
+  module and skips sources, even for an empty list; an older engine ignores
+  include and runs sources. sdk-helpers writes the name first, so include
+  follows it, before any table.
+  """
+  let withManifestInclude(ws: Workspace!, list: File!): Workspace! {
+    let patterns = lines(list)
+    let toml = ws.file("dagger-module.toml").contents
+    let withInclude = toml.split("\n").map { line =>
+      if (line.hasPrefix("name = ")) {
+        line + "\ninclude = [" + patterns.map { p => JSON.encode(p) }.join(", ") + "]"
+      } else { line }
+    }.join("\n")
+    ws.withDirectory(".", directory.withNewFile("dagger-module.toml", withInclude))
   }
 
   let withDangConfig(ws: Workspace!, target: String!): Workspace! {
@@ -748,6 +856,20 @@ type GoSdk {
   """A field in its JSON form, which tells a string from true; empty when unset."""
   let rawField(value: Dagger.JSONValue!, key: String!): String! {
     if (value.fields.contains(key)) { toString(value.field([key]).contents) } else { "" }
+  }
+
+  """
+  A dependency's source as the manifest of the module at scopePath names it:
+  its address, or for a local module, its path from the module's directory.
+  """
+  let dependencySource(dep: ModuleSource!, scopePath: String!): String! {
+    if (dep.kind == GIT_SOURCE) {
+      dep.asString
+    } else if (scopePath == ".") {
+      "./" + dep.sourceRootSubpath
+    } else {
+      scopePath.split("/").map { segment => ".." }.join("/") + "/" + dep.sourceRootSubpath
+    }
   }
 
   """
@@ -866,6 +988,17 @@ type GoSdk {
   }
 
   """
+  The image at ref, by its digest: the workspace's lock entry for it, or the
+  registry's, which the lock then records.
+
+  Only the digest is taken from imageRef: released engines can report there
+  another tag that the session resolved to the same image.
+  """
+  let pinnedImage(ref: String!): String! {
+    ref + "@" + (container.from(ref).imageRef.split("@")[1] ?? "")
+  }
+
+  """
   Build the module generator and the entrypoint contract check.
 
   The contract check embeds Dang, whose parser needs cgo.
@@ -886,15 +1019,22 @@ type GoSdk {
   }
 
   """
-  The generators' minimum Go version, which fresh modules declare. The
-  helpers build on its image, so init and generate pull one Go image.
+  The oldest Go version generation uses: a module that declares an older
+  one generates on this version.
   """
   let minimumGoVersion: String! = "1.26.1"
+
+  """
+  The Go version a new module declares, and the one its generator and
+  dispatcher build on when it has no go.mod yet. The helpers build on its
+  image too, so a new module pulls one Go image.
+  """
+  let defaultGoVersion: String! = "1.27"
 
   """Build the engine-free standalone client generator."""
   let codegenBuilder: Container! {
     container
-      .from("golang:" + minimumGoVersion + "-alpine")
+      .from("golang:" + defaultGoVersion + "-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
@@ -985,7 +1125,7 @@ type GoSdk {
       raise "unknown init template: " + selected
     } else {
       let builder = container
-        .from("golang:" + minimumGoVersion + "-alpine")
+        .from("golang:" + defaultGoVersion + "-alpine")
         .withoutEntrypoint
         .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
         .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
@@ -1073,4 +1213,22 @@ type Versions {
   release; a test checks that the library release exists.
   """
   pub defaultTarget: String!
+  """
+  The newest Dagger release a scope can pin with targetVersion: the release
+  in flight, which a module can target before defaultTarget moves to it. It
+  is defaultTarget or later. A module that pins a release after
+  defaultTarget generates on an engine of that release, and with unified
+  clients needs that release's dagger.io/dagger published or replaced.
+  """
+  pub newestTarget: String!
+  """
+  The dagger/go module this Go SDK release builds generated entrypoint
+  modules with (daggerGo), by its address with a pinned commit.
+  """
+  pub daggerGo: String!
+  """
+  The first Dagger release whose module manifests list an entrypoint's
+  dependencies, which daggerGo writes.
+  """
+  pub daggerGoFloor: String!
 }

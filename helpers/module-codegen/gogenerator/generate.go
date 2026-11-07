@@ -41,10 +41,21 @@ type GenerateConfig struct {
 	DaggerVersion string
 	TargetVersion string
 	GoImage       string
+	// RuntimeImage is the image the module's process runs in; empty for the
+	// generator's default.
+	RuntimeImage string
+	// DaggerGo builds the module's process with dagger/go, a client of the
+	// module named "go".
+	DaggerGo bool
 	// RemovedPath, when set, names a file that receives the module-relative
 	// paths of the generated files this run removed, one per line. The caller
 	// merges the remaining files back, so it needs the list to remove the rest.
-	RemovedPath   string
+	RemovedPath string
+	// IncludePath, when set, names a file that receives the module manifest's
+	// include list, one pattern per line, relative to the module directory:
+	// what the module's build reads outside it, which the entrypoint's sources
+	// also returns. It is empty when the build reads nothing outside.
+	IncludePath   string
 	UnifiedClient bool
 	// GlobalClient emits the compatibility unqualified dag API.
 	GlobalClient bool
@@ -144,6 +155,12 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err := pinGeneratedTelemetry(goModPath); err != nil {
 		return err
 	}
+	// Tidying with the bootstrap bindings below drops what only the real
+	// bindings need, and every version those requirements held up.
+	required, err := requirements(goModPath)
+	if err != nil {
+		return err
+	}
 	if err := removeLegacyGeneratedFile(root); err != nil {
 		return err
 	}
@@ -161,8 +178,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		GlobalClient:  cfg.GlobalClient,
 		ClientConfig:  &generator.ClientGeneratorConfig{},
 		ModuleConfig: &generator.ModuleGeneratorConfig{
-			ModuleName: cfg.ModuleName,
-			LibVersion: cfg.DaggerVersion,
+			ModuleName:    cfg.ModuleName,
+			LibVersion:    cfg.DaggerVersion,
+			TargetVersion: cfg.TargetVersion,
 		},
 	}
 	client := &clientgen.GoGenerator{Config: genCfg}
@@ -233,8 +251,11 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return fmt.Errorf("reload module package: %w", err)
 	}
+	if err := stdlibImportErrors(pkg); err != nil {
+		return fmt.Errorf("reload module package: %w", err)
+	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.TargetVersion, sources,
+		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.TargetVersion, sources,
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
@@ -250,6 +271,9 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	// the bootstrap bindings. The collection build below loads the package
 	// with the dispatcher, so go.mod and go.sum must already provide it.
 	if err := pinGeneratedTelemetry(goModPath); err != nil {
+		return err
+	}
+	if err := restoreRequirements(goModPath, required); err != nil {
 		return err
 	}
 	if err := goModTidy(ctx, root); err != nil {
@@ -299,6 +323,15 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 			err = fmt.Errorf("%w; the module's code uses the global dag: set globalClient = true in the scope's settings in dagger.toml", err)
 		}
 		return withWarnings(err, untidied.Warnings)
+	}
+	if cfg.IncludePath != "" {
+		var list bytes.Buffer
+		for _, pattern := range templates.ManifestInclude(sources) {
+			list.WriteString(pattern + "\n")
+		}
+		if err := os.WriteFile(cfg.IncludePath, list.Bytes(), 0o644); err != nil {
+			return fmt.Errorf("write manifest include list: %w", err)
+		}
 	}
 	if cfg.RemovedPath != "" {
 		var list bytes.Buffer
@@ -428,7 +461,7 @@ func ensureGoModule(root, moduleName string) (packageImport, goModPath string, _
 	if err := mod.AddModuleStmt("dagger/" + strcase.ToKebab(moduleName)); err != nil {
 		return "", "", err
 	}
-	if err := mod.AddGoStmt("1.26.1"); err != nil {
+	if err := mod.AddGoStmt("1.27"); err != nil {
 		return "", "", err
 	}
 	body, err := mod.Format()
@@ -440,6 +473,59 @@ func ensureGoModule(root, moduleName string) (packageImport, goModPath string, _
 		return "", "", err
 	}
 	return "dagger/" + strcase.ToKebab(moduleName), path, nil
+}
+
+// requirements reads the versions a go.mod requires.
+func requirements(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	mod, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return nil, err
+	}
+	required := make(map[string]string, len(mod.Require))
+	for _, requirement := range mod.Require {
+		required[requirement.Mod.Path] = requirement.Mod.Version
+	}
+	return required, nil
+}
+
+// restoreRequirements requires again each version of required that go.mod no
+// longer does, except the library's, which has its own pin. The tidy that
+// follows drops the ones the module doesn't use, and the module keeps the
+// versions the others held up.
+func restoreRequirements(path string, required map[string]string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return err
+	}
+	current := make(map[string]string, len(mod.Require))
+	for _, requirement := range mod.Require {
+		current[requirement.Mod.Path] = requirement.Mod.Version
+	}
+	for module, version := range required {
+		if module == library.Path {
+			continue
+		}
+		if have, ok := current[module]; ok && semver.Compare(have, version) >= 0 {
+			continue
+		}
+		if err := mod.AddRequire(module, version); err != nil {
+			return err
+		}
+	}
+	mod.Cleanup()
+	body, err := mod.Format()
+	if err != nil {
+		return err
+	}
+	return writeFile(path, body)
 }
 
 // The embedded transport needs only propagation from otel-go, but that package

@@ -12,6 +12,9 @@ type TargetChecks {
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.25"
 
+  """The newest release a scope can pin: newestTarget in versions.toml."""
+  let newestTarget: String! = "v1.0.0-beta.26"
+
   let pins(ws: Workspace!, release: String!): Boolean! {
     ws.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
   }
@@ -37,7 +40,7 @@ type TargetChecks {
   one query, so the engine runs the module's generated code.
   """
   let called(ws: Workspace!, scopePath: String!, query: String!): String! {
-    let ran = container.from("golang:1.26-alpine").withoutEntrypoint
+    let ran = container.from("golang:1.27-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/workspace", ws.directory("/", exclude: ["**/.git"]))
@@ -316,6 +319,35 @@ type TargetChecks {
   }
 
   """
+  On an engine of v1.0.0-beta.26, the release that reads an entrypoint's
+  dependencies, a new module that targets it builds with dagger/go: its
+  entrypoint passes the contract check against dagger/go's schema and that
+  release's view, whose enum members the casing cut renamed, such as
+  FunctionCachePolicy.PER_SESSION, and the engine runs it. That release's dagger.io/dagger is not published yet, so
+  the module replaces it, as the refusal to pin it suggests. Released
+  engines can't load such a module, so this is not a check: run it with
+  an engine of that release.
+  """
+  daggerGoEngineCheck(ws: Workspace!): Void {
+    let name = "target-dagger-go-engine"
+    let scopePath = outputRoot + "/" + name
+    let release = "v1.0.0-beta.26"
+    let input = ws.withWorkdir(scopePath)
+      .withNewFile("go.mod", "module example.com/target-dagger-go-engine\n\ngo 1.27\n\nreplace dagger.io/dagger " + release + " => dagger.io/dagger " + sdkTarget + "\n")
+      .withNewFile("main.go", "package target_dagger_go_engine\n\ntype TargetDaggerGoEngine struct{}\n\n// +cache=\"session\"\nfunc (m *TargetDaggerGoEngine) Cached() string { return \"cached\" }\n")
+    let generated = goSdk(targetVersion: release).generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the module does not list dagger/go as its entrypoint's dependency:\n" + generated.file("dagger-module.toml").contents) {
+      generated.file("dagger-module.toml").contents.contains("\"github.com/dagger/go@")
+    }
+    assert("the entrypoint does not name the cache policy as this release's view does") {
+      generated.file("internal/dagger/entrypoint/main.dang").contents.contains("FunctionCachePolicy.PER_SESSION")
+    }
+    let out = called(generated, scopePath, "{targetDaggerGoEngine{cached}}")
+    assert("the generated module did not run: " + out) { out.contains("\"cached\":\"cached\"") }
+    null
+  }
+
+  """
   On an engine that reads the entrypoint's dang.toml, the Dagger import
   sets the version the engine serves the module at, a module without the
   file gets the engine's fallback of v1.0.0-beta.24, and the engine runs
@@ -352,16 +384,20 @@ type TargetChecks {
     let scopePath = outputRoot + "/" + name
     let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
     let subject = "module " + JSON.encode(name) + " pins targetVersion "
-    let fix = "Set targetVersion between " + floor + " and " + sdkTarget + " in the scope's settings in dagger.toml, or remove it"
+    let fix = "Set targetVersion between " + floor + " and " + newestTarget + " in the scope's settings in dagger.toml, or remove it"
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.17"), input, name,
       subject + "v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below " + floor + ", the oldest engine the generated entrypoint loads on. " + fix)
-    let above = ", which this release of the Go SDK cannot generate for: it targets " + sdkTarget + " at most. " + fix + ", or install the SDK release built for "
-    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.26"), input, name, subject + "v1.0.0-beta.26" + above + "v1.0.0-beta.26")
+    let above = ", which this release of the Go SDK cannot generate for: it targets " + newestTarget + " at most. " + fix + ", or install the SDK release built for "
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.27"), input, name, subject + "v1.0.0-beta.27" + above + "v1.0.0-beta.27")
     expectRefusal(goSdk(targetVersion: "99.0.0"), input, name, subject + "v99.0.0" + above + "v99.0.0")
     let malformed = ", which is not a Dagger release such as " + sdkTarget + ". " + fix
     expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta..1"), input, name, subject + "\"v1.0.0-beta..1\"" + malformed)
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.21+???"), input, name, subject + "\"v1.0.0-beta.21+???\"" + malformed)
+    # v1.0.0-beta.25 shipped without an entrypoint's dependencies in the
+    # manifest, which daggerGo writes.
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.25", daggerGo: true), input, name,
+      "module " + JSON.encode(name) + " sets daggerGo, which needs Dagger v1.0.0-beta.26 or later: its manifest lists the entrypoint's dependencies, and the module targets v1.0.0-beta.25. Set targetVersion to v1.0.0-beta.26 or later in the scope's settings in dagger.toml, or set daggerGo = false")
     expectRefusal(goSdk(targetVersion: sdkTarget, dangEntrypoint: false, unifiedClients: false), input, name,
       "targetVersion applies to a module with a Dang entrypoint; the Go runtime generates this module's code for the engineVersion of its manifest: set dangEntrypoint = true in the module's dagger.toml settings to migrate, or remove targetVersion")
     null

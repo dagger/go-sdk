@@ -28,4 +28,7 @@ type GoSdkDev {
 type Versions {
   pub sourcesFloor: String!
   pub defaultTarget: String!
+  pub newestTarget: String!
+  pub daggerGo: String!
+  pub daggerGoFloor: String!
 }

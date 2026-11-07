@@ -140,7 +140,9 @@ type {{ $field | FieldOptionsStructName }} struct {
 	if err := q.Bind(&id).Execute(ctx); err != nil {
 		return nil, err
 	}
-	{{- if IsSharedCoreHandle $field }}
+	{{- if and (IsSharedCoreHandle $field) KeepsLoadedIDs }}
+return loaded[*{{ $field | IDHandleClient }}](q, ID(id))
+	{{- else if IsSharedCoreHandle $field }}
 return new({{ $field | IDHandleClient }}).WithGraphQLQuery(selectNode(q.Root(), id, "{{ $field | IDHandleType }}"))
 {{- else }}
 return &{{ $field | IDHandleClient }}{
@@ -166,7 +168,9 @@ return &{{ $typeName | InterfaceClientName }}{
 	}
 {{- end }}, nil
 	{{- else }}
-	{{- if IsSharedCoreObject $field.TypeRef }}
+	{{- if and (IsSharedCoreObject $field.TypeRef) KeepsLoadedIDs }}
+return loaded[*{{ $typeName }}](q, *objectID)
+	{{- else if IsSharedCoreObject $field.TypeRef }}
 return new({{ $typeName }}).WithGraphQLQuery(selectNode(q.Root(), *objectID, "{{ $typeName }}"))
 {{- else }}
 return &{{ $typeName }}{
@@ -240,7 +244,9 @@ return &{{ $typeName }} {
         out := {{ $field.TypeRef | FormatOutputType }}{}
 
         for i := range fields {
-            {{- if IsSharedCoreObject $eleType }}
+            {{- if and (IsSharedCoreObject $eleType) KeepsLoadedIDs }}
+            val := *loaded[*{{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}](q, fields[i].Id)
+            {{- else if IsSharedCoreObject $eleType }}
             val := *new({{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}).WithGraphQLQuery(selectNode(q.Root(), fields[i].Id, "{{$eleType | ObjectName}}"))
             {{- else }}
             val := {{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}{{"{"}}{{ $field | GetArrayField | FormatArrayField }}{{"}"}}

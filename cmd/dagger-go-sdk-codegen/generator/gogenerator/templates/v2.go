@@ -10,11 +10,13 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"path"
 	"strconv"
 	"strings"
 
 	. "github.com/dave/jennifer/jen" //nolint:staticcheck
 	"github.com/iancoleman/strcase"
+	"golang.org/x/mod/semver"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 
@@ -32,8 +34,10 @@ type V2Artifacts struct {
 
 // EntrypointSources is what a module's build reads outside its module
 // directory. The entrypoint's sources function returns these files beside the
-// module directory, and the engine builds the module and keys its results on
-// what sources returns.
+// module directory, and the module's manifest includes the same files (see
+// ManifestInclude). An engine that reads the manifest's include loads them
+// with the module and does not run sources; an older one runs sources. Either
+// way the engine builds the module and keys its results on these files.
 type EntrypointSources struct {
 	// Anchor is the directory that holds the module directory and every
 	// included path, relative to the module directory, such as "..".
@@ -45,6 +49,33 @@ type EntrypointSources struct {
 // sourcesFloor is the first Dagger release that calls the entrypoint's
 // sources function and passes no workspace to types and call.
 const sourcesFloor = "v1.0.0-beta.18"
+
+// platformFloor is the first Dagger release with Directory.withPlatform and
+// a prebuild for another platform (Module._prebuild's platform): an
+// entrypoint of a module that targets it declares its process's binary as
+// made for its platform, which an engine image of another platform can
+// then ship (not yet released).
+const platformFloor = "v1.0.0-beta.26"
+
+// identifierCasingFloor is the first Dagger release whose view names enum
+// members by their values, FunctionCachePolicy.PER_SESSION rather than
+// PerSession; no view has both. The entrypoint of a module that targets it
+// is served at that view (not yet released).
+const identifierCasingFloor = "v1.0.0-beta.26"
+
+// casesIdentifiers reports whether the entrypoint names enum members as the
+// view of identifierCasingFloor and later does: whether the module targets
+// identifierCasingFloor or later.
+func (mod *v2Module) casesIdentifiers() bool {
+	return mod.targetVersion != "" && semver.Compare(mod.targetVersion, identifierCasingFloor) >= 0
+}
+
+// declaresPlatform reports whether the entrypoint builds its process's
+// binary for a platform it is given and declares it for that platform:
+// whether the module targets platformFloor or later.
+func (mod *v2Module) declaresPlatform() bool {
+	return mod.targetVersion != "" && semver.Compare(mod.targetVersion, platformFloor) >= 0
+}
 
 // GenerateV2Artifacts analyzes a Go module with the existing parser and emits
 // a manifest-v2 entrypoint around its established static dispatcher. The
@@ -61,6 +92,8 @@ func GenerateV2Artifacts(
 	packageImport string,
 	moduleSubpath string,
 	goImage string,
+	runtimeImage string,
+	daggerGo bool,
 	targetVersion string,
 	sources *EntrypointSources,
 ) (*V2Artifacts, error) {
@@ -76,7 +109,7 @@ func GenerateV2Artifacts(
 		pass:            1,
 	}
 
-	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, targetVersion, sources)
+	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, targetVersion, sources)
 }
 
 type v2Module struct {
@@ -87,9 +120,19 @@ type v2Module struct {
 	implementation *Statement
 	sources        *EntrypointSources
 	targetVersion  string
+	// runtimeImage is the image the module's process runs in; empty for
+	// defaultRuntimeImage.
+	runtimeImage string
+	// daggerGo builds the module's process with dagger/go, a client of the
+	// module, instead of a go build of its own.
+	daggerGo bool
 }
 
-func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
+// defaultRuntimeImage is the image a module's process runs in when the
+// generator isn't given one.
+const defaultRuntimeImage = "alpine:3.22"
+
+func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage string, daggerGo bool, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
 	if !exposesModuleContext(funcs.schema) {
 		return nil, errors.New("the generated Dang entrypoint needs Dagger " + sourcesFloor + " or later")
 	}
@@ -98,6 +141,8 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		implementation: Empty(),
 		sources:        sources,
 		targetVersion:  targetVersion,
+		runtimeImage:   runtimeImage,
+		daggerGo:       daggerGo,
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -320,7 +365,7 @@ func slicesSortStrings(values []string) {
 func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage string, packageNames ...string) ([]byte, error) {
 	var defs []string
 	for _, obj := range mod.objects {
-		def, err := renderDangObject(obj)
+		def, err := renderDangObject(obj, mod.casesIdentifiers())
 		if err != nil {
 			return nil, err
 		}
@@ -332,7 +377,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 		defs = append(defs, def)
 	}
 	for _, iface := range mod.interfaces {
-		def, err := renderDangInterface(iface)
+		def, err := renderDangInterface(iface, mod.casesIdentifiers())
 		if err != nil {
 			return nil, err
 		}
@@ -354,28 +399,37 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	b.WriteString("type Entrypoint implements ModuleEntrypoint {\n")
 	writeSources(&b, mod.sources)
 	workdir := `"/workspace/" + currentModule.sourceSubpath`
-	b.WriteString("  let dispatch: File! {\n")
-	b.WriteString("    container\n")
-	fmt.Fprintf(&b, "      .from(%s)\n", strconv.Quote(goImage))
-	b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
-	b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
-	b.WriteString("      .withMountedDirectory(\"/workspace\", currentModule.contextDirectory)\n")
-	fmt.Fprintf(&b, "      .withWorkdir(%s)\n", workdir)
-	b.WriteString("      .withEnvVariable(\"CGO_ENABLED\", \"0\")\n")
-	b.WriteString("      .withEnvVariable(\"GOWORK\", \"off\")\n")
 	buildTarget := "./cmd/" + strcase.ToKebab(moduleName) + "-dispatch"
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		buildTarget = "."
 	}
-	// Go reports a file that sources leaves out as a missing module or
-	// package and suggests go get; the fix is to generate again.
-	script := "go build -o /tmp/dispatch " + buildTarget + " 2>/tmp/build.log && exit 0; cat /tmp/build.log >&2; " +
-		"grep -q -e 'no required module provides package' -e 'replacement directory' -e 'no matching files found' /tmp/build.log && " +
-		"echo 'The build misses files outside the module directory: run dagger generate after changing go.mod replace directives, " +
-		"the imports from a replace target or their embeds.' >&2; exit 1"
-	fmt.Fprintf(&b, "      .withExec([\"sh\", \"-c\", %s])\n", strconv.Quote(script))
-	b.WriteString("      .file(\"/tmp/dispatch\")\n")
-	b.WriteString("  }\n\n")
+	declares := mod.declaresPlatform()
+	if mod.daggerGo {
+		writeDaggerGoDispatch(&b, moduleSubpath, buildTarget, declares)
+	} else {
+		writeGoBuildDispatch(&b, goImage, workdir, buildTarget, declares)
+	}
+	// The engine evaluates prebuild before the module's first call, so the
+	// call finds its binary built, or joins the build in flight. For another
+	// platform's engine, such as an engine image of another platform ships,
+	// the engine asks for that platform's.
+	dispatch := "dispatch"
+	if declares {
+		dispatch = "dispatch(defaultPlatform)"
+		b.WriteString("  pub prebuild(platform: Platform): File! {\n    dispatch(platform ?? defaultPlatform)\n  }\n\n")
+	} else {
+		b.WriteString("  pub prebuild: File! {\n    dispatch\n  }\n\n")
+	}
+	runtimeImage := mod.runtimeImage
+	if runtimeImage == "" {
+		runtimeImage = defaultRuntimeImage
+	}
+	// The engine reads the image the module's calls run in from
+	// runtimeImage, as it reads prebuild, such as to ship it in an engine
+	// image of any platform; the calls start from it. It needs nothing newer
+	// than the entrypoint itself does, so every target declares it, and an
+	// engine that doesn't read it ignores it.
+	fmt.Fprintf(&b, "  pub runtimeImage(platform: Platform): Container! {\n    container(platform: platform ?? defaultPlatform).from(%s)\n  }\n\n", strconv.Quote(runtimeImage))
 	b.WriteString("  pub types: [TypeDef!]! {\n")
 	b.WriteString("    [\n")
 	for i, def := range defs {
@@ -401,9 +455,8 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
       fnArgs: fnArgs,
     }})
     # A build failure stays out of the rescue below, so it surfaces unchanged.
-    let binary = dispatch.sync
-    let result = container
-      .from("alpine:3.22")
+    let binary = ` + dispatch + `.sync
+    let result = runtimeImage(defaultPlatform)
       .withFile("/usr/local/bin/dispatch", binary, permissions: 755)
       .withMountedDirectory("/workspace", currentModule.contextDirectory)
 `)
@@ -464,6 +517,23 @@ func writeSources(b *bytes.Buffer, sources *EntrypointSources) {
 `)
 }
 
+// ManifestInclude is the manifest's include list for what a module's build
+// reads outside its module directory, selecting what sources returns: each
+// pattern relative to the module directory, then every test file under the
+// anchor excluded, which the build never reads, and the module's own test
+// files kept, as part of the module directory. A module that reads nothing
+// outside gets an empty list, which still replaces sources.
+func ManifestInclude(sources *EntrypointSources) []string {
+	include := []string{}
+	if sources == nil || len(sources.Include) == 0 {
+		return include
+	}
+	for _, pattern := range sources.Include {
+		include = append(include, path.Join(sources.Anchor, pattern))
+	}
+	return append(include, "!"+path.Join(sources.Anchor, "**", "*_test.go"), "**/*_test.go")
+}
+
 func exposesModuleContext(schema *introspection.Schema) bool {
 	currentModule := schema.Types.Get("CurrentModule")
 	if currentModule == nil {
@@ -489,13 +559,13 @@ func dangStringList(values []string) string {
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
-func renderDangObject(spec *parsedObjectType) (string, error) {
+func renderDangObject(spec *parsedObjectType, cased bool) (string, error) {
 	base := "typeDef.withObject(" + strings.Join(append([]string{strconv.Quote(spec.name)}, objectOpts(spec.doc, spec.sourceMap, spec.deprecated)...), ", ") + ")"
 	if spec.isCollection {
 		base += "\n  .withCollection"
 	}
 	for _, method := range spec.methods {
-		fn, err := renderDangFunction(method)
+		fn, err := renderDangFunction(method, cased)
 		if err != nil {
 			return "", err
 		}
@@ -523,7 +593,7 @@ func renderDangObject(spec *parsedObjectType) (string, error) {
 		}
 	}
 	if spec.constructor != nil {
-		fn, err := renderDangFunctionNamed(spec.constructor, "")
+		fn, err := renderDangFunctionNamed(spec.constructor, "", cased)
 		if err != nil {
 			return "", err
 		}
@@ -532,12 +602,12 @@ func renderDangObject(spec *parsedObjectType) (string, error) {
 	return base, nil
 }
 
-func renderDangInterface(spec *parsedIfaceType) (string, error) {
+func renderDangInterface(spec *parsedIfaceType, cased bool) (string, error) {
 	args := []string{strconv.Quote(spec.name)}
 	args = append(args, objectOpts(spec.doc, spec.sourceMap, nil)...)
 	base := "typeDef.withInterface(" + strings.Join(args, ", ") + ")"
 	for _, method := range spec.methods {
-		fn, err := renderDangFunction(method)
+		fn, err := renderDangFunction(method, cased)
 		if err != nil {
 			return "", err
 		}
@@ -569,11 +639,13 @@ func renderDangEnum(spec *parsedEnumType) (string, error) {
 	return base, nil
 }
 
-func renderDangFunction(spec *funcTypeSpec) (string, error) {
-	return renderDangFunctionNamed(spec, spec.name)
+// renderDangFunction renders a function's definition. cased names enum
+// members as the view of identifierCasingFloor and later does.
+func renderDangFunction(spec *funcTypeSpec, cased bool) (string, error) {
+	return renderDangFunctionNamed(spec, spec.name, cased)
 }
 
-func renderDangFunctionNamed(spec *funcTypeSpec, name string) (string, error) {
+func renderDangFunctionNamed(spec *funcTypeSpec, name string, cased bool) (string, error) {
 	returnType := "typeDef.withKind(TypeDefKind.VOID_KIND).withOptional(true)"
 	if spec.returnSpec != nil {
 		var err error
@@ -586,14 +658,18 @@ func renderDangFunctionNamed(spec *funcTypeSpec, name string) (string, error) {
 	if spec.doc != "" {
 		base += "\n  .withDescription(" + strconv.Quote(strings.TrimSpace(spec.doc)) + ")"
 	}
+	never, perSession, defaultPolicy := "Never", "PerSession", "Default"
+	if cased {
+		never, perSession, defaultPolicy = "NEVER", "PER_SESSION", "DEFAULT"
+	}
 	switch spec.cachePolicy {
 	case "never":
-		base += "\n  .withCachePolicy(FunctionCachePolicy.Never)"
+		base += "\n  .withCachePolicy(FunctionCachePolicy." + never + ")"
 	case "session":
-		base += "\n  .withCachePolicy(FunctionCachePolicy.PerSession)"
+		base += "\n  .withCachePolicy(FunctionCachePolicy." + perSession + ")"
 	case "":
 	default:
-		base += "\n  .withCachePolicy(FunctionCachePolicy.Default, timeToLive: " + strconv.Quote(strings.TrimSpace(spec.cachePolicy)) + ")"
+		base += "\n  .withCachePolicy(FunctionCachePolicy." + defaultPolicy + ", timeToLive: " + strconv.Quote(strings.TrimSpace(spec.cachePolicy)) + ")"
 	}
 	if spec.sourceMap != nil {
 		base += "\n  .withSourceMap(" + renderDangSourceMap(spec.sourceMap) + ")"
@@ -1001,4 +1077,86 @@ func developerArgEncoding(spec ParsedType) string {
 		}
 	}
 	return "json"
+}
+
+// writeGoBuildDispatch writes the entrypoint's dispatch member as a go build
+// of the module's process at buildTarget, in goImage, with the module's own
+// Go cache volumes. With declares, it builds for a platform it is given,
+// which the engine's own Go toolchain compiles for, and declares the binary
+// as made for that platform (Directory.withPlatform): an engine of that
+// platform finds the one an engine of another platform made, such as in the
+// entries its image ships.
+func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string, declares bool) {
+	if declares {
+		b.WriteString("  let dispatch(platform: Platform!): File! {\n")
+		b.WriteString("    # Platform is its own scalar; a template is how Dang turns one into text.\n")
+		b.WriteString("    let target = `${platform}`.split(\"/\")\n")
+	} else {
+		b.WriteString("  let dispatch: File! {\n")
+	}
+	b.WriteString("    container\n")
+	fmt.Fprintf(b, "      .from(%s)\n", strconv.Quote(goImage))
+	b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
+	b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
+	b.WriteString("      .withMountedDirectory(\"/workspace\", currentModule.contextDirectory)\n")
+	fmt.Fprintf(b, "      .withWorkdir(%s)\n", workdir)
+	b.WriteString("      .withEnvVariable(\"CGO_ENABLED\", \"0\")\n")
+	b.WriteString("      .withEnvVariable(\"GOWORK\", \"off\")\n")
+	output := "/tmp/dispatch"
+	if declares {
+		b.WriteString("      .withEnvVariable(\"GOOS\", target.takeFirst(1).join(\"\"))\n")
+		b.WriteString("      .withEnvVariable(\"GOARCH\", target.takeFirst(2).takeLast(1).join(\"\"))\n")
+		output = "/tmp/dispatch/dispatch"
+	}
+	// Go reports a file that sources leaves out as a missing module or
+	// package and suggests go get; the fix is to generate again.
+	script := "go build -o " + output + " " + buildTarget + " 2>/tmp/build.log && exit 0; cat /tmp/build.log >&2; " +
+		"grep -q -e 'no required module provides package' -e 'replacement directory' -e 'no matching files found' /tmp/build.log && " +
+		"echo 'The build misses files outside the module directory: run dagger generate after changing go.mod replace directives, " +
+		"the imports from a replace target or their embeds.' >&2; exit 1"
+	fmt.Fprintf(b, "      .withExec([\"sh\", \"-c\", %s])\n", strconv.Quote(script))
+	if declares {
+		b.WriteString("      .directory(\"/tmp/dispatch\")\n")
+		b.WriteString("      .withPlatform(platform: platform)\n")
+		b.WriteString("      .file(\"dispatch\")\n")
+	} else {
+		b.WriteString("      .file(\"/tmp/dispatch\")\n")
+	}
+	b.WriteString("  }\n\n")
+}
+
+// writeDaggerGoDispatch writes the entrypoint's dispatch member as dagger/go's
+// build of the module's process at buildTarget: the same per-package builds,
+// cached the same way, as any dagger/go build, at the toolchain of the
+// module's go.mod. dagger/go is the module's client "go". moduleSubpath is
+// the module's directory under its Go module's.
+func writeDaggerGoDispatch(b *bytes.Buffer, moduleSubpath, buildTarget string, declares bool) {
+	if declares {
+		b.WriteString("  let dispatch(platform: Platform!): File! {\n")
+	} else {
+		b.WriteString("  let dispatch: File! {\n")
+	}
+	b.WriteString("    let ws = currentModule.contextDirectory.asWorkspace\n")
+	b.WriteString("    let src = currentModule.sourceSubpath\n")
+	// dagger/go keys a package by its directory in the workspace.
+	if moduleSubpath == "." {
+		b.WriteString("    let root = src\n")
+	} else {
+		fmt.Fprintf(b, "    let root = if (src == %s) { \".\" } else { src.trimSuffix(%s) }\n",
+			strconv.Quote(moduleSubpath), strconv.Quote("/"+moduleSubpath))
+	}
+	pkg := strings.TrimPrefix(buildTarget, "./")
+	if pkg == "." {
+		b.WriteString("    let pkg = src\n")
+	} else {
+		fmt.Fprintf(b, "    let pkg = if (src == \".\") { %s } else { src + %s }\n", strconv.Quote(pkg), strconv.Quote("/"+pkg))
+	}
+	if declares {
+		// dagger/go compiles for any platform with the engine's toolchain,
+		// and declares the binary as made for it.
+		b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).platforms.get(`${platform}`.split(\"/\").takeFirst(2).join(\"/\")).binary(ws)\n")
+	} else {
+		b.WriteString("    go.module(ws, path: root, findUp: false).packages(ws).get(pkg).binary(ws)\n")
+	}
+	b.WriteString("  }\n\n")
 }

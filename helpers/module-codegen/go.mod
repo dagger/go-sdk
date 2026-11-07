@@ -7,8 +7,8 @@ require (
 	github.com/iancoleman/strcase v0.3.0
 	github.com/psanford/memfs v0.0.0-20241019191636-4ef911798f9b
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/mod v0.37.0
-	golang.org/x/tools v0.45.0
+	golang.org/x/mod v0.41.0
+	golang.org/x/tools v0.50.0
 )
 
 require (
@@ -32,8 +32,8 @@ require (
 	go.opentelemetry.io/otel v1.41.0 // indirect
 	go.opentelemetry.io/otel/metric v1.41.0 // indirect
 	go.opentelemetry.io/otel/trace v1.41.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

@@ -344,3 +344,85 @@ func TestAuthorCoreAliasesSkipDependencyNames(t *testing.T) {
 	require.Equal(t, map[string]bool{"ContainerWithExecOpts": true, "ImageLayerCompressionGzip": true}, referenced)
 	require.Equal(t, map[string]bool{"ContainerWithExecOpts": false, "ImageLayerCompressionGzip": true}, constants)
 }
+
+// TestUnifiedModuleKeepsLoadedIDs verifies that a module's bindings build each
+// core object a list field returns knowing the ID the same request returned,
+// when the module targets a release whose library has core.Loaded; and that a
+// default-target module, which pins the released library, doesn't reference
+// it. With GO_SDK_TEST_RUNTIME set to such a library, it also runs the
+// generated code: the returned files carry their IDs, so no node(id) request
+// follows the list's.
+func TestUnifiedModuleKeepsLoadedIDs(t *testing.T) {
+	generate := func(t *testing.T, root, targetVersion string) *generator.GeneratedState {
+		schema := buildClientSchema()
+		schema.Types = append(schema.Types, &introspection.Type{Kind: introspection.TypeKindObject, Name: "File", Fields: []*introspection.Field{
+			{Name: "id", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "ID"}}},
+		}})
+		file := &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindObject, Name: "File"}}
+		schema.Types[1].Fields = append(schema.Types[1].Fields, &introspection.Field{Name: "files", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindList, OfType: file}}})
+		generator.SetSchemaParents(schema)
+		gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: root, PackageImport: "example.com/app/client",
+			ClientConfig: &generator.ClientGeneratorConfig{},
+			ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "hello", TargetVersion: targetVersion}}}
+		state, err := gen.GenerateClient(t.Context(), schema, "v1.0.0")
+		require.NoError(t, err)
+		return state
+	}
+	t.Run("default target", func(t *testing.T) {
+		state := generate(t, t.TempDir(), "")
+		require.NotContains(t, readOverlay(t, state, "hello.gen.go"), "loaded[")
+		require.NotContains(t, readOverlay(t, state, "dagger.gen.go"), "core.Loaded")
+	})
+	t.Run("older target", func(t *testing.T) {
+		state := generate(t, t.TempDir(), "v1.0.0-beta.25")
+		require.NotContains(t, readOverlay(t, state, "hello.gen.go"), "loaded[")
+		require.NotContains(t, readOverlay(t, state, "dagger.gen.go"), "core.Loaded")
+	})
+	t.Run("loaded target", func(t *testing.T) {
+		root := t.TempDir()
+		state := generate(t, root, "v1.0.0-beta.26")
+		require.Contains(t, readOverlay(t, state, "hello.gen.go"), "val := *loaded[*File](q, fields[i].Id)")
+		require.Contains(t, readOverlay(t, state, "dagger.gen.go"), "core.Loaded[T]")
+		require.NoError(t, generator.Overlay(t.Context(), state.Overlay, filepath.Join(root, "client")))
+
+		sdkPath := os.Getenv("GO_SDK_TEST_RUNTIME")
+		if sdkPath == "" {
+			t.Skip("set GO_SDK_TEST_RUNTIME to a dagger.io/dagger with core.Loaded to run the generated package")
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.26\n\nrequire dagger.io/dagger v1.0.0-beta.26\nreplace dagger.io/dagger => "+sdkPath+"\n"), 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "client_test.go"), []byte(`package app_test
+import(
+	"bytes";"context";"io";"net/http";"strings";"sync";"testing"
+	"dagger.io/dagger";"example.com/app/client"
+)
+type listConn struct{ mu sync.Mutex; queries []string }
+func (*listConn) Host() string { return "fake" }
+func (*listConn) Close() error { return nil }
+func (c *listConn) Do(r *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(r.Body)
+	c.mu.Lock(); c.queries = append(c.queries, string(body)); c.mu.Unlock()
+	out := `+"`"+`{"data":{"hello":{"files":[{"id":"file.1"},{"id":"file.2"}]}}}`+"`"+`
+	if !strings.Contains(string(body), "files") { out = `+"`"+`{"errors":[{"message":"unexpected query"}]}`+"`"+` }
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader([]byte(out)))}, nil
+}
+func TestListFilesKeepIDs(t *testing.T) {
+	ctx := context.Background()
+	conn := &listConn{}
+	c, err := dagger.Connect(ctx, dagger.WithConn(conn))
+	if err != nil { t.Fatal(err) }
+	files, err := client.Connect(c).Hello().Files(ctx)
+	if err != nil { t.Fatal(err) }
+	for i, want := range []string{"file.1", "file.2"} {
+		id, err := files[i].ID(ctx)
+		if err != nil { t.Fatal(err) }
+		if string(id) != want { t.Fatalf("file %d: ID %q, want %q", i, id, want) }
+	}
+	if len(conn.queries) != 1 { t.Fatalf("%d queries, want only the list's: %v", len(conn.queries), conn.queries) }
+}
+`), 0644))
+		cmd := exec.CommandContext(t.Context(), "go", "test", "-mod=mod", "-buildvcs=false", "-run", "TestListFilesKeepIDs", "./...")
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	})
+}

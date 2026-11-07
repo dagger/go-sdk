@@ -67,11 +67,50 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.NotContains(t, text, "pub main(")
 	require.Contains(t, text, "pub sources(workspace: Workspace!): Directory!")
 	require.Contains(t, text, "pub types: [TypeDef!]!")
+	require.Contains(t, text, "  pub prebuild: File! {\n    dispatch\n  }")
+	require.NotContains(t, text, "withPlatform")
 	require.Contains(t, text, `.withWorkdir("/workspace/" + currentModule.sourceSubpath)`)
 	require.Contains(t, text, "fnArgs: JSON!,")
 	require.Contains(t, text, "fnArgs: fnArgs,")
 	require.Contains(t, text, "(result :: JSON!)")
 	require.NotContains(t, text, "FunctionCallArgValue")
+}
+
+// The entrypoint builds and runs the module in the images it's given, which
+// the SDK pins by digest, and runs it in alpine without one.
+func TestEntrypointImages(t *testing.T) {
+	const goImage = "docker.io/library/golang:1.26.1-alpine@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const runtimeImage = "docker.io/library/alpine:3.22@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	source, err := (&v2Module{runtimeImage: runtimeImage}).renderEntrypointSource("hello", ".", goImage)
+	require.NoError(t, err)
+	text := string(source)
+	require.Contains(t, text, `.from("`+goImage+`")`)
+	require.Contains(t, text, `.from("`+runtimeImage+`")`)
+	require.NotContains(t, text, `.from("alpine:3.22")`)
+
+	source, err = (&v2Module{}).renderEntrypointSource("hello", ".", goImage)
+	require.NoError(t, err)
+	require.Contains(t, string(source), `.from("alpine:3.22")`)
+}
+
+// With daggerGo, the entrypoint builds the module's process with dagger/go,
+// by its package's workspace directory, instead of a go build of its own.
+func TestEntrypointDaggerGoDispatch(t *testing.T) {
+	source, err := (&v2Module{daggerGo: true}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+	require.NoError(t, err)
+	text := string(source)
+	require.Contains(t, text, "let ws = currentModule.contextDirectory.asWorkspace")
+	require.Contains(t, text, "let root = src\n")
+	require.Contains(t, text, "let pkg = src\n")
+	require.Contains(t, text, "go.module(ws, path: root, findUp: false).packages(ws).get(pkg).binary(ws)")
+	require.NotContains(t, text, "go build -o /tmp/dispatch")
+	require.NotContains(t, text, "go-sdk-v2-build")
+
+	source, err = (&v2Module{daggerGo: true}).renderEntrypointSource("hello", "modules/hello", "golang:1.26-alpine")
+	require.NoError(t, err)
+	text = string(source)
+	require.Contains(t, text, `let root = if (src == "modules/hello") { "." } else { src.trimSuffix("/modules/hello") }`)
+	require.Contains(t, text, `let pkg = if (src == ".") { "cmd/hello-dispatch" } else { src + "/cmd/hello-dispatch" }`)
 }
 
 func TestEntrypointWithoutOutsideFilesReturnsItsOwnDirectory(t *testing.T) {
@@ -140,10 +179,29 @@ func TestDangFunctionDefaultValueIsJSONText(t *testing.T) {
 			defaultValue:    "alpine:3.21",
 			hasDefaultValue: true,
 		}},
-	})
+	}, false)
 	require.NoError(t, err)
 	require.Contains(t, source, `defaultValue: ("\"alpine:3.21\"" :: Dagger.JSON!)`)
 	require.NotContains(t, source, "JSON.decode")
+}
+
+// From identifierCasingFloor on, the view names FunctionCachePolicy's
+// members by their values, and earlier views by their old names; no view
+// has both, so the entrypoint must use the one its target's view serves.
+func TestDangFunctionCachePolicyFollowsTargetCasing(t *testing.T) {
+	for _, c := range []struct {
+		target, never, session, ttl string
+	}{
+		{"v1.0.0-beta.24", "FunctionCachePolicy.Never)", "FunctionCachePolicy.PerSession)", "FunctionCachePolicy.Default, timeToLive:"},
+		{"v1.0.0-beta.26", "FunctionCachePolicy.NEVER)", "FunctionCachePolicy.PER_SESSION)", "FunctionCachePolicy.DEFAULT, timeToLive:"},
+	} {
+		cased := (&v2Module{targetVersion: c.target}).casesIdentifiers()
+		for policy, want := range map[string]string{"never": c.never, "session": c.session, "1h": c.ttl} {
+			source, err := renderDangFunction(&funcTypeSpec{name: "Get", cachePolicy: policy}, cased)
+			require.NoError(t, err)
+			require.Contains(t, source, ".withCachePolicy("+want, "%s %s", c.target, policy)
+		}
+	}
 }
 
 func TestDispatchForObjectWithoutFunctions(t *testing.T) {
@@ -345,6 +403,28 @@ func TestEntrypointSourcesAvoidsResources(t *testing.T) {
 	}
 }
 
+// The manifest's include roots each pattern at the anchor, relative to the
+// module directory, then excludes every test file outside the module, embedded
+// directories' too, and keeps the module's own: what sources returns. A module
+// that reads nothing outside gets an empty list.
+func TestManifestInclude(t *testing.T) {
+	require.Equal(t, []string{}, ManifestInclude(nil))
+	require.Equal(t, []string{}, ManifestInclude(&EntrypointSources{Anchor: ".."}))
+	require.Equal(t, []string{
+		"../lib/go.mod",
+		"../lib/greet/*.go",
+		"../lib/greet/templates",
+		"!../**/*_test.go",
+		"**/*_test.go",
+	}, ManifestInclude(&EntrypointSources{Anchor: "..", Include: []string{"lib/go.mod", "lib/greet/*.go", "lib/greet/templates"}}))
+	require.Equal(t, []string{
+		"../../../go.mod",
+		"../../../greet/*.go",
+		"!../../../**/*_test.go",
+		"**/*_test.go",
+	}, ManifestInclude(&EntrypointSources{Anchor: "../../..", Include: []string{"go.mod", "greet/*.go"}}))
+}
+
 func TestExposesModuleContext(t *testing.T) {
 	schema := func(fields ...string) *introspection.Schema {
 		currentModule := &introspection.Type{Name: "CurrentModule"}
@@ -365,4 +445,50 @@ func TestSdkFloorIsTheSourcesFloor(t *testing.T) {
 	match := regexp.MustCompile(`(?m)^sourcesFloor\s*=\s*"([^"]*)"`).FindSubmatch(data)
 	require.NotNil(t, match, "sourcesFloor not found in versions.toml")
 	require.Equal(t, sourcesFloor, string(match[1]))
+}
+
+// runtimeImageMember is the member that declares the image a module's calls
+// run in, for its fixtures' default runtime image.
+const runtimeImageMember = "  pub runtimeImage(platform: Platform): Container! {\n    container(platform: platform ?? defaultPlatform).from(\"alpine:3.22\")\n  }"
+
+// A module of any target declares the image its calls run in, for the
+// engine's platform or one it is given, as the one place it names it, and
+// its calls start from it.
+func TestEntrypointDeclaresRuntimeImage(t *testing.T) {
+	for _, target := range []string{"", "v1.0.0-beta.18", "v1.0.0-beta.24", platformFloor} {
+		for _, daggerGo := range []bool{false, true} {
+			source, err := (&v2Module{daggerGo: daggerGo, targetVersion: target}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+			require.NoError(t, err)
+			text := string(source)
+			require.Contains(t, text, runtimeImageMember)
+			require.Contains(t, text, "    let result = runtimeImage(defaultPlatform)\n      .withFile(")
+			require.Equal(t, 1, strings.Count(text, "alpine:3.22"), "the calls' image is named once, by runtimeImage")
+		}
+	}
+}
+
+// A module that targets platformFloor or later builds its process for a
+// platform it is given and declares the binary for it, so that an engine
+// image of another platform can ship it; its prebuild takes the platform.
+func TestEntrypointDeclaresPlatformFromFloor(t *testing.T) {
+	for _, daggerGo := range []bool{false, true} {
+		older, err := (&v2Module{daggerGo: daggerGo, targetVersion: "v1.0.0-beta.24"}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+		require.NoError(t, err)
+		require.Contains(t, string(older), "  pub prebuild: File! {\n    dispatch\n  }")
+		// Only the runtime image takes a platform below the floor.
+		require.NotContains(t, strings.ReplaceAll(string(older), runtimeImageMember, ""), "platform")
+
+		source, err := (&v2Module{daggerGo: daggerGo, targetVersion: platformFloor}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+		require.NoError(t, err)
+		text := string(source)
+		require.Contains(t, text, "  let dispatch(platform: Platform!): File! {\n")
+		require.Contains(t, text, "  pub prebuild(platform: Platform): File! {\n    dispatch(platform ?? defaultPlatform)\n  }")
+		require.Contains(t, text, "    let binary = dispatch(defaultPlatform).sync\n")
+		if daggerGo {
+			require.Contains(t, text, ".platforms.get(`${platform}`.split(\"/\").takeFirst(2).join(\"/\")).binary(ws)")
+		} else {
+			require.Contains(t, text, `.withEnvVariable("GOARCH", target.takeFirst(2).takeLast(1).join(""))`)
+			require.Contains(t, text, "      .directory(\"/tmp/dispatch\")\n      .withPlatform(platform: platform)\n      .file(\"dispatch\")\n")
+		}
+	}
 }

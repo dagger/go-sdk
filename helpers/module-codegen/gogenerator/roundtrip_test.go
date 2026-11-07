@@ -222,8 +222,14 @@ func TestGenerateModuleWithSources(t *testing.T) {
 		"lib/greet/greeting.txt":      "hello from lib",
 		"lib/greet/testdata/data.txt": "not built\n",
 	})
-	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	includeList := filepath.Join(t.TempDir(), "include.txt")
+	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine", IncludePath: includeList}
 	require.NoError(t, Generate(t.Context(), cfg))
+
+	// The manifest includes what sources returns.
+	include, err := os.ReadFile(includeList)
+	require.NoError(t, err)
+	require.Equal(t, "../lib/go.mod\n../lib/greet/*.go\n../lib/greet/*.h\n../lib/greet/*.s\n../lib/greet/*.syso\n../lib/greet/greeting.txt\n!../**/*_test.go\n**/*_test.go\n", string(include))
 
 	entrypoint, err := os.ReadFile(filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang"))
 	require.NoError(t, err)
@@ -269,8 +275,15 @@ func TestGenerateSourcesMatchTidiedGoMod(t *testing.T) {
 		"lib/go.mod":         "module example.com/lib\n\ngo 1.26.1\n",
 		"lib/greet/greet.go": "package greet\n",
 	})
-	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine"}
+	includeList := filepath.Join(t.TempDir(), "include.txt")
+	cfg := GenerateConfig{BuildRoot: buildRoot, ModuleRoot: root, ModuleName: "app", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.17", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26.1-alpine", IncludePath: includeList}
 	require.NoError(t, Generate(t.Context(), cfg))
+
+	// The module imports nothing from the replace target: sources returns the
+	// module directory only, and the manifest's include is empty.
+	include, err := os.ReadFile(includeList)
+	require.NoError(t, err)
+	require.Empty(t, string(include))
 
 	entrypointPath := filepath.Join(root, "internal", "dagger", "entrypoint", "main.dang")
 	entrypoint, err := os.ReadFile(entrypointPath)

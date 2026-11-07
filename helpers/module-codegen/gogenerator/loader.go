@@ -2,10 +2,14 @@ package gogenerator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
+	"slices"
+	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -64,4 +68,24 @@ func loadPackage(ctx context.Context, dir string, allowEmpty bool) (*packages.Pa
 		// this would mean I don't understand how loading '.' works
 		return nil, nil, fmt.Errorf("expected 1 package, got %d", len(pkgs))
 	}
+}
+
+// stdlibImportErrors reports the errors of the standard library packages pkg
+// imports. Their types come from export data, which a loader older than the
+// Go toolchain cannot read. The declarations that use them would then have
+// invalid types, and the generated code would describe them wrongly.
+// Packages from modules are left to the build, which compiles the module
+// without cgo, unlike the loader.
+func stdlibImportErrors(pkg *packages.Package) error {
+	var errs []error
+	for _, path := range slices.Sorted(maps.Keys(pkg.Imports)) {
+		imp := pkg.Imports[path]
+		if imp.Module != nil || strings.Contains(strings.SplitN(path, "/", 2)[0], ".") {
+			continue
+		}
+		for _, err := range imp.Errors {
+			errs = append(errs, fmt.Errorf("import %s: %w", path, err))
+		}
+	}
+	return errors.Join(errs...)
 }

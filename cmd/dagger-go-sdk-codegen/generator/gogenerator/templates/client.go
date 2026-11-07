@@ -3,6 +3,8 @@ package templates
 import (
 	"strings"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/introspection"
 )
@@ -40,6 +42,26 @@ func (funcs goTemplateFuncs) isSharedCoreObject(ref *introspection.TypeRef) bool
 func (funcs goTemplateFuncs) isSharedCoreObjectType(typ *introspection.Type) bool {
 	return funcs.cfg.UnifiedClient && typ != nil && typ.Directives.SourceMap() == nil
 }
+
+// keepsLoadedIDs reports whether the generated code builds a shared core
+// object from an ID a request returned with that ID known (loaded,
+// core.Loaded), instead of asking the engine for it again on every use: unified
+// bindings that target loadedIDsVersion or later, whose dagger.io/dagger has
+// core.Loaded. A default-target module pins the released library, which
+// doesn't.
+func (funcs goTemplateFuncs) keepsLoadedIDs() bool {
+	return funcs.cfg.UnifiedClient && KeepsLoadedIDs(funcs.cfg.TargetVersion())
+}
+
+// KeepsLoadedIDs reports whether code that targets version builds with a
+// dagger.io/dagger that has core.Loaded.
+func KeepsLoadedIDs(version string) bool {
+	return version != "" && semver.Compare(version, loadedIDsVersion) >= 0
+}
+
+// loadedIDsVersion is the first Dagger release whose dagger.io/dagger has
+// core.Loaded (not yet released).
+const loadedIDsVersion = "v1.0.0-beta.26"
 
 func (funcs goTemplateFuncs) isSharedCoreHandle(field introspection.Field) bool {
 	return funcs.isSharedCoreObjectType(funcs.fullSchema.Types.Get(funcs.IDHandleType(field)))

@@ -23,6 +23,15 @@ Generation writes the patterns of these files into `sources`.
 For a module whose build reads nothing outside its directory, `sources`
 returns the module directory only.
 
+Generation also lists the same files in the module's `dagger-module.toml`, as
+`include`, relative to the module directory. The list excludes every test
+file outside the module and keeps the module's own, as `sources` does. A
+module whose build reads nothing outside gets `include = []`.
+An engine that reads a version 2 manifest's `include` loads those files with
+the module and does not run `sources`, even for an empty list, so loading the
+module evaluates no Dang code. A released engine ignores `include` and runs
+`sources`. The module loads on both.
+
 The `go mod tidy` of generation removes a requirement that nothing imports,
 so `sources` does not return the replace target of that requirement.
 When a dependency outside the workspace still needs packages of that replace
@@ -114,8 +123,11 @@ Dependency clients still read the running engine's schema.
 An engine update can change a dependency client if the engine's view of
 that dependency changes.
 An SDK update changes the targeted release unless `targetVersion` pins it.
-The `targetVersion` setting pins an older release, between v1.0.0-beta.18
-and the SDK's release; generation refuses a setting outside that range.
+The `targetVersion` setting pins a release between v1.0.0-beta.18 and
+v1.0.0-beta.26, the release in flight; generation refuses a setting outside
+that range.
+A release after the SDK's own generates on an engine of that release, and
+with unified clients needs its `dagger.io/dagger` published or replaced.
 An engine older than the targeted release is not refused: a call to a
 function that engine lacks fails when the module runs.
 

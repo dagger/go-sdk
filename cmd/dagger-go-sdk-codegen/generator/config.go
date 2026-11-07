@@ -49,6 +49,10 @@ type ModuleGeneratorConfig struct {
 
 	// LibVersion is the dagger.io/dagger version used by the generated module.
 	LibVersion string
+
+	// TargetVersion is the Dagger release the module targets, whose
+	// dagger.io/dagger it builds with; empty for the default target.
+	TargetVersion string
 }
 
 // ModuleSourceDependency describes one dependency in a module schema.
@@ -98,4 +102,17 @@ type ClientGeneratorConfig struct {
 	// ModuleDependencies is retained for module-client template compatibility.
 	// Standalone clients use BoundModule instead.
 	ModuleDependencies []ModuleSourceDependency
+}
+
+// TargetVersion is the Dagger release the generated code targets: a module's
+// targetVersion, or the release a client announces. Empty is the default
+// target, which pins the released library.
+func (cfg Config) TargetVersion() string {
+	if cfg.ModuleConfig != nil {
+		return cfg.ModuleConfig.TargetVersion
+	}
+	if cfg.ClientConfig != nil {
+		return cfg.ClientConfig.Version
+	}
+	return ""
 }
