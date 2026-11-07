@@ -397,8 +397,9 @@ type GoSdk {
   files, so a malformed directory entry must not import its ignored children.
   """
   let ownershipDirectory(ws: Workspace!, patterns: [String!]!): Directory! {
-    ws.directory(".", include: patterns,
+    let selected = ws.directory(".", include: patterns,
       exclude: ["**/.git"] + patterns.map { pattern => pattern + "/**" })
+    if (selected.exists(".")) { selected } else { directory }
   }
 
   """Only local file addresses represent host uploads; value and Git trees are authoritative."""
@@ -875,7 +876,7 @@ type GoSdk {
       raise stringField(refused, "position") + ": " + JSON.encode(stringField(refused, "path")) + " matches only files ignored by .gitignore"
     }
     let tree = present.reduce(directory.withDirectory(goRoot, moduleSource)) { current, entry =>
-      let target = stringField(entry, "pattern").trimSuffix("/go.mod")
+      let target = configDir(stringField(entry, "pattern"), "go.mod")
       current.withDirectory(target, ws.directory(rootedPath(target),
         include: ["**/go.mod", "**/*.go", "**/*.s", "**/*.h", "**/*.syso"], exclude: ["**/.git"], gitignore: hostWorkspace(ws)))
     }
