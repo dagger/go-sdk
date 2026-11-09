@@ -218,29 +218,54 @@ func localReplaces(root string) (*modfile.File, []localReplace, error) {
 	return mod, replaces, nil
 }
 
-// LocalReplaceTargets returns the local replace targets of go.mod outside the
-// module directory, relative to it.
-func LocalReplaceTargets(root string) ([]string, error) {
+// LocalReplaceTarget identifies a replacement and the directive that selected it.
+type LocalReplaceTarget struct {
+	Path     string
+	Position string
+	Required bool
+}
+
+// LocalReplaceInputs returns replacement paths and their go.mod positions.
+// Required distinguishes direct requirements from optional replacement candidates.
+func LocalReplaceInputs(root string) ([]LocalReplaceTarget, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
-	_, replaces, err := localReplaces(root)
+	mod, replaces, err := localReplaces(root)
 	if err != nil {
 		return nil, err
 	}
-	var targets []string
+	var targets []LocalReplaceTarget
 	for _, replace := range replaces {
 		if !replace.inside {
-			// The caller lists targets from a copy of the module near the file
-			// system root, where resolving would drop the ".." that climb above
-			// it; go.mod keeps them.
+			// Keep parents that resolving near the filesystem root would drop.
 			target := replaceText(root, replace.dir)
 			if !filepath.IsAbs(replace.path) {
 				target = path.Clean(filepath.ToSlash(replace.path))
 			}
-			targets = append(targets, target)
+			targets = append(targets, LocalReplaceTarget{
+				Path:     target,
+				Position: fmt.Sprintf("go.mod:%d", replace.line),
+				Required: slices.ContainsFunc(mod.Require, func(req *modfile.Require) bool {
+					return req.Mod.Path == replace.module
+				}),
+			})
 		}
+	}
+	return targets, nil
+}
+
+// LocalReplaceTargets returns the local replace targets of go.mod outside the
+// module directory, relative to it.
+func LocalReplaceTargets(root string) ([]string, error) {
+	inputs, err := LocalReplaceInputs(root)
+	if err != nil {
+		return nil, err
+	}
+	var targets []string
+	for _, input := range inputs {
+		targets = append(targets, input.Path)
 	}
 	return targets, nil
 }

@@ -2,6 +2,9 @@
 End-to-end checks for the Go SDK module provider.
 """
 type E2e {
+  """Host-backed generation excludes ignored source and destination files."""
+  ignores: IgnoreChecks! { IgnoreChecks }
+
   """
   Checks for manifest generation and dependency pins.
   """
