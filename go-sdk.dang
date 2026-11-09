@@ -853,7 +853,7 @@ type GoSdk {
     let tables = deps.map { dep =>
       "\n[[dependencies]]\n  name = " + JSON.encode(dep.moduleOriginalName) + "\n  source = " + JSON.encode(dependencySource(dep, scopePath)) + "\n"
     }.join("")
-    includedManifest.withDirectory(".", directory.withNewFile("dagger-module.toml", includedManifest.file("dagger-module.toml").contents + tables))
+    mergeGenerated(includedManifest, directory.withNewFile("dagger-module.toml", includedManifest.file("dagger-module.toml").contents + tables))
   }
 
   """
@@ -872,7 +872,7 @@ type GoSdk {
         line + "\ninclude = [" + patterns.map { p => JSON.encode(p) }.join(", ") + "]"
       } else { line }
     }.join("\n")
-    ws.withDirectory(".", directory.withNewFile("dagger-module.toml", withInclude))
+    mergeGenerated(ws, directory.withNewFile("dagger-module.toml", withInclude))
   }
 
   let withDangConfig(ws: Workspace!, target: String!): Workspace! {
