@@ -66,7 +66,7 @@ type CurrentModule { source: Directory! }
 	require.Positive(t, versionsType)
 	program.WriteString(source[versionsType:])
 	program.WriteString("type Sdk {\n  targetVersion: String!\n  currentModule: CurrentModule!\n\n")
-	for _, name := range []string{"versionsFile", "versions:", "releasePattern", "release(", "isRelease(", "releasePrecedes(", "identifiersPrecede(", "targetRelease("} {
+	for _, name := range []string{"versionsFile", "versions:", "releasePattern", "release(", "isRelease(", "releasePrecedes(", "nextRelease(", "identifiersPrecede(", "targetRelease("} {
 		program.WriteString(sdkMember(t, source, name))
 		program.WriteString("\n")
 	}
@@ -94,6 +94,38 @@ func TestSdkTargetRelease(t *testing.T) {
 	} {
 		require.NoError(t, resolveSdkTarget(t, c.setting, c.want), "%+v", c)
 	}
+}
+
+// The newest release a scope can pin is the one after the SDK's default:
+// the next number of a prerelease's last identifier, or the next patch.
+func TestSdkNextRelease(t *testing.T) {
+	source := sdkSource(t)
+	// run asserts in Dang that nextRelease(v) is want; empty want expects a refusal.
+	run := func(v, want string) error {
+		var program strings.Builder
+		program.WriteString("type Sdk {\n")
+		for _, name := range []string{"releasePattern", "nextRelease("} {
+			program.WriteString(sdkMember(t, source, name))
+			program.WriteString("\n")
+		}
+		fmt.Fprintf(&program, "  pub next: String! { nextRelease(%q) }\n}\n\n", v)
+		fmt.Fprintf(&program, "let next = Sdk.next\nassert(%q) { next == %q }\n", "next "+want, want)
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "sdk.dang"), []byte(program.String()), 0o600))
+		_, err := dang.RunDir(context.Background(), dir, false)
+		return err
+	}
+	for v, want := range map[string]string{
+		"v1.0.0-beta.25": "v1.0.0-beta.26",
+		"v1.0.0-beta.9":  "v1.0.0-beta.10",
+		"v1.0.0-rc.1.4":  "v1.0.0-rc.1.5",
+		"v1.2.3":         "v1.2.4",
+		"v0.20.9":        "v0.20.10",
+	} {
+		require.NoError(t, run(v, want), v)
+	}
+	require.ErrorContains(t, run("v1.0.0-beta.25", "v1.0.0-beta.25"), "next v1.0.0-beta.25")
+	require.ErrorContains(t, run("v1.0.0-beta", ""), "does not end in a number")
 }
 
 // A wrong expectation fails, so the assertions above run.
