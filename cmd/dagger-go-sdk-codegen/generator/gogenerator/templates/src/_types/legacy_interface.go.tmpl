@@ -179,7 +179,9 @@ return &{{ $typeName }}{
         out := {{ $field.TypeRef | FormatOutputType }}{}
 
         for i := range fields {
-            {{- if IsSharedCoreObject $eleType }}
+            {{- if and (IsSharedCoreObject $eleType) KeepsLoadedIDs }}
+            val := *loaded[*{{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}](q, fields[i].Id)
+            {{- else if IsSharedCoreObject $eleType }}
             val := *new({{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}).WithGraphQLQuery(selectNode(q.Root(), fields[i].Id, "{{$eleType | ObjectName}}"))
             {{- else }}
             val := {{ $field.TypeRef | FormatOutputType | FormatArrayToSingleType }}{{"{"}}{{ $field | GetArrayField | FormatArrayField }}{{"}"}}

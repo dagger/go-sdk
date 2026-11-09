@@ -82,7 +82,11 @@ func writeCollectionBuild(root string, entrypoint []byte, files map[string][]byt
 	if len(names) == 0 {
 		return entrypoint, nil
 	}
+	// An entrypoint whose dispatch builds for a given platform takes it.
 	dispatch := []byte("  let dispatch: File! {")
+	if declared := []byte("  let dispatch(platform: Platform!): File! {"); bytes.Contains(entrypoint, declared) {
+		dispatch = declared
+	}
 	mount := []byte(`.withMountedDirectory("/workspace", currentModule.contextDirectory)`)
 	if bytes.Count(entrypoint, dispatch) != 1 || bytes.Count(entrypoint, mount) != 2 {
 		return nil, fmt.Errorf("collection build: the entrypoint needs one dispatch and two context mounts to rewrite")

@@ -27,10 +27,13 @@ type EntrypointChecks {
       config.field(["imports", "Dagger", "dagger"]).asString == release
   }
 
-  """The manifest dangEntrypoint writes: the name and the entrypoint only."""
+  """
+  The manifest dangEntrypoint writes for a module that reads nothing outside
+  its directory: the name, an empty include, and the entrypoint.
+  """
   let entrypointManifest(name: String!): String! {
     "name = " + JSON.encode(name) +
-      "\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+      "\ninclude = []\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
   }
 
   """
@@ -158,6 +161,42 @@ type EntrypointChecks {
   }
 
   """
+  generated-imports.txt lists exactly the packages outside the standard
+  library that a new module's generated code imports. Engines pre-warm the
+  builds of the packages it lists, so a package the generator adds or drops
+  must be added to it or dropped from it too.
+  """
+  generatedImportsCheck(ws: Workspace!): Void @check {
+    let scopePath = outputRoot + "/generated-imports"
+    let generated = goSdk.generateScope(
+      ws: ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath),
+      isModule: true,
+      name: "generated-imports",
+      clients: [],
+    )
+    # main.go is the starter, the author's code: every other Go file is
+    # generated. A package's imports are read from its files without building
+    # it, so the root package without its starter still lists them.
+    let compared = container.from("golang:1.27-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withDirectory("/module", generated.directory(".").withoutFile("main.go"))
+      .withFile("/listed.txt", ws.file("/generated-imports.txt"))
+      .withWorkdir("/module")
+      .withExec(["sh", "-ec",
+        "mod=$(go list -m)\n" +
+        "go list -e -f '{{join .Imports \"\\n\"}}' ./... | sort -u > /imports\n" +
+        "go list std | sort -u > /std\n" +
+        "comm -23 /imports /std | grep -v -e \"^$mod\\$\" -e \"^$mod/\" > /generated || true\n" +
+        "grep -v -e '^#' -e '^$' /listed.txt | sort -u > /listed\n" +
+        "diff -u /listed /generated\n",
+      ], expect: ReturnType.ANY)
+    assert("generated-imports.txt (-) differs from what a new module's generated code imports (+):\n" + compared.stdout + compared.stderr) {
+      compared.exitCode == 0
+    }
+    null
+  }
+
+  """
   An existing Go runtime module moves to a Dang entrypoint. The entrypoint
   describes its types, and the dispatch command serves the requests the
   entrypoint sends, in engine mode and in developer mode.
@@ -190,6 +229,9 @@ type EntrypointChecks {
     assert("migration removed the legacy module's global client") {
       generated.file("dagger.gen.go").contents.contains("var dag ")
     }
+    assert("the new go.mod does not declare Go 1.27") {
+      generated.file("go.mod").contents.contains("\ngo 1.27\n")
+    }
     let compatibilityRepeated = goSdk(dangEntrypoint: true, globalClient: true).generateScope(
       ws: generated, isModule: true, name: "generate-app", clients: [],
     )
@@ -216,9 +258,12 @@ type EntrypointChecks {
     assert("the entrypoint does not build the dispatch command in the module") {
       entrypoint.contains("go build -o /tmp/dispatch ./cmd/generate-app-dispatch ")
     }
+    assert("the dispatch compiler does not match the new go.mod") {
+      entrypoint.contains("golang:1.27-alpine@sha256:")
+    }
 
     let dispatcher = container
-      .from("golang:1.26-alpine")
+      .from("golang:1.27-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
@@ -329,7 +374,7 @@ type EntrypointChecks {
     assert("explicit global removal was not stable") {
       repeated.changes(noGlobal).isEmpty
     }
-    let built = container.from("golang:1.26-alpine").withoutEntrypoint
+    let built = container.from("golang:1.27-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/module", repeated.directory(".")).withWorkdir("/module")
@@ -599,7 +644,7 @@ type EntrypointChecks {
       }
       let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
       assert("the emitted dispatch compiler lost the selected patch version") {
-        entrypoint.contains(".from(\"golang:1.26.8-alpine\")")
+        entrypoint.contains("golang:1.26.8-alpine@sha256:")
       }
       let dispatcher = container.from("golang:1.26.8-alpine").withoutEntrypoint
         .withEnvVariable("CGO_ENABLED", "0")
@@ -621,6 +666,65 @@ type EntrypointChecks {
       assert("the generated dispatcher ran on " + version) {
         version == "\"go1.26.8\""
       }
+    }
+    null
+  }
+
+  """
+  Generation reads a module on Go 1.27, whose compiler writes export data
+  that the generator's package loader must decode to see the context
+  parameter as context.Context.
+  """
+  go127Check(ws: Workspace!): Void @check {
+    let name = "go-127"
+    let scopePath = outputRoot + "/" + name
+    let source = "package go_127\n\nimport \"context\"\n\ntype Go127 struct{}\n\nfunc (m *Go127) Echo(ctx context.Context, value string) string { return value }\n"
+    let input = ws.withWorkdir(scopePath)
+      .withNewFile("go.mod", "module example.com/go-127\n\ngo 1.27\n")
+      .withNewFile("dagger-module.toml", "name = 'go-127'\n[runtime]\nsource = 'go'\n")
+      .withNewFile("main.go", source)
+    let generated = goSdk(dangEntrypoint: true).generateScope(
+      ws: input, isModule: true, name: name, clients: [],
+    )
+    let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
+    assert("the emitted dispatch compiler is not Go 1.27") {
+      entrypoint.contains("golang:1.27-alpine@sha256:")
+    }
+    assert("the function lost its argument") {
+      entrypoint.contains(".withArg(\"value\"")
+    }
+    assert("the context parameter became an argument") {
+      entrypoint.contains(".withArg(\"ctx\"") == false
+    }
+    null
+  }
+
+  """
+  The entrypoint names the Go image by the tag generation asks for, after the
+  session resolved another tag of the same image, which an engine can report
+  in its place.
+  """
+  goImageTagCheck(ws: Workspace!): Void @check {
+    let name = "go-image-tag"
+    let scopePath = outputRoot + "/" + name
+    # The e2e checks share a session, so the module declares a Go version no
+    # other check uses: the session resolves golang:1.27.0-alpine only here.
+    # Its digest is read on another platform, which the engine keeps apart.
+    let digest = container(platform: "linux/s390x").from("golang:1.27.0-alpine").imageRef.split("@")[1] ?? ""
+    let other = "docker.io/library/golang:another-tag@" + digest
+    assert("the image's other tag did not resolve") {
+      container.from(other).imageRef == other
+    }
+    let input = ws.withWorkdir(scopePath)
+      .withNewFile("go.mod", "module example.com/go-image-tag\n\ngo 1.27.0\n")
+      .withNewFile("dagger-module.toml", "name = 'go-image-tag'\n[runtime]\nsource = 'go'\n")
+      .withNewFile("main.go", "package go_image_tag\n\ntype GoImageTag struct{}\n\nfunc (m *GoImageTag) Echo(value string) string { return value }\n")
+    let generated = goSdk(dangEntrypoint: true).generateScope(
+      ws: input, isModule: true, name: name, clients: [],
+    )
+    let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
+    assert("the entrypoint does not name golang:1.27.0-alpine by its digest") {
+      entrypoint.contains(".from(\"golang:1.27.0-alpine@" + digest + "\")")
     }
     null
   }
