@@ -324,7 +324,9 @@ type TargetChecks {
   entrypoint passes the contract check against dagger/go's schema and that
   release's view, whose enum members the casing cut renamed, such as
   FunctionCachePolicy.PER_SESSION, and the engine runs it. That release's dagger.io/dagger is not published yet, so
-  the module replaces it, as the refusal to pin it suggests. Released
+  the module replaces it, as the refusal to pin it suggests, and uses
+  embedded bindings: unified ones need that release's library to keep the
+  IDs a request returns (core.Loaded), which a published one lacks. Released
   engines can't load such a module, so this is not a check: run it with
   an engine of that release.
   """
@@ -335,7 +337,7 @@ type TargetChecks {
     let input = ws.withWorkdir(scopePath)
       .withNewFile("go.mod", "module example.com/target-dagger-go-engine\n\ngo 1.27\n\nreplace dagger.io/dagger " + release + " => dagger.io/dagger " + sdkTarget + "\n")
       .withNewFile("main.go", "package target_dagger_go_engine\n\ntype TargetDaggerGoEngine struct{}\n\n// +cache=\"session\"\nfunc (m *TargetDaggerGoEngine) Cached() string { return \"cached\" }\n")
-    let generated = goSdk(targetVersion: release).generateScope(ws: input, isModule: true, name: name, clients: [])
+    let generated = goSdk(targetVersion: release, unifiedClients: false).generateScope(ws: input, isModule: true, name: name, clients: [])
     assert("the module does not list dagger/go as its entrypoint's dependency:\n" + generated.file("dagger-module.toml").contents) {
       generated.file("dagger-module.toml").contents.contains("\"github.com/dagger/go@")
     }
