@@ -123,7 +123,7 @@ type GoSdk {
       raise "targetVersion applies to a module with a Dang entrypoint; the Go runtime generates this module's code for the engineVersion of its manifest: set dangEntrypoint = true in the module's dagger.toml settings to migrate, or remove targetVersion"
     }
     let initialized = if (isModule and !hadManifest and !hasGoSource(ws)) {
-      ws.withDirectory(".", renderedTemplate(ws, name, template, entrypoint, unified))
+      mergeGenerated(ws, renderedTemplate(ws, name, template, entrypoint, unified))
     } else {
       ws
     }
@@ -157,7 +157,7 @@ type GoSdk {
       }
     } else if (isModule) {
       let configured = generatedManifest(initialized, name, clients, hadManifest)
-      let generated = configured.withDirectory(".", generatedModuleCode(configured))
+      let generated = mergeGenerated(configured, generatedModuleCode(configured))
       # generatedModuleCode excludes manifests, so the configured ones survive
       # the merge. Rewriting them here would repeat the same workspace edit.
       if (dualClients) {
@@ -399,9 +399,10 @@ type GoSdk {
       let pinned = if (target != "") { target } else if (targetVersion != "" or unifiedScope) {
         targetRelease("scope " + JSON.encode(goScope), versions)
       } else { "" }
+      let inputs = generationInputs(scoped, [".dagger-generated.json", "internal/dagger/clients/*/.dagger-generated.json"])
       let base = clientCodegenBase(scoped.file("go.mod")).withDirectory(
         "/out",
-        scoped.directory(".", exclude: ["**/.git"]),
+        inputs,
       ).withNewFile("/removed-clients.txt", "")
       # Keep prior client outputs and go.mod updates in the same container.
       # Only the completed batch needs to be merged into the workspace.
@@ -428,10 +429,102 @@ type GoSdk {
           checked
         }
       }
-      let merged = scoped.withDirectory(".", completed.directory("/out"))
+      let output = completed.directory("/out")
+      checkGenerated(scoped, output, ["internal/dagger/clients/*/.dagger-generated.json"])
+      let changed = output.changes(inputs).layer
+      let merged = mergeGenerated(scoped, changed)
       let removed = pruned.file("/removed-clients.txt").contents.split("\n").filter { p => p != "" }
       removed.reduce(merged) { current, p => current.withoutFile(p) }.withWorkdir(originalScope)
     }
+  }
+
+  """
+  Source reads honor .gitignore. Ownership records and their exact generated
+  paths remain readable when ignored, so pruning and user-edit checks keep
+  working without importing unrelated ignored files.
+  """
+  let generationInputs(ws: Workspace!, records: [String!]!): Directory! {
+    let filtered = ws.directory(".", exclude: ["**/.git"], gitignore: true)
+    let metadata = ownershipDirectory(ws, records)
+    let manifests = metadata.glob("**").filter { path => path.hasSuffix(".dagger-generated.json") }
+      .map { path => checkedOwnershipPath(path) }
+    let paths = manifests.reduce(["go.mod", "go.sum"]) { found, manifest =>
+      let owned = ownershipFiles(ws.file(manifest).contents)
+      let base = manifest.trimSuffix(".dagger-generated.json")
+      found + [manifest] + owned.map { path => base + path }
+    }
+    filtered.withDirectory(".", ownershipDirectory(ws, paths))
+  }
+
+  """
+  Include patterns also select a directory's descendants. Ownership names
+  files, so a malformed directory entry must not import its ignored children.
+  """
+  let ownershipDirectory(ws: Workspace!, patterns: [String!]!): Directory! {
+    let selected = ws.directory(".", include: patterns,
+      exclude: ["**/.git"] + patterns.map { pattern => pattern + "/**" })
+    if (selected.exists(".")) { selected } else { directory }
+  }
+
+  let ownershipFiles(contents: String!): [String!]! {
+    let value = decoded(contents)
+    let owned = if (value.fields.contains("files") and toString(value.field(["files"]).contents) != "null") {
+      value.field(["files"]).fields
+    } else { [] :: [String!]! }
+    owned.map { path =>
+      if (path == ".dagger-generated.json") {
+        raise "invalid generated ownership entry " + JSON.encode(path)
+      }
+      checkedOwnershipPath(path)
+    }
+  }
+
+  """Ownership entries and manifest parents must name literal paths in include patterns."""
+  let checkedOwnershipPath(path: String!): String! {
+    if (path != path.trimSpace or path.hasPrefix("!") or
+      path.contains("\\") or path.contains("*") or path.contains("?") or path.contains("[") or path.contains("]") or
+      path.split("/").filter { part => part == "" or part == "." or part == ".." or part == ".git" }.length > 0) {
+      raise "invalid generated ownership entry " + JSON.encode(path)
+    }
+    path
+  }
+
+  """
+  An ignored file without an ownership record is absent from build inputs.
+  Before writing, check exact output paths too, so generation cannot replace
+  an ignored user file or symlink it did not see while building.
+  """
+  let checkGenerated(ws: Workspace!, generated: Directory!, records: [String!]!): Void {
+    let metadata = generated.filter(include: records)
+    let manifests = metadata.glob("**").filter { path => path.hasSuffix(".dagger-generated.json") }
+      .map { path => checkedOwnershipPath(path) }
+    manifests.each { manifest =>
+      let owned = ownershipFiles(generated.file(manifest).contents)
+      if (owned.isEmpty == false) {
+        let base = configDir(manifest, ".dagger-generated.json")
+        let prefix = if (base == ".") { "" } else { base + "/" }
+        let paths = [manifest] + owned.map { path => prefix + path }
+        let existing = directory.withNewDirectory(base)
+          .withDirectory(".", ownershipDirectory(ws, paths))
+          .directory(base)
+        codegenBuilder
+          .withDirectory("/existing", existing)
+          .withDirectory("/generated", generated.directory(base).filter(include: owned))
+          .withExec(["dagger-go-sdk-codegen", "validate-owned", "--root", "/existing", "--generated", "/generated"])
+          .sync
+      }
+      null
+    }
+    null
+  }
+
+  """
+  Overlay generated files at the scope without reading its whole baseline.
+  Changesets preserve file modes and symlinks and name only paths to write.
+  """
+  let mergeGenerated(ws: Workspace!, files: Directory!): Workspace! {
+    let layer = directory.withDirectory(normalizePath(ws.cwd), files)
+    ws.withChanges(layer.changes(directory))
   }
 
   """
@@ -693,7 +786,7 @@ type GoSdk {
     # that builds or runs the module.
     let goImage = pinnedImage("golang:" + goVersion + "-alpine")
     let builder = moduleCodegenBuilder(goImage)
-    let moduleSource = workspaceRoot.directory(".", exclude: ["**/.git"])
+    let moduleSource = generationInputs(workspaceRoot, [prefix + ".dagger-generated.json", prefix + "internal/dagger/clients/*/.dagger-generated.json"])
     let includes = moduleIncludes(ws, builder, moduleSource, goRoot, moduleRoot, scopePath)
     let included = lines(includes.file("include")).length > 0
     # A module with includes is generated where its build sees it: under its
@@ -730,6 +823,7 @@ type GoSdk {
       "--entrypoint-dir", buildRoot + "/" + prefix + entrypointPath,
       "--introspection-json-path", "/contract-schema.json",
     ]).directory(buildRoot)
+    checkGenerated(workspaceRoot, generated, [prefix + ".dagger-generated.json", prefix + "internal/dagger/clients/*/.dagger-generated.json"])
     # Merge only what the generator owns, so the user's files are not
     # written back.
     let owned = directory.withDirectory(".", generated, include: [
@@ -743,10 +837,7 @@ type GoSdk {
       prefix + "internal/dagger/**",
       prefix + "cmd/*-dispatch/**",
     ])
-    let merged = ws
-      .withWorkdir(goRoot)
-      .withDirectory(".", owned)
-      .withWorkdir(scopePath)
+    let merged = mergeGenerated(ws.withWorkdir(goRoot), owned).withWorkdir(scopePath)
     # The merge only adds files. The generated files the generator removed
     # are removed here, relative to the module.
     let removed = codegen.file("/removed.txt").contents.split("\n").filter { p => p != "" }
@@ -886,19 +977,31 @@ type GoSdk {
   """
   let moduleIncludes(ws: Workspace!, builder: Container!, moduleSource: Directory!, goRoot: String!, moduleRoot: String!, scopePath: String!): Directory! {
     let targets = runTool(builder.withDirectory("/src", moduleSource), [
-      "module-codegen", "replaces",
+      "module-codegen", "replaces", "--json",
       "--module-root", "/src/" + moduleRoot,
       "--workspace-path", scopePath,
-    ]).stdout.split("\n").filter { p => p != "" }
+    ]).stdout.split("\n").filter { p => p != "" }.map { line => decoded(line) }
     # The scan follows the module's imports into the replace targets, so it
     # reads their Go sources from the workspace. It refuses a target without
     # go.mod with the replace line, which reading the target here would not.
     let present = targets.filter { target =>
-      ws.directory("/", include: [target + "/go.mod"]).exists(target + "/go.mod")
+      let file = stringField(target, "pattern")
+      ws.directory("/", include: [file]).exists(file)
     }
-    let tree = present.reduce(directory.withDirectory(goRoot, moduleSource)) { current, target =>
+    # Diagnose a required ignored manifest before the filtered scan treats it
+    # as missing. Only this exact metadata probe bypasses .gitignore.
+    let ignored = present.filter { target =>
+      let file = stringField(target, "pattern")
+      target.field(["required"]).asBoolean and ws.directory("/", include: [file], gitignore: true).exists(file) == false
+    }
+    let refused = ignored[0]
+    if (refused != null) {
+      raise stringField(refused, "position") + ": " + JSON.encode(stringField(refused, "path")) + " matches only files ignored by .gitignore"
+    }
+    let tree = present.reduce(directory.withDirectory(goRoot, moduleSource)) { current, entry =>
+      let target = configDir(stringField(entry, "pattern"), "go.mod")
       current.withDirectory(target, ws.directory(rootedPath(target),
-        include: ["**/go.mod", "**/*.go", "**/*.s", "**/*.h", "**/*.syso"], exclude: ["**/.git"]))
+        include: ["**/go.mod", "**/*.go", "**/*.s", "**/*.h", "**/*.syso"], exclude: ["**/.git"], gitignore: true))
     }
     runTool(builder.withDirectory("/src", tree), [
       "module-codegen", "includes",
@@ -939,14 +1042,15 @@ type GoSdk {
     let anchor = rootedPath(includes.file("anchor").contents)
     let modulePath = includes.file("module").contents
     let entries = lines(includes.file("include"))
-    let unmatched = entries.filter { line =>
+    let ignored = entries.filter { line =>
+      files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"], gitignore: true)).isEmpty
+    }
+    # Only failed matches need an unfiltered diagnostic probe.
+    let unmatched = ignored.filter { line =>
       files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"])).isEmpty
     }
     if (unmatched.length > 0) {
       raise includeLabel(unmatched[0] ?? "") + " matches nothing in the workspace"
-    }
-    let ignored = entries.filter { line =>
-      files(ws.directory(anchor, include: [stringField(decoded(line), "pattern")], exclude: ["**/.git"], gitignore: true)).isEmpty
     }
     if (ignored.length > 0) {
       raise includeLabel(ignored[0] ?? "") + " matches only files ignored by .gitignore"

@@ -115,19 +115,33 @@ func runReplaces(args []string) error {
 	flags := flag.NewFlagSet("replaces", flag.ContinueOnError)
 	root := flags.String("module-root", "", "path to the Go module implementation")
 	workspacePath := flags.String("workspace-path", "", "module directory relative to the workspace root")
+	structured := flags.Bool("json", false, "print target metadata as JSON lines")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *root == "" || *workspacePath == "" {
 		return fmt.Errorf("replaces needs --module-root and --workspace-path")
 	}
-	targets, err := discovery.LocalReplaceTargets(*root)
+	targets, err := discovery.LocalReplaceInputs(*root)
 	if err != nil {
 		return err
 	}
 	for _, target := range targets {
-		if p := path.Join(*workspacePath, target); p != ".." && !strings.HasPrefix(p, "../") {
-			fmt.Println(p)
+		if p := path.Join(*workspacePath, target.Path); p != ".." && !strings.HasPrefix(p, "../") {
+			if !*structured {
+				fmt.Println(p)
+				continue
+			}
+			entry := struct {
+				includeEntry
+				Required bool `json:"required"`
+			}{
+				includeEntry: includeEntry{Position: target.Position, Path: path.Join(target.Path, "go.mod"), Pattern: path.Join(p, "go.mod")},
+				Required:     target.Required,
+			}
+			if err := json.NewEncoder(os.Stdout).Encode(entry); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

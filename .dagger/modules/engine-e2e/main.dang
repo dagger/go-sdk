@@ -2,6 +2,45 @@
 Checks the Go SDK against the Dagger development engine.
 """
 type EngineE2e {
+  """Root initialization does not import ignored files."""
+  ignoredInitializationCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:initialization-check")
+  }
+
+  """Ignored files stay on the client during standalone generation."""
+  ignoredStandaloneCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:standalone-check")
+  }
+
+  """Ignored files stay on the client during entrypoint generation."""
+  ignoredEntrypointCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:entrypoint-check")
+  }
+
+  """Replacement discovery does not import ignored dependency sources."""
+  ignoredReplacementCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:replacement-check")
+  }
+
+  """Ignored generated clients retain ownership and cleanup behavior."""
+  ignoredGeneratedCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:ignored-generated-check")
+  }
+
+  """Ownership records cannot import Git metadata."""
+  ignoredGitMetadataOwnershipCheck(ws: Workspace!): Void @check {
+    ignoredCheck(ws, "ignores:git-metadata-ownership-check")
+  }
+
+  let ignoredCheck(ws: Workspace!, name: String!): Void {
+    let client = sdkClient(ws, engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase), engineCommit)
+    client.withExec([
+      "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+      "dagger", "check", "-m", ".dagger/modules/e2e", name,
+    ]).sync
+    null
+  }
+
   """
   Commit of release v1.0.0-beta.18, shared by engine-dev and the target
   engine. Keep it aligned with the dependency in dagger-module.toml.
