@@ -275,17 +275,56 @@ func TestInterfaceMethodOptionalArgDeprecated(t *testing.T) {
 }
 
 // idHandleSchemaJSON has an object whose ID-returning fields name its own
-// type (sync), another object (spawn), and an interface (syncer).
+// type (sync), another object (spawn), and an interface (syncer), and an
+// interface whose ID-returning field names itself.
 const idHandleSchemaJSON = `
 [
   {"kind": "SCALAR", "name": "ID"},
-  {"kind": "INTERFACE", "name": "Syncer", "description": "", "fields": []},
-  {"kind": "OBJECT", "name": "Agent", "description": "", "fields": []},
+  {"kind": "SCALAR", "name": "SyncerID"},
+  {
+    "kind": "INTERFACE",
+    "name": "Syncer",
+    "description": "",
+    "fields": [
+      {
+        "args": [],
+        "description": "",
+        "name": "id",
+        "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}
+      },
+      {
+        "args": [],
+        "description": "",
+        "name": "sync",
+        "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}},
+        "directives": [{"name": "expectedType", "args": [{"name": "name", "value": "\"Syncer\""}]}]
+      }
+    ]
+  },
+  {
+    "kind": "OBJECT",
+    "name": "Agent",
+    "description": "",
+    "fields": [
+      {
+        "args": [],
+        "description": "",
+        "name": "id",
+        "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}
+      }
+    ]
+  },
   {
     "kind": "OBJECT",
     "name": "LLM",
     "description": "",
     "fields": [
+      {
+        "args": [],
+        "description": "",
+        "name": "id",
+        "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}
+      },
       {
         "args": [],
         "description": "",
@@ -335,15 +374,60 @@ func TestObjectIDHandlesLoadTheirExpectedType(t *testing.T) {
 	require.Contains(t, got, "func (r *LLM) Sync(ctx context.Context) (*LLM, error) {")
 	require.Contains(t, got, `return &LLM{
 		query: selectNode(q.Root(), id, "LLM"),
+		id:    &id,
 	}, nil`)
 	// another object's ID loads that object
 	require.Contains(t, got, "func (r *LLM) Spawn(ctx context.Context) (*Agent, error) {")
 	require.Contains(t, got, `return &Agent{
 		query: selectNode(q.Root(), id, "Agent"),
+		id:    &id,
 	}, nil`)
 	// an interface's ID loads through the interface's client struct
 	require.Contains(t, got, "func (r *LLM) Syncer(ctx context.Context) (Syncer, error) {")
 	require.Contains(t, got, `return &SyncerClient{
 		query: selectNode(q.Root(), id, "Syncer"),
+		id:    &id,
 	}, nil`)
+}
+
+// An object loaded from an ID keeps that ID, so passing it as an argument
+// needs no request for its ID (dagger/dagger#14870).
+func TestIDHandlesKeepTheirLoadedID(t *testing.T) {
+	for _, tc := range []struct {
+		template      string
+		typeName      string
+		schemaVersion string
+		want          []string
+		structName    string
+		idType        string
+		idAlias       string
+	}{
+		{"_types/object.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}, "LLM", "ID", ""},
+		{"_types/object_fields.go.tmpl", "LLM", "v1.0.0", []string{"LLM", "Agent", "SyncerClient"}, "", "", ""},
+		{"_types/interface.go.tmpl", "Syncer", "v1.0.0", []string{"SyncerClient"}, "SyncerClient", "ID", ""},
+		{"_types/legacy_interface.go.tmpl", "Syncer", "v0.20.0", []string{"Syncer"}, "Syncer", "SyncerID", "SyncerID"},
+	} {
+		t.Run(tc.template, func(t *testing.T) {
+			var types introspection.Types
+			require.NoError(t, json.Unmarshal([]byte(idHandleSchemaJSON), &types))
+			schema := &introspection.Schema{Types: types}
+			generator.SetSchemaParents(schema)
+			generator.SetSchema(schema)
+			t.Cleanup(func() { generator.SetSchema(nil) })
+
+			tree, err := buildTemplateTree(GoTemplateFuncs(schema, nil, tc.schemaVersion, generator.Config{}))
+			require.NoError(t, err)
+			got := renderTemplate(t, tree.Lookup(tc.template), schema.Types.Get(tc.typeName))
+			for _, handle := range tc.want {
+				require.Regexp(t, `return &`+handle+`\{\s+query: selectNode\(q\.Root\(\), id, "\w+"\),\s+id:\s+&id,\s+\}, nil`, got)
+			}
+			if tc.structName != "" {
+				require.Regexp(t, `type `+tc.structName+` struct \{[^}]*\n\s+id\s+\*`+tc.idType+`\n`, got)
+			}
+			if tc.idAlias != "" {
+				alias := renderTemplate(t, tree.Lookup("_types/scalar.go.tmpl"), schema.Types.Get(tc.idAlias))
+				require.Regexp(t, `(?m)^type `+tc.idAlias+` = ID$`, alias)
+			}
+		})
+	}
 }
