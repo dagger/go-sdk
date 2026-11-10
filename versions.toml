@@ -2,7 +2,7 @@ defaultTarget = "v1.0.0-beta.25"
 sourcesFloor = "v1.0.0-beta.18"
 # The dagger/go that generated entrypoint modules build with (daggerGo): the
 # per-package build's branch until a dagger/go release carries it.
-daggerGo = "github.com/dagger/go@8dce82239261887d8a435cb269863b19c2a47618"
-# The first Dagger release whose manifests list an entrypoint's dependencies:
-# the release that ships them (not yet released). v1.0.0-beta.25 does not.
+daggerGo = "github.com/dagger/go@b0476af0f42568416ff2b876807a1748e666626e"
+# The first Dagger release whose manifests list an entrypoint's dependencies.
+# v1.0.0-beta.25 does not.
 daggerGoFloor = "v1.0.0-beta.26"
