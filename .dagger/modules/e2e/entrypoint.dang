@@ -266,7 +266,7 @@ type EntrypointChecks {
       entrypoint.contains("defaultValue: (\"\\\"Hello\\\"\" :: Dagger.JSON!)")
     }
     assert("the entrypoint does not build the dispatch command in the module") {
-      entrypoint.contains("go build -o /tmp/dispatch ./cmd/generate-app-dispatch ")
+      entrypoint.contains("go build -o /tmp/dispatch/dispatch ./cmd/generate-app-dispatch ")
     }
     assert("the dispatch compiler does not match the new go.mod") {
       entrypoint.contains("golang:1.27-alpine@sha256:")
@@ -447,7 +447,10 @@ type EntrypointChecks {
   defaultCompatibilityCheck(ws: Workspace!): Void @check {
     let legacyManifest = "name = 'generate-app'\n[runtime]\nsource = 'go'\n"
     let input = ws.withWorkdir(appPath).withNewFile("dagger-module.toml", legacyManifest)
-    let legacy = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(ws: input, isModule: true, name: "generate-app", clients: [])
+    # The Go runtime runs the module's root package as its command, so a
+    # module that keeps the runtime has package main.
+    let runtimeInput = input.withNewFile("main.go", input.file("main.go").contents.replace("package generate_app\n", "package main\n"))
+    let legacy = goSdk(dangEntrypoint: false, unifiedClients: false).generateScope(ws: runtimeInput, isModule: true, name: "generate-app", clients: [])
     assert("explicit false migrated an existing runtime module") {
       legacy.file("dagger-module.toml").contents.contains("[runtime]") and
         exists(legacy, "internal/dagger/entrypoint/main.dang") == false and
@@ -460,7 +463,7 @@ type EntrypointChecks {
     assert("unset settings changed the generated runtime module") {
       retainedRuntime.changes(legacy).isEmpty
     }
-    let migratedManifest = input.withNewFile("dagger-module.toml", "disableDefaultFunctionCaching = true\n" + legacyManifest)
+    let migratedManifest = runtimeInput.withNewFile("dagger-module.toml", "disableDefaultFunctionCaching = true\n" + legacyManifest)
     let preservedSettings = goSdk.generateScope(ws: migratedManifest, isModule: true, name: "generate-app", clients: [])
     assert("unset settings migrated a manifest with legacy-only settings") {
       preservedSettings.file("dagger-module.toml").contents.contains("disableDefaultFunctionCaching = true") and
