@@ -50,6 +50,13 @@ type EngineE2e {
   let engineCommit: String! = "400b82d6f3c09ef096d2f59b3e920267b5969bf4"
 
   """
+  Commit of release v1.0.0-beta.18, shared by the sources-floor-engine-dev
+  dependency and the engine of the sources check: the oldest engine the
+  generated entrypoint loads on, and one that calls its sources function.
+  """
+  let sourcesFloorCommit: String! = "249edbd646e63c5181053c8af72623ed9bdf030d"
+
+  """
   Commit of release v1.0.0-beta.12, shared by the runtime-floor-engine-dev
   dependency and the engine of the runtime floor check. Runtime-mode modules
   support no older engine.
@@ -246,16 +253,17 @@ type EngineE2e {
   }
 
   """
-  On an engine that calls sources, the module builds from its context,
-  reuses results across sessions until an included file changes, and runs
-  from anywhere. engineSource replaces the pinned engine with a dagger
-  checkout.
+  On an engine that calls sources, v1.0.0-beta.18, the module builds from
+  its context, reuses results across sessions until an included file
+  changes, and runs from anywhere. engineSource replaces the pinned engine
+  with a dagger checkout.
   """
   sourcesCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
+    let source = if (engineSource == null) { daggerSource(sourcesFloorCommit) } else { engineSource.asWorkspace }
     sourcesCalls(sdkClient(
       ws,
-      engineDev(ws: selectedEngineSource(engineSource)).installClient(client: clientBase),
-      engineCommit,
+      sourcesFloorEngineDev(ws: source).installClient(client: clientBase),
+      sourcesFloorCommit,
     ))
   }
 
@@ -535,8 +543,8 @@ type EngineE2e {
   entrypointFloorChecks(ws: Workspace!, checks: [String!]!): Void {
     runChecks(sdkClient(
       ws,
-      engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase),
-      engineCommit,
+      sourcesFloorEngineDev(ws: daggerSource(sourcesFloorCommit)).installClient(client: clientBase),
+      sourcesFloorCommit,
     ), checks)
   }
 

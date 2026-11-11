@@ -4,6 +4,8 @@ through the local replace directives of go.mod.
 """
 type SourcesChecks {
   let root: String! = ".dagger/modules/e2e/fixtures/include"
+  """The oldest release the generated entrypoint loads on: sourcesFloor in versions.toml."""
+  let floor: String! = "v1.0.0-beta.18"
   let appPath: String! = root + "/app"
 
   let generated(ws: Workspace!): Workspace! {
@@ -232,19 +234,20 @@ type SourcesChecks {
   """
   The generated fixture repository: the app and the files it includes, a
   caller that reaches the app through a generated client, and a control
-  module without files outside its directory.
+  module without files outside its directory. They target the floor
+  release, so the floor engine the sources check runs on loads them.
   """
   fixture(ws: Workspace!): Directory! {
     # The fixture root is the workspace, so the caller's client names the app
     # by its path in the exported repository.
     let inputs = ws.directory("/" + root).asWorkspace
-    let app = goSdk(dangEntrypoint: true).generateScope(
+    let app = goSdk(dangEntrypoint: true, targetVersion: floor).generateScope(
       ws: inputs.withWorkdir("app"), isModule: true, name: "include-app", clients: [],
     )
-    let control = goSdk(dangEntrypoint: true).generateScope(
+    let control = goSdk(dangEntrypoint: true, targetVersion: floor).generateScope(
       ws: app.withWorkdir("control"), isModule: true, name: "include-control", clients: [],
     )
-    goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+    goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true, targetVersion: floor).generateScope(
       ws: control.withWorkdir("caller"), isModule: true, name: "include-caller",
       clients: [control.withWorkdir(".").moduleSource("/app")],
     ).directory("/")

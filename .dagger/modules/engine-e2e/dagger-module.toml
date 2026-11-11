@@ -9,6 +9,10 @@ name = "engine-dev"
 source = "github.com/dagger/dagger/.dagger/modules/engine-dev@400b82d6f3c09ef096d2f59b3e920267b5969bf4"
 
 [[dependencies]]
+name = "sources-floor-engine-dev"
+source = "github.com/dagger/dagger/.dagger/modules/engine-dev@249edbd646e63c5181053c8af72623ed9bdf030d"
+
+[[dependencies]]
 name = "runtime-floor-engine-dev"
 source = "github.com/dagger/dagger/.dagger/modules/engine-dev@4932411ff7a9b0771dd53779d9a085406cefb531"
 
