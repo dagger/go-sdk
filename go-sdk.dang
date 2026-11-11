@@ -1259,8 +1259,14 @@ type GoSdk {
               name, "/template", "/rendered",
             ])
         }
-      } else {
+      } else if (!exists(ws, "go.mod")) {
         builder.withExec(["render-template", "--global-client", name, "/template", "/rendered"])
+      } else {
+        # The starter imports the module's bindings by the path of the Go
+        # module that holds it.
+        builder
+          .withFile("/go.mod", ws.file("go.mod"))
+          .withExec(["render-template", "--global-client", "--go-mod", "/go.mod", "--module-subpath", ".", name, "/template", "/rendered"])
       }
       rendered.directory("/rendered")
     }
