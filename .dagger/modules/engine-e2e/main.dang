@@ -42,10 +42,12 @@ type EngineE2e {
   }
 
   """
-  Commit of release v1.0.0-beta.18, shared by engine-dev and the target
-  engine. Keep it aligned with the dependency in dagger-module.toml.
+  Commit of release v1.0.0-beta.27, the SDK's default target, shared by
+  engine-dev and the target engine: a new module targets it, and an older
+  engine can't load what it generates. Keep it aligned with the dependency
+  in dagger-module.toml.
   """
-  let engineCommit: String! = "249edbd646e63c5181053c8af72623ed9bdf030d"
+  let engineCommit: String! = "400b82d6f3c09ef096d2f59b3e920267b5969bf4"
 
   """
   Commit of release v1.0.0-beta.12, shared by the runtime-floor-engine-dev

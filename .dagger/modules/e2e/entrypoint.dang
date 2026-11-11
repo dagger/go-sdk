@@ -37,6 +37,16 @@ type EntrypointChecks {
   }
 
   """
+  The manifest of a new entrypoint module, which builds with dagger/go: the
+  entrypoint manifest, with the dagger/go of versions.toml as the
+  entrypoint's dependency.
+  """
+  let daggerGoManifest(ws: Workspace!, name: String!): String! {
+    let versions = Dagger.json.withContents(JSON.encode(TOML.decode(ws.file("/versions.toml").contents)) :: Dagger.JSON!)
+    entrypointManifest(name) + "\n[[dependencies]]\n  name = \"go\"\n  source = " + JSON.encode(versions.field(["daggerGo"]).asString) + "\n"
+  }
+
+  """
   Explicit unifiedClients = true is refused with the Go runtime. Unset
   unifiedClients preserves its embedded bindings.
   """
@@ -78,7 +88,7 @@ type EntrypointChecks {
     )
 
     assert("the manifest is not the entrypoint manifest") {
-      generated.file("dagger-module.toml").contents == entrypointManifest("entrypoint-init")
+      generated.file("dagger-module.toml").contents == daggerGoManifest(ws, "entrypoint-init")
     }
     assert("dagger.json was created") {
       exists(generated, "dagger.json") == false
