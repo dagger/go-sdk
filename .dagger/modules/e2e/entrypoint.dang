@@ -713,6 +713,38 @@ type EntrypointChecks {
   }
 
   """
+  Without dagger/go, the entrypoint builds the module's process with go build
+  in one exec, which the engine caches by its inputs. A module that sets
+  daggerGo = false and targets a release that can run dagger/go's
+  per-package build mounts no Go cache volume around it; one that targets a
+  release older than dagger/go's floor does.
+  """
+  goBuildCacheVolumesCheck(ws: Workspace!): Void @check {
+    let name = "go-build-volumes"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withWorkdir(scopePath)
+      .withNewFile("go.mod", "module example.com/go-build-volumes\n\ngo 1.27\n")
+      .withNewFile("main.go", "package go_build_volumes\n\ntype GoBuildVolumes struct{}\n\nfunc (m *GoBuildVolumes) Echo(value string) string { return value }\n")
+    let current = goSdk(dangEntrypoint: true, daggerGo: false).generateScope(
+      ws: input, isModule: true, name: name, clients: [],
+    ).file("internal/dagger/entrypoint/main.dang").contents
+    assert("the entrypoint does not build the module's process with go build") {
+      current.contains("go build -o /tmp/dispatch/dispatch ./cmd/go-build-volumes-dispatch ")
+    }
+    assert("a target that can run dagger/go's per-package build mounts a Go cache volume") {
+      current.contains("cacheVolume(") == false
+    }
+    let older = goSdk(dangEntrypoint: true, targetVersion: "v1.0.0-beta.25").generateScope(
+      ws: input, isModule: true, name: name, clients: [],
+    ).file("internal/dagger/entrypoint/main.dang").contents
+    assert("a target older than dagger/go's floor lost its Go cache volumes") {
+      older.contains(".withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))") and
+        older.contains(".withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))")
+    }
+    null
+  }
+
+  """
   The entrypoint names the Go image by the tag generation asks for, after the
   session resolved another tag of the same image, which an engine can report
   in its place.

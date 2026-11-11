@@ -808,6 +808,9 @@ type GoSdk {
       "--go-image", goImage,
       "--runtime-image", pinnedImage("alpine:3.22"),
       "--dagger-go=" + JSON.encode(deps.length > 0),
+      # Go cache volumes stand in for dagger/go's per-package build only
+      # where its engines can't run it.
+      "--go-cache-volumes=" + JSON.encode(deps.length == 0 and releasePrecedes(target, versions.daggerGoFloor)),
       "--dagger-version", target,
       "--target-version", target,
       "--unified=" + JSON.encode(unified),

@@ -40,6 +40,7 @@ func run() error {
 	flag.StringVar(&cfg.GoImage, "go-image", "golang:1.26-alpine", "Go image used by the generated entrypoint")
 	flag.StringVar(&cfg.RuntimeImage, "runtime-image", "", "image the generated entrypoint runs the module's process in")
 	flag.BoolVar(&cfg.DaggerGo, "dagger-go", false, "build the module's process with dagger/go, the module's client \"go\"")
+	flag.BoolVar(&cfg.GoCacheVolumes, "go-cache-volumes", false, "mount Go cache volumes around the go build of the module's process, for a target older than dagger/go's floor")
 	flag.StringVar(&cfg.RemovedPath, "removed-list", "", "file that receives the paths of removed generated files")
 	flag.StringVar(&cfg.IncludePath, "include-list", "", "file that receives the module manifest's include list, one pattern per line")
 	flag.BoolVar(&cfg.UnifiedClient, "unified", false, "reuse core bindings and shared sessions")

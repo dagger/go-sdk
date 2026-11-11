@@ -47,6 +47,9 @@ type GenerateConfig struct {
 	// DaggerGo builds the module's process with dagger/go, a client of the
 	// module named "go".
 	DaggerGo bool
+	// GoCacheVolumes mounts Go cache volumes around the go build that
+	// builds the module's process without dagger/go.
+	GoCacheVolumes bool
 	// RemovedPath, when set, names a file that receives the module-relative
 	// paths of the generated files this run removed, one per line. The caller
 	// merges the remaining files back, so it needs the list to remove the rest.
@@ -255,7 +258,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("reload module package: %w", err)
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.TargetVersion, sources,
+		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.GoCacheVolumes, cfg.TargetVersion, sources,
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)

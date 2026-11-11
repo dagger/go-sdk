@@ -94,6 +94,7 @@ func GenerateV2Artifacts(
 	goImage string,
 	runtimeImage string,
 	daggerGo bool,
+	goCacheVolumes bool,
 	targetVersion string,
 	sources *EntrypointSources,
 ) (*V2Artifacts, error) {
@@ -109,7 +110,7 @@ func GenerateV2Artifacts(
 		pass:            1,
 	}
 
-	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, targetVersion, sources)
+	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, goCacheVolumes, targetVersion, sources)
 }
 
 type v2Module struct {
@@ -126,13 +127,17 @@ type v2Module struct {
 	// daggerGo builds the module's process with dagger/go, a client of the
 	// module, instead of a go build of its own.
 	daggerGo bool
+	// goCacheVolumes mounts Go module and build cache volumes around the go
+	// build, for a target whose engines can't run dagger/go's per-package
+	// build. Without them, the build is the one exec, cached by its inputs.
+	goCacheVolumes bool
 }
 
 // defaultRuntimeImage is the image a module's process runs in when the
 // generator isn't given one.
 const defaultRuntimeImage = "alpine:3.22"
 
-func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage string, daggerGo bool, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
+func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage string, daggerGo, goCacheVolumes bool, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
 	if !exposesModuleContext(funcs.schema) {
 		return nil, errors.New("the generated Dang entrypoint needs Dagger " + sourcesFloor + " or later")
 	}
@@ -143,6 +148,7 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		targetVersion:  targetVersion,
 		runtimeImage:   runtimeImage,
 		daggerGo:       daggerGo,
+		goCacheVolumes: goCacheVolumes,
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -407,7 +413,7 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	if mod.daggerGo {
 		writeDaggerGoDispatch(&b, moduleSubpath, buildTarget, declares)
 	} else {
-		writeGoBuildDispatch(&b, goImage, workdir, buildTarget, declares)
+		writeGoBuildDispatch(&b, goImage, workdir, buildTarget, declares, mod.goCacheVolumes)
 	}
 	// The engine evaluates prebuild before the module's first call, so the
 	// call finds its binary built, or joins the build in flight. For another
@@ -1080,13 +1086,13 @@ func developerArgEncoding(spec ParsedType) string {
 }
 
 // writeGoBuildDispatch writes the entrypoint's dispatch member as a go build
-// of the module's process at buildTarget, in goImage, with the module's own
-// Go cache volumes. With declares, it builds for a platform it is given,
+// of the module's process at buildTarget, in goImage, in one exec; with
+// cacheVolumes, around Go module and build cache volumes. With declares, it builds for a platform it is given,
 // which the engine's own Go toolchain compiles for, and declares the binary
 // as made for that platform (Directory.withPlatform): an engine of that
 // platform finds the one an engine of another platform made, such as in the
 // entries its image ships.
-func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string, declares bool) {
+func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string, declares, cacheVolumes bool) {
 	if declares {
 		b.WriteString("  let dispatch(platform: Platform!): File! {\n")
 		b.WriteString("    # Platform is its own scalar; a template is how Dang turns one into text.\n")
@@ -1096,8 +1102,10 @@ func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string,
 	}
 	b.WriteString("    container\n")
 	fmt.Fprintf(b, "      .from(%s)\n", strconv.Quote(goImage))
-	b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
-	b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
+	if cacheVolumes {
+		b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
+		b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
+	}
 	b.WriteString("      .withMountedDirectory(\"/workspace\", currentModule.contextDirectory)\n")
 	fmt.Fprintf(b, "      .withWorkdir(%s)\n", workdir)
 	b.WriteString("      .withEnvVariable(\"CGO_ENABLED\", \"0\")\n")

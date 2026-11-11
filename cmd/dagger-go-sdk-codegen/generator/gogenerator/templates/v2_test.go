@@ -113,6 +113,26 @@ func TestEntrypointDaggerGoDispatch(t *testing.T) {
 	require.Contains(t, text, `let pkg = if (src == ".") { "cmd/hello-dispatch" } else { src + "/cmd/hello-dispatch" }`)
 }
 
+// Without dagger/go, the entrypoint builds the module's process with go build
+// in one exec, which the engine caches by its inputs. Only a target whose
+// engines can't run dagger/go's per-package build mounts Go cache volumes
+// around it.
+func TestEntrypointGoBuildCacheVolumes(t *testing.T) {
+	source, err := (&v2Module{}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+	require.NoError(t, err)
+	text := string(source)
+	require.Contains(t, text, "go build -o /tmp/dispatch .")
+	require.NotContains(t, text, "withMountedCache")
+	require.NotContains(t, text, "cacheVolume(")
+
+	source, err = (&v2Module{goCacheVolumes: true}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+	require.NoError(t, err)
+	text = string(source)
+	require.Contains(t, text, "go build -o /tmp/dispatch .")
+	require.Contains(t, text, `.withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-mod"))`)
+	require.Contains(t, text, `.withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-build"))`)
+}
+
 func TestEntrypointWithoutOutsideFilesReturnsItsOwnDirectory(t *testing.T) {
 	source, err := (&v2Module{}).renderEntrypointSource("hello-world", ".", "golang:1.26-alpine")
 	require.NoError(t, err)
