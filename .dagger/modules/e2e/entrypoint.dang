@@ -11,7 +11,7 @@ type EntrypointChecks {
   let dangConfigPath: String! = "internal/dagger/entrypoint/dang.toml"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.25"
+  let sdkTarget: String! = "v1.0.0-beta.27"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)

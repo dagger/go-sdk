@@ -102,7 +102,7 @@ Generation refuses on v1.0.0-beta.16 and older.
 
 ## The release the generated code targets
 
-Each go-sdk release targets one Dagger release, v1.0.0-beta.25 today.
+Each go-sdk release targets one Dagger release, v1.0.0-beta.27 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to exactly that release.
 Its generated entrypoint declares the release to the engine, in the
@@ -124,7 +124,7 @@ An engine update can change a dependency client if the engine's view of
 that dependency changes.
 An SDK update changes the targeted release unless `targetVersion` pins it.
 The `targetVersion` setting pins a release between v1.0.0-beta.18 and the
-release after the SDK's, the release in flight (v1.0.0-beta.26 today);
+release after the SDK's, the release in flight (v1.0.0-beta.28 today);
 generation refuses a setting outside that range.
 A release after the SDK's own generates on an engine of that release, and
 with unified clients needs its `dagger.io/dagger` published or replaced.

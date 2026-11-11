@@ -10,10 +10,10 @@ type TargetChecks {
   let dangConfigPath: String! = "internal/dagger/entrypoint/dang.toml"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.25"
+  let sdkTarget: String! = "v1.0.0-beta.27"
 
   """The newest release a scope can pin: the release after sdkTarget."""
-  let newestTarget: String! = "v1.0.0-beta.26"
+  let newestTarget: String! = "v1.0.0-beta.28"
 
   let pins(ws: Workspace!, release: String!): Boolean! {
     ws.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
@@ -390,7 +390,7 @@ type TargetChecks {
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.17"), input, name,
       subject + "v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below " + floor + ", the oldest engine the generated entrypoint loads on. " + fix)
     let above = ", which this release of the Go SDK cannot generate for: it targets " + newestTarget + " at most. " + fix + ", or install the SDK release built for "
-    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.27"), input, name, subject + "v1.0.0-beta.27" + above + "v1.0.0-beta.27")
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.29"), input, name, subject + "v1.0.0-beta.29" + above + "v1.0.0-beta.29")
     expectRefusal(goSdk(targetVersion: "99.0.0"), input, name, subject + "v99.0.0" + above + "v99.0.0")
     let malformed = ", which is not a Dagger release such as " + sdkTarget + ". " + fix
     expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)
