@@ -153,6 +153,10 @@ type UnifiedChecks {
       .withExec(["git", "config", "user.name", "SDK test"])
       .withExec(["git", "config", "user.email", "sdk-test@example.com"])
       .withExec(["git", "add", "."])
+      # A module commits its entrypoint's dang.toml, which declares the
+      # release the engine serves it at; this repository's .gitignore
+      # ignores dang.toml.
+      .withExec(["git", "add", "-f", root + "/internal/dagger/entrypoint/dang.toml"])
       .withExec(["git", "commit", "-m", "generated module fixture"])
       .withExec(["git", "clone", "--bare", ".", "/srv/repo.git"])
       .withExposedPort(9418)
