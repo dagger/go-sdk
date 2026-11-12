@@ -85,6 +85,32 @@ type TargetChecks {
   }
 
   """
+  A new module with a collection generates with no settings, which builds
+  its process with dagger/go from the collection's runtime sources, and the
+  engine runs the collection.
+  """
+  collectionCheck(ws: Workspace!): Void @check {
+    let name = "target-collection"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withWorkdir(scopePath).withNewFile("main.go",
+      "package target_collection\n\ntype TargetCollection struct{}\n\n" +
+      "func (*TargetCollection) Items() *Items { return &Items{Keys: []string{\"a\", \"b\"}} }\n\n" +
+      "// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n" +
+      "// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
+      "type Item struct{ Name string }\n")
+    let generated = goSdk.generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the new module does not build with dagger/go:\n" + generated.file("dagger-module.toml").contents) {
+      generated.file("dagger-module.toml").contents.contains("\"github.com/dagger/go@")
+    }
+    assert("dagger/go does not build the module's process from the collection's runtime sources") {
+      generated.file("internal/dagger/entrypoint/main.dang").contents.contains("collectionContext.asWorkspace")
+    }
+    let out = called(generated, scopePath, "{targetCollection{items{keys}}}")
+    assert("the collection did not run: " + out) { out.contains("[\"a\",\"b\"]") }
+    null
+  }
+
+  """
   The setting pins an older release, in the v form without build metadata,
   and the running engine plays no part: generating again with the same
   setting changes nothing. Without the setting, the module returns to the
