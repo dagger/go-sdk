@@ -44,9 +44,9 @@ type GoSdk {
   (versions.toml), which the generated entrypoint lists as its own
   dependency: the same per-package builds, cached the same way, as any
   dagger/go build. The module itself compiles none of dagger/go's API.
-  Unset uses it for new entrypoint modules and keeps what an existing module
-  does. Set true to migrate, or false to build with go build. Applies to
-  Dang entrypoints.
+  Unset uses it for every entrypoint module that targets
+  v1.0.0-beta.26 or later, new or existing. Set false to build with
+  go build. Applies to Dang entrypoints.
   """
   daggerGo: Boolean
 
@@ -144,7 +144,7 @@ type GoSdk {
       checkDangConfig(initialized, target)
       # dagger/go, which builds the module's process, is the entrypoint's
       # own dependency, not a client of the module's.
-      let entrypointDeps = if (usesDaggerGo(ws, hadManifest, name, target)) { [moduleSource(versions.daggerGo)] } else { [] :: [ModuleSource!]! }
+      let entrypointDeps = if (usesDaggerGo(name, target)) { [moduleSource(versions.daggerGo)] } else { [] :: [ModuleSource!]! }
       let withClients = if (unified) {
         generateStandaloneClients(initialized, clients, true, target, false)
       } else { initialized }
@@ -172,20 +172,14 @@ type GoSdk {
   }
 
   """
-  Build new entrypoint modules with dagger/go, and keep what an existing
-  module does unless the setting says otherwise. A manifest that lists an
-  entrypoint's dependencies loads from Dagger versions.daggerGoFloor, so a
-  module that targets an older release builds with go build. target is
-  always a release: targetRelease picks one on every path.
+  Build entrypoint modules with dagger/go unless the setting says
+  otherwise. A manifest that lists an entrypoint's dependencies loads from
+  Dagger versions.daggerGoFloor, so a module that targets an older release
+  builds with go build. target is always a release: targetRelease picks
+  one on every path.
   """
-  let usesDaggerGo(ws: Workspace!, hadManifest: Boolean!, name: String!, target: String!): Boolean! {
-    let wanted = if (daggerGo != null) {
-      daggerGo ?? false
-    } else if (hadManifest) {
-      listsDaggerGo(ws)
-    } else {
-      true
-    }
+  let usesDaggerGo(name: String!, target: String!): Boolean! {
+    let wanted = daggerGo ?? true
     if (wanted and target != "" and releasePrecedes(target, versions.daggerGoFloor)) {
       if (daggerGo ?? false) {
         raise "module " + JSON.encode(name) + " sets daggerGo, which needs Dagger " + versions.daggerGoFloor + " or later: its manifest lists the entrypoint's dependencies, and the module targets " + target + ". Set targetVersion to " + versions.daggerGoFloor + " or later in the scope's settings in dagger.toml, or set daggerGo = false"

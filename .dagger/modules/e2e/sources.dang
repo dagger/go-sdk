@@ -17,8 +17,8 @@ type SourcesChecks {
   """
   The generated entrypoint returns the files the build reads outside the
   module from sources, and the manifest includes the same files, for an
-  engine that reads include in place of sources. The entrypoint builds from
-  the module context with GOWORK=off, and the module regenerates without
+  engine that reads include in place of sources. The entrypoint builds with
+  dagger/go from the module context, and the module regenerates without
   changes. Generation writes no file outside the module.
   """
   generateCheck(ws: Workspace!): Void @check {
@@ -31,7 +31,7 @@ type SourcesChecks {
       "pub types: [TypeDef!]! {",
       "pub call(\n    receiverType: String!,\n",
       ".withWorkdir(\"/workspace/\" + currentModule.sourceSubpath)",
-      ".withEnvVariable(\"GOWORK\", \"off\")",
+      "go.module(ws, path: root, findUp: false).packages(ws).get(pkg)",
       ".withMountedDirectory(\"/workspace\", currentModule.contextDirectory)",
     ].each { literal =>
       assert("the entrypoint lacks " + literal) { entrypoint.contains(literal) }
@@ -42,9 +42,9 @@ type SourcesChecks {
     assert("generation vendored the discovery tool") {
       ready.directory("internal/dagger/entrypoint").exists("go-inputs") == false
     }
-    assert("the manifest is not the entrypoint manifest") {
-      ready.file("dagger-module.toml").contents ==
-        "name = \"include-app\"\ninclude = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+    assert("the manifest is not the entrypoint manifest with dagger/go") {
+      ready.file("dagger-module.toml").contents.hasPrefix(
+        "name = \"include-app\"\ninclude = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n\n[[dependencies]]\n  name = \"go\"\n  source = \"github.com/dagger/go@")
     }
     assert("generation changed main.go") {
       ready.file("main.go").contents == input.file("main.go").contents
@@ -156,8 +156,11 @@ type SourcesChecks {
     let migrated = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
       ws: app.withWorkdir("caller").withNewFile("dagger-module.toml", legacy), isModule: true, name: "include-caller", clients: clients,
     ).file("dagger-module.toml").contents
+    # The one dependency left is dagger/go, the entrypoint's own.
     assert("generation kept codegen or dependencies, or lacks the entrypoint:\n" + migrated) {
-      migrated.contains("codegen") == false and migrated.contains("dependencies") == false and migrated.contains("[entrypoint]")
+      migrated.contains("codegen") == false and migrated.contains("../app") == false and
+        migrated.split("[[dependencies]]").length == 2 and migrated.contains("\"github.com/dagger/go@") and
+        migrated.contains("[entrypoint]")
     }
     let uncovered = legacy + "\n[[dependencies]]\n  name = \"other\"\n  source = \"../other\"\n"
     let refused = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(

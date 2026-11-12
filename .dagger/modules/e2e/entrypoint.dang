@@ -207,9 +207,10 @@ type EntrypointChecks {
   }
 
   """
-  An existing Go runtime module moves to a Dang entrypoint. The entrypoint
-  describes its types, and the dispatch command serves the requests the
-  entrypoint sends, in engine mode and in developer mode.
+  An existing Go runtime module moves to a Dang entrypoint, which builds its
+  process with dagger/go. The entrypoint describes its types, and the
+  dispatch command serves the requests the entrypoint sends, in engine mode
+  and in developer mode.
   """
   generateCheck(ws: Workspace!): Void @check {
     let legacyJSON = "{\n  \"name\": \"generate-app\",\n  \"engineVersion\": \"v1.0.0-beta.14\",\n  \"sdk\": {\n    \"source\": \"go\"\n  }\n}\n"
@@ -227,8 +228,8 @@ type EntrypointChecks {
       clients: [],
     )
 
-    assert("the manifest is not the entrypoint manifest") {
-      generated.file("dagger-module.toml").contents == entrypointManifest("generate-app")
+    assert("the manifest is not the entrypoint manifest with dagger/go") {
+      generated.file("dagger-module.toml").contents == daggerGoManifest(ws, "generate-app")
     }
     assert("dagger.json was not removed") {
       exists(generated, "dagger.json") == false
@@ -265,11 +266,10 @@ type EntrypointChecks {
     assert("the default value is not JSON text") {
       entrypoint.contains("defaultValue: (\"\\\"Hello\\\"\" :: Dagger.JSON!)")
     }
-    assert("the entrypoint does not build the dispatch command in the module") {
-      entrypoint.contains("go build -o /tmp/dispatch/dispatch ./cmd/generate-app-dispatch ")
-    }
-    assert("the dispatch compiler does not match the new go.mod") {
-      entrypoint.contains("golang:1.27-alpine@sha256:")
+    assert("dagger/go does not build the dispatch command in the module") {
+      entrypoint.contains("go.module(ws, path: root, findUp: false).packages(ws).get(pkg)") and
+        entrypoint.contains("\"cmd/generate-app-dispatch\"") and
+        entrypoint.contains("go build") == false
     }
 
     let dispatcher = container
@@ -472,7 +472,7 @@ type EntrypointChecks {
     }
     let migrated = goSdk(dangEntrypoint: true, globalClient: true).generateScope(ws: input, isModule: true, name: "generate-app", clients: [])
     assert("explicit migration did not select the entrypoint with unified bindings") {
-      migrated.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
+      migrated.file("dagger-module.toml").contents == daggerGoManifest(ws, "generate-app") and
         migrated.file("internal/dagger/dagger.gen.go").contents.contains("dagger.io/dagger/core")
     }
     assert("the default migration changed the module source") {
@@ -485,7 +485,7 @@ type EntrypointChecks {
       ws: input, isModule: true, name: "generate-app", clients: [],
     )
     assert("unifiedClients = false did not migrate the runtime module to embedded entrypoint bindings") {
-      embedded.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
+      embedded.file("dagger-module.toml").contents == daggerGoManifest(ws, "generate-app") and
         embedded.file("internal/dagger/entrypoint/main.dang").contents.contains("  pub sources(workspace: Workspace!): Directory! {\n") and
         embedded.file("internal/dagger/dagger.gen.go").contents.contains("GraphQLClient() graphql.Client") and
         configures(embedded, sdkTarget)
@@ -554,7 +554,7 @@ type EntrypointChecks {
         .withNewFile(dangConfigPath, "[imports.Extra]\npath = \"../extra\"\n")
       let replaced = goSdk(globalClient: true).generateScope(ws: remote, isModule: true, name: "generate-app", clients: [])
       assert("automatic generation kept a remote entrypoint:\n" + replaced.file("dagger-module.toml").contents) {
-        replaced.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
+        replaced.file("dagger-module.toml").contents == daggerGoManifest(ws, "generate-app") and
           replaced.file("internal/dagger/entrypoint/main.dang").contents.contains("type Entrypoint implements ModuleEntrypoint")
       }
       assert("the replaced entrypoint's dang.toml does not declare the target or keep its settings:\n" + replaced.file(dangConfigPath).contents) {
@@ -634,7 +634,11 @@ type EntrypointChecks {
     null
   }
 
-  """Generation and the emitted dispatcher honor full Go/toolchain patch versions."""
+  """
+  Generation and the emitted dispatcher honor full Go/toolchain patch
+  versions. The go build of a module that sets daggerGo = false names the
+  selected compiler.
+  """
   compilerVersionCheck(ws: Workspace!): Void @check {
     let name = "compiler-version"
     let scopePath = outputRoot + "/" + name
@@ -645,7 +649,7 @@ type EntrypointChecks {
         .withNewFile("go.mod", "module example.com/compiler-version\n\n" + directive)
         .withNewFile("dagger-module.toml", "name = 'compiler-version'\n[runtime]\nsource = 'go'\n")
         .withNewFile("main.go", source)
-      let generated = goSdk(dangEntrypoint: true).generateScope(
+      let generated = goSdk(dangEntrypoint: true, daggerGo: false).generateScope(
         ws: input, isModule: true, name: name, clients: [],
       )
       assert("generation changed the author's source") { generated.file("main.go").contents == source }
@@ -686,7 +690,8 @@ type EntrypointChecks {
   """
   Generation reads a module on Go 1.27, whose compiler writes export data
   that the generator's package loader must decode to see the context
-  parameter as context.Context.
+  parameter as context.Context. Its go build, with daggerGo = false, is on
+  Go 1.27.
   """
   go127Check(ws: Workspace!): Void @check {
     let name = "go-127"
@@ -696,7 +701,7 @@ type EntrypointChecks {
       .withNewFile("go.mod", "module example.com/go-127\n\ngo 1.27\n")
       .withNewFile("dagger-module.toml", "name = 'go-127'\n[runtime]\nsource = 'go'\n")
       .withNewFile("main.go", source)
-    let generated = goSdk(dangEntrypoint: true).generateScope(
+    let generated = goSdk(dangEntrypoint: true, daggerGo: false).generateScope(
       ws: input, isModule: true, name: name, clients: [],
     )
     let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
@@ -717,7 +722,8 @@ type EntrypointChecks {
   in one exec, which the engine caches by its inputs. A module that sets
   daggerGo = false and targets a release that can run dagger/go's
   per-package build mounts no Go cache volume around it; one that targets a
-  release older than dagger/go's floor does.
+  release older than dagger/go's floor does. Generated again without the
+  setting, a module on go build moves to dagger/go.
   """
   goBuildCacheVolumesCheck(ws: Workspace!): Void @check {
     let name = "go-build-volumes"
@@ -725,14 +731,23 @@ type EntrypointChecks {
     let input = ws.withWorkdir(scopePath)
       .withNewFile("go.mod", "module example.com/go-build-volumes\n\ngo 1.27\n")
       .withNewFile("main.go", "package go_build_volumes\n\ntype GoBuildVolumes struct{}\n\nfunc (m *GoBuildVolumes) Echo(value string) string { return value }\n")
-    let current = goSdk(dangEntrypoint: true, daggerGo: false).generateScope(
+    let plain = goSdk(dangEntrypoint: true, daggerGo: false).generateScope(
       ws: input, isModule: true, name: name, clients: [],
-    ).file("internal/dagger/entrypoint/main.dang").contents
+    )
+    let current = plain.file("internal/dagger/entrypoint/main.dang").contents
     assert("the entrypoint does not build the module's process with go build") {
       current.contains("go build -o /tmp/dispatch/dispatch ./cmd/go-build-volumes-dispatch ")
     }
+    assert("the dispatch compiler does not match the go.mod") {
+      current.contains("golang:1.27-alpine@sha256:")
+    }
     assert("a target that can run dagger/go's per-package build mounts a Go cache volume") {
       current.contains("cacheVolume(") == false
+    }
+    let moved = goSdk(dangEntrypoint: true).generateScope(ws: plain, isModule: true, name: name, clients: [])
+    assert("an existing module on go build did not move to dagger/go:\n" + moved.file("dagger-module.toml").contents) {
+      moved.file("dagger-module.toml").contents == daggerGoManifest(ws, name) and
+        moved.file("internal/dagger/entrypoint/main.dang").contents.contains("go build") == false
     }
     let older = goSdk(dangEntrypoint: true, targetVersion: "v1.0.0-beta.25").generateScope(
       ws: input, isModule: true, name: name, clients: [],
@@ -745,9 +760,9 @@ type EntrypointChecks {
   }
 
   """
-  The entrypoint names the Go image by the tag generation asks for, after the
-  session resolved another tag of the same image, which an engine can report
-  in its place.
+  The go build of a module that sets daggerGo = false names the Go image by
+  the tag generation asks for, after the session resolved another tag of the
+  same image, which an engine can report in its place.
   """
   goImageTagCheck(ws: Workspace!): Void @check {
     let name = "go-image-tag"
@@ -764,7 +779,7 @@ type EntrypointChecks {
       .withNewFile("go.mod", "module example.com/go-image-tag\n\ngo 1.27.0\n")
       .withNewFile("dagger-module.toml", "name = 'go-image-tag'\n[runtime]\nsource = 'go'\n")
       .withNewFile("main.go", "package go_image_tag\n\ntype GoImageTag struct{}\n\nfunc (m *GoImageTag) Echo(value string) string { return value }\n")
-    let generated = goSdk(dangEntrypoint: true).generateScope(
+    let generated = goSdk(dangEntrypoint: true, daggerGo: false).generateScope(
       ws: input, isModule: true, name: name, clients: [],
     )
     let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
@@ -871,7 +886,7 @@ type EntrypointChecks {
       isModule: true, name: "generate-app", clients: [],
     )
     assert("creating a module-local go.mod did not allow remote entrypoint migration") {
-      independent.file("dagger-module.toml").contents == entrypointManifest("generate-app") and
+      independent.file("dagger-module.toml").contents == daggerGoManifest(ws, "generate-app") and
         independent.file("internal/dagger/entrypoint/main.dang").contents.contains("type Entrypoint implements ModuleEntrypoint")
     }
     [withClient, dropped, droppedLegacy, parentGoMod].map { refusal =>
