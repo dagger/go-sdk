@@ -371,7 +371,7 @@ func TestWriteCollectionBuildRewritesBothBuilds(t *testing.T) {
 	files := map[string][]byte{"items.go": []byte("package app\n")}
 	const mount = `.withMountedDirectory("/workspace", currentModule.contextDirectory)`
 	for name, entrypoint := range map[string]string{
-		"go build": "  let dispatch: File! {\n    container\n      " + mount + "\n  }\n\n  pub call: JSON! {\n      " + mount + "\n  }\n",
+		"go build":  "  let dispatch: File! {\n    container\n      " + mount + "\n  }\n\n  pub call: JSON! {\n      " + mount + "\n  }\n",
 		"dagger/go": "  let dispatch(platform: Platform!): File! {\n    let ws = currentModule.contextDirectory.asWorkspace\n  }\n\n  pub call: JSON! {\n      " + mount + "\n  }\n",
 	} {
 		root := t.TempDir()
