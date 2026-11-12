@@ -73,7 +73,10 @@ func collectionBuildSources(ctx context.Context, buildRoot, root string) (map[st
 	return result, nil
 }
 
-func writeCollectionBuild(root string, entrypoint []byte, files map[string][]byte) ([]byte, error) {
+// writeCollectionBuild writes the collection's runtime sources beside the
+// entrypoint and makes the entrypoint build its dispatcher from them. code is
+// the Dang expression of the module's Go code directory in its context.
+func writeCollectionBuild(root, code string, entrypoint []byte, files map[string][]byte) ([]byte, error) {
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -110,8 +113,8 @@ func writeCollectionBuild(root string, entrypoint []byte, files map[string][]byt
 		if err := writeFile(filepath.Join(root, rel), data); err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(&overlay, "\n      .withFile(currentModule.sourceSubpath + %s, currentModule.contextDirectory.file(currentModule.sourceSubpath + %s))",
-			strconv.Quote("/"+name), strconv.Quote("/"+rel))
+		fmt.Fprintf(&overlay, "\n      .withFile(%s + %s, currentModule.contextDirectory.file(%s + %s))",
+			code, strconv.Quote("/"+name), code, strconv.Quote("/"+rel))
 	}
 	overlay.WriteString("\n  }\n\n")
 	overlay.Write(dispatch)

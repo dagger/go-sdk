@@ -375,7 +375,7 @@ func TestWriteCollectionBuildRewritesBothBuilds(t *testing.T) {
 		"dagger/go": "  let dispatch(platform: Platform!): File! {\n    let ws = currentModule.contextDirectory.asWorkspace\n  }\n\n  pub call: JSON! {\n      " + mount + "\n  }\n",
 	} {
 		root := t.TempDir()
-		got, err := writeCollectionBuild(root, []byte(entrypoint), files)
+		got, err := writeCollectionBuild(root, "currentModule.sourceSubpath", []byte(entrypoint), files)
 		if err != nil {
 			t.Fatalf("%s: writeCollectionBuild() error = %v", name, err)
 		}
@@ -403,7 +403,7 @@ func TestWriteCollectionBuildRefusesMissingAnchors(t *testing.T) {
 		"one mount": "  let dispatch: File! {\n" + `.withMountedDirectory("/workspace", currentModule.contextDirectory)` + "\n",
 	} {
 		root := t.TempDir()
-		_, err := writeCollectionBuild(root, []byte(entrypoint), files)
+		_, err := writeCollectionBuild(root, "currentModule.sourceSubpath", []byte(entrypoint), files)
 		if err == nil || !strings.Contains(err.Error(), "collection build: the entrypoint needs one dispatch") {
 			t.Errorf("%s: writeCollectionBuild() error = %v", name, err)
 		}

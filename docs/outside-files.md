@@ -328,6 +328,12 @@ The engine loads the module from its directory, so a reference to the module
 stays the same. The generated entrypoint builds and runs the subdirectory, and
 source maps name files from the module directory, such as `runtime/main.go`.
 
+One thing changes for the module's own code. The Go runtime made the
+subdirectory the module's source, and the entrypoint makes the module
+directory its source. So `dag.CurrentModule().Source()` returns the module
+directory, and a file the code read from it as `template/main.py` is now
+`runtime/template/main.py`.
+
 The Go code's `go.mod` is in the subdirectory: generation creates one there
 when there is none, and refuses a `go.mod` above the subdirectory. A source
 outside the module directory is refused. So is a module in a subdirectory whose build reads files

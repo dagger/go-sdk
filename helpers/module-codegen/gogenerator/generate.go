@@ -316,7 +316,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return fmt.Errorf("prepare collection build: %w", err)
 	}
-	artifacts.EntrypointSource, err = writeCollectionBuild(root, artifacts.EntrypointSource, runtimeFiles)
+	artifacts.EntrypointSource, err = writeCollectionBuild(root, templates.CodeSubpathExpr(sourceSubpath(cfg)), artifacts.EntrypointSource, runtimeFiles)
 	if err != nil {
 		return err
 	}

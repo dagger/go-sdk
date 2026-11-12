@@ -152,6 +152,31 @@ type TargetChecks {
   }
 
   """
+  A collection in a module whose Go code is in a subdirectory builds its
+  process from the collection's runtime sources in that subdirectory, and
+  the engine runs the collection.
+  """
+  codeSubdirectoryCollectionCheck(ws: Workspace!): Void @check {
+    let name = "target-subdirectory-collection"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+      .withNewFile("dagger.json", "{\"name\": \"target-subdirectory-collection\", \"sdk\": {\"source\": \"go\"}, \"source\": \"runtime\"}\n")
+      .withNewFile("runtime/main.go",
+        "package main\n\ntype TargetSubdirectoryCollection struct{}\n\n" +
+        "func (*TargetSubdirectoryCollection) Items() *Items { return &Items{Keys: []string{\"a\", \"b\"}} }\n\n" +
+        "// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n" +
+        "// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
+        "type Item struct{ Name string }\n")
+    let generated = goSdk(dangEntrypoint: true).generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the collection's runtime sources are not read from the subdirectory") {
+      generated.file("runtime/internal/dagger/entrypoint/main.dang").contents.contains("currentModule.contextDirectory.file(codeSubpath + \"/internal/dagger/entrypoint/runtime/")
+    }
+    let out = called(generated, scopePath, "{targetSubdirectoryCollection{items{keys}}}", goPath: scopePath + "/runtime")
+    assert("the collection did not run: " + out) { out.contains("[\"a\",\"b\"]") }
+    null
+  }
+
+  """
   The setting pins an older release, in the v form without build metadata,
   and the running engine plays no part: generating again with the same
   setting changes nothing. Without the setting, the module returns to the

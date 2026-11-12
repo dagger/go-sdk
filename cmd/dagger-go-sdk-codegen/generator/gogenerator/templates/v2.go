@@ -139,6 +139,21 @@ type v2Module struct {
 	codeDir string
 }
 
+// moduleSubpathExpr is the Dang expression of the module directory's path in
+// its context.
+const moduleSubpathExpr = "currentModule.sourceSubpath"
+
+// CodeSubpathExpr is the Dang expression of the module's Go code directory's
+// path in its context, in the generated entrypoint: the module directory, or
+// the entrypoint's codeSubpath member when the code is in its subdirectory
+// codeDir.
+func CodeSubpathExpr(codeDir string) string {
+	if codeDir == "" || codeDir == "." {
+		return moduleSubpathExpr
+	}
+	return "codeSubpath"
+}
+
 // defaultRuntimeImage is the image a module's process runs in when the
 // generator isn't given one.
 const defaultRuntimeImage = "alpine:3.22"
@@ -413,9 +428,8 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	writeSources(&b, mod.sources)
 	// The module's Go code is in its directory, or in the subdirectory the
 	// manifest names, which a member gives as a path in the context.
-	code := "currentModule.sourceSubpath"
-	if mod.codeDir != "" && mod.codeDir != "." {
-		code = "codeSubpath"
+	code := CodeSubpathExpr(mod.codeDir)
+	if code != moduleSubpathExpr {
 		fmt.Fprintf(&b, "  # The module's Go code: its directory's %s.\n", mod.codeDir)
 		b.WriteString("  let codeSubpath: String! {\n")
 		b.WriteString("    let src = currentModule.sourceSubpath\n")
