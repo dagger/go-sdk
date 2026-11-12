@@ -50,6 +50,10 @@ type GenerateConfig struct {
 	// GoCacheVolumes mounts Go cache volumes around the go build that
 	// builds the module's process without dagger/go.
 	GoCacheVolumes bool
+	// SourceSubpath is ModuleRoot's path from the module directory, which
+	// holds the module's manifest: "." or empty unless the manifest names a
+	// subdirectory for the module's Go code, such as "runtime".
+	SourceSubpath string
 	// RemovedPath, when set, names a file that receives the module-relative
 	// paths of the generated files this run removed, one per line. The caller
 	// merges the remaining files back, so it needs the list to remove the rest.
@@ -231,6 +235,11 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	if err != nil {
 		return err
 	}
+	// The include list and the entrypoint's sources name paths from the
+	// module directory, and they are found from the Go code's.
+	if codeDir := sourceSubpath(cfg); codeDir != "" && len(includes.Include) > 0 {
+		return fmt.Errorf("%s: a module whose Go code is in a subdirectory of its directory (%s) cannot read files outside that subdirectory; move the code to the module directory, or remove what it reads from outside", includes.Include[0].Position, codeDir)
+	}
 	var sources *templates.EntrypointSources
 	if len(includes.Include) > 0 {
 		sources = &templates.EntrypointSources{Anchor: includes.Anchor}
@@ -258,7 +267,7 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return fmt.Errorf("reload module package: %w", err)
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.GoCacheVolumes, cfg.TargetVersion, sources,
+		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, sourceSubpath(cfg), cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.GoCacheVolumes, cfg.TargetVersion, sources,
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
@@ -829,4 +838,13 @@ type ExecError = dagger.ExecError
 		return fmt.Errorf("format bootstrap dispatcher: %w", err)
 	}
 	return writeFile(filepath.Join(root, "dagger.gen.go"), formatted)
+}
+
+// sourceSubpath is the module's Go code directory from its module directory,
+// or empty when they are the same.
+func sourceSubpath(cfg GenerateConfig) string {
+	if p := path.Clean(filepath.ToSlash(cfg.SourceSubpath)); p != "." {
+		return p
+	}
+	return ""
 }

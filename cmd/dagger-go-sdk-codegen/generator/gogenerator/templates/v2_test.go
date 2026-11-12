@@ -113,6 +113,29 @@ func TestEntrypointDaggerGoDispatch(t *testing.T) {
 	require.Contains(t, text, `let pkg = if (src == ".") { "cmd/hello-dispatch" } else { src + "/cmd/hello-dispatch" }`)
 }
 
+// A module whose manifest names a subdirectory for its Go code builds and
+// runs that subdirectory, with either build.
+func TestEntrypointCodeSubdirectory(t *testing.T) {
+	source, err := (&v2Module{daggerGo: true, codeDir: "runtime"}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+	require.NoError(t, err)
+	text := string(source)
+	require.Contains(t, text, "  let codeSubpath: String! {\n    let src = currentModule.sourceSubpath\n    if (src == \".\") { \"runtime\" } else { src + \"/runtime\" }\n  }\n")
+	require.Contains(t, text, "    let src = codeSubpath\n    let root = src\n    let pkg = src\n")
+	require.Contains(t, text, `.withWorkdir("/workspace/" + codeSubpath)`)
+	require.NotContains(t, text, `.withWorkdir("/workspace/" + currentModule.sourceSubpath)`)
+
+	source, err = (&v2Module{codeDir: "runtime"}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+	require.NoError(t, err)
+	text = string(source)
+	require.Contains(t, text, "go build -o /tmp/dispatch .")
+	require.Contains(t, text, `.withWorkdir("/workspace/" + codeSubpath)`)
+	require.NotContains(t, text, "currentModule.sourceSubpath)")
+
+	source, err = (&v2Module{daggerGo: true, codeDir: "."}).renderEntrypointSource("hello", ".", "golang:1.26-alpine", "main")
+	require.NoError(t, err)
+	require.NotContains(t, string(source), "codeSubpath")
+}
+
 // Without dagger/go, the entrypoint builds the module's process with go build
 // in one exec, which the engine caches by its inputs. Only a target whose
 // engines can't run dagger/go's per-package build mounts Go cache volumes

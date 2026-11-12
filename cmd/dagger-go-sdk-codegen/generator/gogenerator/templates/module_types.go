@@ -316,6 +316,8 @@ func (ps *parseState) sourceMap(item interface{ Pos() token.Pos }) *sourceMap {
 	filename, err := filepath.Rel(ps.pkg.Module.Dir, position.Filename)
 	if err != nil {
 		filename = position.Filename
+	} else if ps.codeDir != "" {
+		filename = filepath.Join(ps.codeDir, filename)
 	}
 
 	return &sourceMap{

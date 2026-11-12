@@ -840,7 +840,7 @@ type EntrypointChecks {
 
     # Settings a manifest with an entrypoint would drop are refused, before
     # anything is written.
-    let droppedTOML = "name = \"generate-app\"\ninclude = [\"extra\"]\ndisableDefaultFunctionCaching = true\nsource = \"src\"\n\n" +
+    let droppedTOML = "name = \"generate-app\"\ninclude = [\"extra\"]\ndisableDefaultFunctionCaching = true\nsource = \"../src\"\n\n" +
       "[runtime]\n  source = \"python\"\n\n[codegen]\n  automaticGitignore = false\n\n" +
       "[[clients]]\n  generator = \"go\"\n  directory = \"client\"\n\n" +
       "[[dependencies]]\n  name = \"dep\"\n  source = \"../dep\"\n\n" +

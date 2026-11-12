@@ -306,3 +306,31 @@ It removes `dependencies` when the scope's `clients` in `dagger.toml` list
 every dependency by module name: the entrypoint reaches them through the
 generated clients.
 It refuses a dependency that the scope's `clients` do not list, and names it.
+
+## Go code in a subdirectory of the module directory
+
+A module can keep its Go code in a subdirectory of the directory that holds
+its manifest, as `"source": "runtime"` says in `dagger.json`. The module
+directory then holds files that the Go code reads through the module's
+context, such as the SDK sources of a language SDK's runtime.
+
+Generating with `dangEntrypoint = true` keeps that layout:
+
+- the `go.mod`, the generated Go files and the Dang entrypoint go into the
+  subdirectory;
+- `dagger-module.toml` stays in the module directory and names the
+  entrypoint in the subdirectory, such as
+  `source = "./runtime/internal/dagger/entrypoint"`, which is how the next
+  generation finds the Go code again;
+- `dagger.json` is removed, as for any module that moves to the entrypoint.
+
+The engine loads the module from its directory, so a reference to the module
+stays the same. The generated entrypoint builds and runs the subdirectory, and
+source maps name files from the module directory, such as `runtime/main.go`.
+
+The Go code's `go.mod` is in the subdirectory: generation creates one there
+when there is none, and refuses a `go.mod` above the subdirectory. A source
+outside the module directory is refused. So is a module in a subdirectory whose build reads files
+outside the subdirectory through a local `replace` directive: its include
+list would have to name paths from the module directory, which generation
+does not compute.

@@ -108,7 +108,8 @@ type GoSdk {
   ): Workspace! {
     let hadManifest = exists(ws, "dagger-module.toml") or exists(ws, "dagger.json")
     let entrypoint = isModule and usesEntrypoint(ws, hadManifest)
-    let unified = usesUnifiedModule(ws, entrypoint)
+    # The bindings are in the module's Go code directory.
+    let unified = usesUnifiedModule(codeWorkspace(ws), entrypoint)
     if (isModule and entrypoint and remoteEntrypoint(ws) == "" and hasCustomRunner(ws)) {
       raise "module " + JSON.encode(name) + " uses a runtime or a local entrypoint that the Go SDK did not generate, and generation does not replace it; set dangEntrypoint = false in the scope's settings in dagger.toml to keep it"
     }
@@ -141,12 +142,13 @@ type GoSdk {
       # choosing, and bindings generated at a newer engine's view can use
       # fields that view lacks.
       let target = targetRelease("module " + JSON.encode(name), versions)
-      checkDangConfig(initialized, target)
+      checkDangConfig(initialized, target, entrypointDir(initialized))
       # dagger/go, which builds the module's process, is the entrypoint's
       # own dependency, not a client of the module's.
       let entrypointDeps = if (usesDaggerGo(name, target)) { [moduleSource(versions.daggerGo)] } else { [] :: [ModuleSource!]! }
+      # Clients go to the module's Go root, which is in its Go code directory.
       let withClients = if (unified) {
-        generateStandaloneClients(initialized, clients, true, target, false)
+        generateStandaloneClients(codeWorkspace(initialized), clients, true, target, false).withWorkdir(normalizePath(initialized.cwd))
       } else { initialized }
       entrypointModule(withClients, name, unified, target, entrypointDeps)
     } else if (isModule and hasCustomRunner(initialized)) {
@@ -240,6 +242,44 @@ type GoSdk {
     ws.directory(".", include: ["*.go"]).glob(pattern: "*.go").length > 0
   }
 
+  """
+  The module's Go code directory, relative to the module directory: "."
+  unless the manifest names a subdirectory. A manifest with a Dang
+  entrypoint names it by the entrypoint's path, which generation puts in the
+  Go code directory; any other manifest by its source.
+  """
+  let codeSubpath(ws: Workspace!): String! {
+    let optionalManifest = if (exists(ws, "dagger-module.toml")) {
+      decodedManifest(ws)
+    } else if (exists(ws, "dagger.json")) {
+      Dagger.json.withContents(ws.file("dagger.json").contents :: Dagger.JSON!)
+    } else { null }
+    if (optionalManifest == null) { return "." }
+    let manifest = optionalManifest :: Dagger.JSONValue!
+    if (manifest.fields.contains("entrypoint")) {
+      let source = normalizePath(stringField(manifest.field(["entrypoint"]), "source"))
+      if (source.hasSuffix("/" + entrypointPath)) { source.trimSuffix("/" + entrypointPath) } else { "." }
+    } else {
+      normalizePath(stringField(manifest, "source"))
+    }
+  }
+
+  """The workspace at the module's Go code directory."""
+  let codeWorkspace(ws: Workspace!): Workspace! {
+    let code = codeSubpath(ws)
+    if (code == ".") { ws } else { ws.withWorkdir(normalizePath(normalizePath(ws.cwd) + "/" + code)) }
+  }
+
+  """The generated entrypoint's directory, relative to the module directory."""
+  let entrypointDir(ws: Workspace!): String! {
+    normalizePath(codeSubpath(ws) + "/" + entrypointPath)
+  }
+
+  """Whether a path relative to the module directory leaves it."""
+  let leavesModule(p: String!): Boolean! {
+    p == ".." or p.hasPrefix("../") or p.contains("/../") or p.hasSuffix("/..")
+  }
+
   """The SDK's generated entrypoint, rather than a runner chosen by the user."""
   let hasGeneratedEntrypoint(ws: Workspace!): Boolean! {
     let optionalManifest = decodedManifest(ws)
@@ -248,8 +288,8 @@ type GoSdk {
     if (manifest.fields.contains("entrypoint") == false) { return false }
     let entrypoint = manifest.field(["entrypoint"])
     stringField(entrypoint, "kind") == "dang" and
-      normalizePath(stringField(entrypoint, "source")) == entrypointPath and
-      ownsEntrypoint(ws)
+      normalizePath(stringField(entrypoint, "source")) == entrypointDir(ws) and
+      ownsEntrypoint(codeWorkspace(ws))
   }
 
   let ownsEntrypoint(ws: Workspace!): Boolean! {
@@ -594,9 +634,13 @@ type GoSdk {
   """
   let checkEntrypointScope(ws: Workspace!, hadManifest: Boolean!, clients: [ModuleSource!]!, entrypoint: Boolean!, unified: Boolean!): Void {
     if (entrypoint) {
-      let enclosingRoot = findClientRoot(ws)
-      if (enclosingRoot != null and enclosingRoot != normalizePath(ws.cwd)) {
-        raise "Dang entrypoints need a go.mod in the module directory; create a go.mod there before generating"
+      let code = codeWorkspace(ws)
+      let enclosingRoot = findClientRoot(code)
+      if (enclosingRoot != null and enclosingRoot != normalizePath(code.cwd)) {
+        if (code.cwd == ws.cwd) {
+          raise "Dang entrypoints need a go.mod in the module directory; create a go.mod there before generating"
+        }
+        raise "Dang entrypoints need a go.mod in the module's Go code directory, " + JSON.encode(codeSubpath(ws)) + "; create a go.mod there before generating"
       }
       if (clients.length > 0 and !unified) {
         raise "a Dang entrypoint with embedded bindings cannot use other modules; set unifiedClients = true in the scope's settings in dagger.toml"
@@ -691,9 +735,10 @@ type GoSdk {
     let keys = ["disableDefaultFunctionCaching"].filter { key =>
       fields.contains(key)
     }
-    # A module is rooted at its own directory, which is what `source = "."`
-    # says. Any other source is what the manifest cannot carry.
-    let source = if (fields.contains("source") and normalizePath(manifest.field(["source"]).asString) != ".") {
+    # The Go code is in the module directory or below it, where the
+    # entrypoint's path says it is. A source outside the module directory is
+    # what the manifest cannot carry.
+    let source = if (fields.contains("source") and leavesModule(normalizePath(manifest.field(["source"]).asString))) {
       ["source"]
     } else {
       [] :: [String!]!
@@ -744,13 +789,19 @@ type GoSdk {
   """
   let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!, target: String!, deps: [ModuleSource!]!): Workspace! {
     let scopePath = normalizePath(ws.cwd)
+    # The module's Go code is in its directory or in the subdirectory its
+    # manifest names; the generated files go there, and the manifest stays
+    # in the module directory.
+    let code = codeSubpath(ws)
+    let codePath = normalizePath(scopePath + "/" + code)
+    let entrypointSource = entrypointDir(ws)
     # A module whose manifest names an entrypoint and no dependencies loads
     # through that entrypoint, which is not generated yet. A fresh runtime
     # manifest of the targeted release gives the engine a module it can
     # serve a schema for.
     let stagedManifest = sdkHelpers.moduleManifest
       .withName(name: name)
-      .withLegacyGoRuntime(engineVersion: target)
+      .withLegacyGoRuntime(moduleSource: if (code == ".") { null } else { code }, engineVersion: target)
     let staged = stagedManifest.generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
@@ -768,8 +819,8 @@ type GoSdk {
 
     # The generator updates go.mod and go.sum at the Go root, which can be
     # above the module. Without one, it creates go.mod in the module.
-    let goRoot = findClientRoot(ws) ?? scopePath
-    let moduleRoot = moduleSubpath(goRoot, scopePath)
+    let goRoot = findClientRoot(ws.withWorkdir(codePath)) ?? codePath
+    let moduleRoot = moduleSubpath(goRoot, codePath)
     let prefix = if (moduleRoot == ".") { "" } else { moduleRoot + "/" }
     let workspaceRoot = ws.withWorkdir(goRoot)
     let goVersion = if (exists(workspaceRoot, "go.mod")) {
@@ -781,7 +832,7 @@ type GoSdk {
     let goImage = pinnedImage("golang:" + goVersion + "-alpine")
     let builder = moduleCodegenBuilder(goImage)
     let moduleSource = generationInputs(workspaceRoot, [prefix + ".dagger-generated.json", prefix + "internal/dagger/clients/*/.dagger-generated.json"])
-    let includes = moduleIncludes(ws, builder, moduleSource, goRoot, moduleRoot, scopePath)
+    let includes = moduleIncludes(ws, builder, moduleSource, goRoot, moduleRoot, codePath)
     let included = lines(includes.file("include")).length > 0
     # A module with includes is generated where its build sees it: under its
     # anchor, beside the paths it includes.
@@ -796,6 +847,7 @@ type GoSdk {
       "module-codegen",
       "--module-root", buildRoot + "/" + moduleRoot,
       "--build-root", "/src",
+      "--source-subpath", code,
       "--module-name", name,
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
@@ -834,15 +886,15 @@ type GoSdk {
       prefix + "internal/dagger/**",
       prefix + "cmd/*-dispatch/**",
     ])
-    let merged = mergeGenerated(ws.withWorkdir(goRoot), owned).withWorkdir(scopePath)
+    let merged = mergeGenerated(ws.withWorkdir(goRoot), owned).withWorkdir(codePath)
     # The merge only adds files. The generated files the generator removed
-    # are removed here, relative to the module.
+    # are removed here, relative to the module's Go code.
     let removed = codegen.file("/removed.txt").contents.split("\n").filter { p => p != "" }
-    let pruned = removed.reduce(merged) { current, p => current.withoutFile(p) }
+    let pruned = removed.reduce(merged) { current, p => current.withoutFile(p) }.withWorkdir(scopePath)
     let manifested = sdkHelpers.moduleManifest
       .withName(name: name)
-      .withDangEntrypoint(source: "./" + entrypointPath)
-      .generate(withDangConfig(pruned, target), lock: false, legacyJson: false)
+      .withDangEntrypoint(source: "./" + entrypointSource)
+      .generate(withDangConfig(pruned, target, entrypointSource), lock: false, legacyJson: false)
     let includedManifest = withManifestInclude(manifested, codegen.file("/include.txt"))
     if (deps.length == 0) { return includedManifest }
     # The entrypoint's dependencies, which manifest version 2 lists without a
@@ -872,8 +924,8 @@ type GoSdk {
     mergeGenerated(ws, directory.withNewFile("dagger-module.toml", withInclude))
   }
 
-  let withDangConfig(ws: Workspace!, target: String!): Workspace! {
-    let scope = ws.withWorkdir(normalizePath(normalizePath(ws.cwd) + "/" + entrypointPath))
+  let withDangConfig(ws: Workspace!, target: String!, entrypointSource: String!): Workspace! {
+    let scope = ws.withWorkdir(normalizePath(normalizePath(ws.cwd) + "/" + entrypointSource))
     let configured = sdkHelpers.loadDangConfig(scope)
       .withVersion(dangLanguage)
       .withDaggerImport(name: "Dagger", version: target)
@@ -889,12 +941,18 @@ type GoSdk {
   dropping what it declares. The engine reads only the nearest file in the
   module directory, so a new entrypoint file would hide one above it.
   """
-  let checkDangConfig(ws: Workspace!, target: String!): Void {
-    let path = entrypointPath + "/dang.toml"
+  let checkDangConfig(ws: Workspace!, target: String!, entrypointSource: String!): Void {
+    let path = entrypointSource + "/dang.toml"
     if (exists(ws, path)) {
       return checkEntrypointDangConfig(path, decodedDangConfig(ws, path), target)
     }
-    let nearest = ["internal/dagger/dang.toml", "internal/dang.toml", "dang.toml"].filter { p => exists(ws, p) }
+    # The directories from the entrypoint's parent up to the module
+    # directory, nearest first.
+    let parents = entrypointSource.split("/").reduce([] :: [String!]!) { dirs, part =>
+      let parent = dirs.takeFirst(1).join("")
+      [if (parent == "") { part } else { parent + "/" + part }] + dirs
+    }.takeLast(entrypointSource.split("/").length - 1)
+    let nearest = (parents.map { dir => dir + "/dang.toml" } + ["dang.toml"]).filter { p => exists(ws, p) }
     let inherited = nearest[0] ?? ""
     if (inherited != "" and !isDefaultDangConfig(decodedDangConfig(ws, inherited), target)) {
       raise inherited + " has settings that a generated " + path + " would hide, because the engine reads only the nearest dang.toml; move them to " + path + ", or remove them"

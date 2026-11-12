@@ -37,15 +37,17 @@ type TargetChecks {
 
   """
   Serve the generated module from a nested client and return the data of
-  one query, so the engine runs the module's generated code.
+  one query, so the engine runs the module's generated code. The probe
+  builds in goPath, the module's Go code directory, which is scopePath
+  unless the module keeps its code in a subdirectory.
   """
-  let called(ws: Workspace!, scopePath: String!, query: String!): String! {
+  let called(ws: Workspace!, scopePath: String!, query: String!, goPath: String! = ""): String! {
     let ran = container.from("golang:1.27-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/workspace", ws.directory("/", exclude: ["**/.git"]))
       .withFile("/probe/main.go", ws.file("/" + probePath))
-      .withWorkdir("/workspace/" + scopePath)
+      .withWorkdir("/workspace/" + (if (goPath == "") { scopePath } else { goPath }))
       .withEnvVariable("GOFLAGS", "-mod=mod")
       .withEnvVariable("MODULE_PATH", scopePath)
       .withEnvVariable("QUERY", query)
@@ -81,6 +83,45 @@ type TargetChecks {
     assert("generating again changed files") { again.changes(first).isEmpty }
     let out = called(first, scopePath, "query($ws:ID!){targetDefault(ws:$ws){container{withExec(args:[\"cat\",\"/etc/alpine-release\"]){stdout}}}}")
     assert("the starter did not run on the SDK's release: " + out) { out.contains("\"stdout\":\"3.21.") }
+    null
+  }
+
+  """
+  A module whose dagger.json names a subdirectory for its Go code keeps the
+  code there. Generation writes the Go files into the subdirectory and the
+  manifest into the module directory, naming the entrypoint in the
+  subdirectory; source maps name files from the module directory. The
+  engine loads the module from its directory and runs the code, and
+  generating again changes nothing.
+  """
+  codeSubdirectoryCheck(ws: Workspace!): Void @check {
+    let name = "target-subdirectory"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+      .withNewFile("dagger.json", "{\"name\": \"target-subdirectory\", \"sdk\": {\"source\": \"go\"}, \"source\": \"runtime\"}\n")
+      .withNewFile("runtime/main.go", "package main\n\n// TargetSubdirectory greets.\ntype TargetSubdirectory struct{}\n\n// Hello greets from the subdirectory.\nfunc (m *TargetSubdirectory) Hello() string {\n\treturn \"hello from runtime\"\n}\n")
+    let sdk = goSdk(dangEntrypoint: true)
+    let first = sdk.generateScope(ws: input, isModule: true, name: name, clients: [])
+    let manifest = first.file("dagger-module.toml").contents
+    assert("the manifest does not name the entrypoint in the subdirectory:\n" + manifest) {
+      manifest.contains("source = \"./runtime/internal/dagger/entrypoint\"")
+    }
+    assert("dagger.json was kept") { first.directory(".", include: ["dagger.json"]).exists("dagger.json") == false }
+    let generated = first.directory("runtime", include: ["go.mod", "dagger.gen.go", "internal/dagger/entrypoint/main.dang", "internal/dagger/entrypoint/dang.toml"])
+    assert("the generated files are not in the subdirectory") {
+      generated.exists("go.mod") and generated.exists("dagger.gen.go") and
+        generated.exists("internal/dagger/entrypoint/main.dang") and generated.exists("internal/dagger/entrypoint/dang.toml")
+    }
+    assert("generated files reached the module directory") {
+      first.directory(".", include: ["internal/**", "dagger.gen.go", "go.mod"]).glob(pattern: "**").length == 0
+    }
+    assert("source maps do not name the file from the module directory") {
+      first.file("runtime/internal/dagger/entrypoint/main.dang").contents.contains("sourceMap(\"runtime/main.go\"")
+    }
+    let again = sdk.generateScope(ws: first, isModule: true, name: name, clients: [])
+    assert("generating again changed files") { again.changes(first).isEmpty }
+    let out = called(first, scopePath, "{targetSubdirectory{hello}}", goPath: scopePath + "/runtime")
+    assert("the module did not run its code: " + out) { out.contains("hello from runtime") }
     null
   }
 

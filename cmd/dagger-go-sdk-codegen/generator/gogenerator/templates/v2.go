@@ -91,6 +91,7 @@ func GenerateV2Artifacts(
 	fset *token.FileSet,
 	packageImport string,
 	moduleSubpath string,
+	codeDir string,
 	goImage string,
 	runtimeImage string,
 	daggerGo bool,
@@ -108,6 +109,7 @@ func GenerateV2Artifacts(
 		fullSchema:      schema,
 		schemaVersion:   schemaVersion,
 		pass:            1,
+		codeDir:         codeDir,
 	}
 
 	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, goCacheVolumes, targetVersion, sources)
@@ -131,6 +133,10 @@ type v2Module struct {
 	// build, for a target whose engines can't run dagger/go's per-package
 	// build. Without them, the build is the one exec, cached by its inputs.
 	goCacheVolumes bool
+	// codeDir is the module's Go code directory, relative to the module
+	// directory that holds its manifest: "." unless the manifest names a
+	// subdirectory, such as "runtime".
+	codeDir string
 }
 
 // defaultRuntimeImage is the image a module's process runs in when the
@@ -149,6 +155,7 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		runtimeImage:   runtimeImage,
 		daggerGo:       daggerGo,
 		goCacheVolumes: goCacheVolumes,
+		codeDir:        funcs.codeDir,
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -404,14 +411,25 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	fmt.Fprintf(&b, "# Needs Dagger %s or later; older engines report a missing \"workspace\" argument.\n", sourcesFloor)
 	b.WriteString("type Entrypoint implements ModuleEntrypoint {\n")
 	writeSources(&b, mod.sources)
-	workdir := `"/workspace/" + currentModule.sourceSubpath`
+	// The module's Go code is in its directory, or in the subdirectory the
+	// manifest names, which a member gives as a path in the context.
+	code := "currentModule.sourceSubpath"
+	if mod.codeDir != "" && mod.codeDir != "." {
+		code = "codeSubpath"
+		fmt.Fprintf(&b, "  # The module's Go code: its directory's %s.\n", mod.codeDir)
+		b.WriteString("  let codeSubpath: String! {\n")
+		b.WriteString("    let src = currentModule.sourceSubpath\n")
+		fmt.Fprintf(&b, "    if (src == \".\") { %s } else { src + %s }\n", strconv.Quote(mod.codeDir), strconv.Quote("/"+mod.codeDir))
+		b.WriteString("  }\n\n")
+	}
+	workdir := `"/workspace/" + ` + code
 	buildTarget := "./cmd/" + strcase.ToKebab(moduleName) + "-dispatch"
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		buildTarget = "."
 	}
 	declares := mod.declaresPlatform()
 	if mod.daggerGo {
-		writeDaggerGoDispatch(&b, moduleSubpath, buildTarget, declares)
+		writeDaggerGoDispatch(&b, code, moduleSubpath, buildTarget, declares)
 	} else {
 		writeGoBuildDispatch(&b, goImage, workdir, buildTarget, declares, mod.goCacheVolumes)
 	}
@@ -1136,16 +1154,17 @@ func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string,
 // writeDaggerGoDispatch writes the entrypoint's dispatch member as dagger/go's
 // build of the module's process at buildTarget: the same per-package builds,
 // cached the same way, as any dagger/go build, at the toolchain of the
-// module's go.mod. dagger/go is the module's client "go". moduleSubpath is
-// the module's directory under its Go module's.
-func writeDaggerGoDispatch(b *bytes.Buffer, moduleSubpath, buildTarget string, declares bool) {
+// module's go.mod. dagger/go is the module's client "go". code is the Dang
+// expression of the module's Go code directory in its context, and
+// moduleSubpath that directory under its Go module's.
+func writeDaggerGoDispatch(b *bytes.Buffer, code, moduleSubpath, buildTarget string, declares bool) {
 	if declares {
 		b.WriteString("  let dispatch(platform: Platform!): File! {\n")
 	} else {
 		b.WriteString("  let dispatch: File! {\n")
 	}
 	b.WriteString("    let ws = currentModule.contextDirectory.asWorkspace\n")
-	b.WriteString("    let src = currentModule.sourceSubpath\n")
+	fmt.Fprintf(b, "    let src = %s\n", code)
 	// dagger/go keys a package by its directory in the workspace.
 	if moduleSubpath == "." {
 		b.WriteString("    let root = src\n")
