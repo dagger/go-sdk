@@ -1161,14 +1161,11 @@ type GoSdk {
 
   """
   Build the module generator and the entrypoint contract check.
-
-  The contract check embeds Dang, whose parser needs cgo.
   """
   let moduleCodegenBuilder(goImage: String!): Container! {
     container
       .from(goImage)
       .withoutEntrypoint
-      .withExec(["apk", "add", "--no-cache", "build-base"])
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/helpers", currentModule.source.directory("helpers"))
