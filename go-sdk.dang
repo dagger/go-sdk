@@ -826,10 +826,12 @@ type GoSdk {
     let goVersion = if (exists(workspaceRoot, "go.mod")) {
       requiredGoVersion(workspaceRoot.file("go.mod"))
     } else { defaultGoVersion }
-    # The entrypoint names its images by digest, as this generation resolved
-    # them: a tag would be looked up in the registry again in every session
-    # that builds or runs the module.
-    let goImage = pinnedImage("golang:" + goVersion + "-alpine")
+    # The images the entrypoint names come from versions.toml, so generated
+    # code depends on this SDK and the module alone, never on when or where
+    # it was generated: a tag resolves to whatever the registry or the
+    # workspace's lock holds that day. Another Go version than the default
+    # is named by its tag, which its build looks up.
+    let goImage = if (goVersion == defaultGoVersion) { versions.goImage } else { "golang:" + goVersion + "-alpine" }
     let builder = moduleCodegenBuilder(goImage)
     let moduleSource = generationInputs(workspaceRoot, [prefix + ".dagger-generated.json", prefix + "internal/dagger/clients/*/.dagger-generated.json"])
     let includes = moduleIncludes(ws, builder, moduleSource, goRoot, moduleRoot, codePath)
@@ -852,7 +854,7 @@ type GoSdk {
       "--introspection-json-path", "/schema.json",
       "--schema-version", schemaVersion,
       "--go-image", goImage,
-      "--runtime-image", pinnedImage("alpine:3.22"),
+      "--runtime-image", versions.runtimeImage,
       "--dagger-go=" + JSON.encode(deps.length > 0),
       # Go cache volumes stand in for dagger/go's per-package build only
       # where its engines can't run it.
@@ -1155,17 +1157,6 @@ type GoSdk {
   }
 
   """
-  The image at ref, by its digest: the workspace's lock entry for it, or the
-  registry's, which the lock then records.
-
-  Only the digest is taken from imageRef: released engines can report there
-  another tag that the session resolved to the same image.
-  """
-  let pinnedImage(ref: String!): String! {
-    ref + "@" + (container.from(ref).imageRef.split("@")[1] ?? "")
-  }
-
-  """
   Build the module generator and the entrypoint contract check.
 
   The contract check embeds Dang, whose parser needs cgo.
@@ -1419,4 +1410,13 @@ type Versions {
   dependencies, which daggerGo writes.
   """
   pub daggerGoFloor: String!
+  """
+  The image generated entrypoints run a module's calls in, by digest.
+  """
+  pub runtimeImage: String!
+  """
+  The Go image a go build entrypoint builds in for defaultGoVersion, by
+  digest. Another Go version is named by its tag.
+  """
+  pub goImage: String!
 }

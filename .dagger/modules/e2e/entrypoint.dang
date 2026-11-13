@@ -703,7 +703,7 @@ type EntrypointChecks {
       }
       let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
       assert("the emitted dispatch compiler lost the selected patch version") {
-        entrypoint.contains("golang:1.26.8-alpine@sha256:")
+        entrypoint.contains(".from(\"golang:1.26.8-alpine\")")
       }
       let dispatcher = container.from("golang:1.26.8-alpine").withoutEntrypoint
         .withEnvVariable("CGO_ENABLED", "0")
@@ -802,33 +802,41 @@ type EntrypointChecks {
   }
 
   """
-  The go build of a module that sets daggerGo = false names the Go image by
-  the tag generation asks for, after the session resolved another tag of the
-  same image, which an engine can report in its place.
+  Generated code names its images as versions.toml pins them, never as the
+  session resolves a tag: the registry and the workspace's lock move a tag,
+  and a module generated before or after, or in another workspace, would
+  differ. The go build of a module on defaultGoVersion builds in the pinned
+  Go image; on another Go version, in that version's tag, which its build
+  looks up. This workspace's lock resolves alpine:3.22 and golang:1.27-alpine
+  to other digests than the pins.
   """
-  goImageTagCheck(ws: Workspace!): Void @check {
-    let name = "go-image-tag"
-    let scopePath = outputRoot + "/" + name
-    # The e2e checks share a session, so the module declares a Go version no
-    # other check uses: the session resolves golang:1.27.0-alpine only here.
-    # Its digest is read on another platform, which the engine keeps apart.
-    let digest = container(platform: "linux/s390x").from("golang:1.27.0-alpine").imageRef.split("@")[1] ?? ""
-    let other = "docker.io/library/golang:another-tag@" + digest
-    assert("the image's other tag did not resolve") {
-      container.from(other).imageRef == other
+  pinnedImagesCheck(ws: Workspace!): Void @check {
+    let versions = Dagger.json.withContents(JSON.encode(TOML.decode(ws.file("/versions.toml").contents)) :: Dagger.JSON!)
+    let runtimeImage = versions.field(["runtimeImage"]).asString
+    let goImage = versions.field(["goImage"]).asString
+    let current = pinnedImagesEntrypoint(ws, "go 1.27")
+    assert("the entrypoint does not run calls in the pinned " + runtimeImage) {
+      current.contains(".from(\"" + runtimeImage + "\")")
     }
-    let input = ws.withWorkdir(scopePath)
-      .withNewFile("go.mod", "module example.com/go-image-tag\n\ngo 1.27.0\n")
-      .withNewFile("dagger-module.toml", "name = 'go-image-tag'\n[runtime]\nsource = 'go'\n")
-      .withNewFile("main.go", "package go_image_tag\n\ntype GoImageTag struct{}\n\nfunc (m *GoImageTag) Echo(value string) string { return value }\n")
-    let generated = goSdk(dangEntrypoint: true, daggerGo: false).generateScope(
-      ws: input, isModule: true, name: name, clients: [],
-    )
-    let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
-    assert("the entrypoint does not name golang:1.27.0-alpine by its digest") {
-      entrypoint.contains(".from(\"golang:1.27.0-alpine@" + digest + "\")")
+    assert("the entrypoint does not build in the pinned " + goImage) {
+      current.contains(".from(\"" + goImage + "\")")
+    }
+    let other = pinnedImagesEntrypoint(ws, "go 1.27.0")
+    assert("another Go version is not named by its tag") {
+      other.contains(".from(\"golang:1.27.0-alpine\")") and other.contains(".from(\"" + runtimeImage + "\")")
     }
     null
+  }
+
+  """The entrypoint of a go build module with the go directive given."""
+  let pinnedImagesEntrypoint(ws: Workspace!, directive: String!): String! {
+    let name = "pinned-images"
+    let input = ws.withWorkdir(outputRoot + "/" + name)
+      .withNewFile("go.mod", "module example.com/pinned-images\n\n" + directive + "\n")
+      .withNewFile("main.go", "package pinned_images\n\ntype PinnedImages struct{}\n\nfunc (m *PinnedImages) Echo(value string) string { return value }\n")
+    goSdk(dangEntrypoint: true, daggerGo: false).generateScope(
+      ws: input, isModule: true, name: name, clients: [],
+    ).file("internal/dagger/entrypoint/main.dang").contents
   }
 
   """
