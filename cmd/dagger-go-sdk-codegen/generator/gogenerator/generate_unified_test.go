@@ -471,3 +471,19 @@ func TestUnifiedModuleOffersOnlyTheLibrarysCoreFields(t *testing.T) {
 	require.Contains(t, bindings, "func (r *Query) Container() *core.Container {")
 	require.NotContains(t, bindings, "NamingDictionary")
 }
+
+// A unified client keeps an explicit relative address, as a module's client
+// names its local module, and makes a path from the workspace root absolute.
+func TestUnifiedClientAddress(t *testing.T) {
+	for path, want := range map[string]string{
+		"..":     `dagger.ModuleGraphQLClient(connection, "..", "")`,
+		"../dep": `dagger.ModuleGraphQLClient(connection, "../dep", "")`,
+		"./dep":  `dagger.ModuleGraphQLClient(connection, "./dep", "")`,
+		"a/dep":  `dagger.ModuleGraphQLClient(connection, "/a/dep", "")`,
+	} {
+		gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: t.TempDir(), PackageImport: "example.com/app/client", ClientConfig: &generator.ClientGeneratorConfig{BoundModule: generator.BoundModule{Kind: generator.ModuleKindLocal, Path: path}}}}
+		state, err := gen.GenerateClient(t.Context(), buildClientSchema(), "v1.0.0-beta.15")
+		require.NoError(t, err)
+		require.Contains(t, readOverlay(t, state, "dagger.gen.go"), want, path)
+	}
+}

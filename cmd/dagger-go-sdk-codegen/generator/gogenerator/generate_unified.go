@@ -52,7 +52,7 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 		// A path from the workspace root is absolute; a module's client
 		// names its dependency by an explicit relative path from the module.
 		address = bound.Path
-		if address != "" && !strings.HasPrefix(address, "/") && !strings.HasPrefix(address, "./") && !strings.HasPrefix(address, "../") {
+		if address != "" && !strings.HasPrefix(address, "/") && !relativeAddress(address) {
 			address = "/" + address
 		}
 	}
@@ -210,6 +210,12 @@ func Load[T core.Loadable[T]](ctx context.Context,client *Client,id core.ID)(T,e
 		return nil, err
 	}
 	return &generator.GeneratedState{Overlay: mfs}, nil
+}
+
+// relativeAddress reports whether address is an explicit relative path,
+// such as "./dep", "../dep" or "..".
+func relativeAddress(address string) bool {
+	return address == "." || address == ".." || strings.HasPrefix(address, "./") || strings.HasPrefix(address, "../")
 }
 
 // moduleCoreQueryTemplate renders a module's core Query fields as methods
