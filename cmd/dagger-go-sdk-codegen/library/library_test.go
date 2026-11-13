@@ -155,3 +155,24 @@ func (r *Container) Stdout() string    { return "" }
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{"Container": true, "Version": true}, methods)
 }
+
+// A replacement of the selected version applies over one of every version,
+// as in Go's build, whichever comes first in go.mod.
+func TestQueryMethodsPrefersTheVersionsReplacement(t *testing.T) {
+	for name, replaces := range map[string]string{
+		"version last":  "replace dagger.io/dagger => ./every\nreplace dagger.io/dagger v1.0.0-beta.18 => ./this\n",
+		"version first": "replace dagger.io/dagger v1.0.0-beta.18 => ./this\nreplace dagger.io/dagger => ./every\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			goMod := writeGoMod(t, "module example.com/app\n\ngo 1.25\n\n"+replaces)
+			for dir, method := range map[string]string{"every": "Every", "this": "This"} {
+				core := filepath.Join(filepath.Dir(goMod), dir, "core")
+				require.NoError(t, os.MkdirAll(core, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(core, "core.gen.go"), []byte("package core\n\ntype Query struct{}\n\nfunc (r *Query) "+method+"() {}\n"), 0o644))
+			}
+			methods, err := QueryMethods(t.Context(), goMod, "v1.0.0-beta.18")
+			require.NoError(t, err)
+			require.Equal(t, map[string]bool{"This": true}, methods)
+		})
+	}
+}

@@ -173,18 +173,29 @@ func QueryMethods(ctx context.Context, goModPath, version string) (map[string]bo
 	}
 	modDir := filepath.Dir(goModPath)
 	module := Path + "@" + version
-	var dir string
+	// Go applies a replacement of this version over one of every version.
+	var selected *modfile.Replace
 	for _, replace := range mod.Replace {
-		if replace.Old.Path != Path || replace.Old.Version != "" && replace.Old.Version != version {
+		if replace.Old.Path != Path {
 			continue
 		}
-		if replace.New.Version == "" {
-			dir = replace.New.Path
+		if replace.Old.Version == version {
+			selected = replace
+			break
+		}
+		if replace.Old.Version == "" {
+			selected = replace
+		}
+	}
+	var dir string
+	if selected != nil {
+		if selected.New.Version == "" {
+			dir = selected.New.Path
 			if !filepath.IsAbs(dir) {
 				dir = filepath.Join(modDir, dir)
 			}
 		} else {
-			module = replace.New.Path + "@" + replace.New.Version
+			module = selected.New.Path + "@" + selected.New.Version
 		}
 	}
 	if dir == "" {
