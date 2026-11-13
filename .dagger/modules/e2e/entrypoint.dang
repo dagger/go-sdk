@@ -405,6 +405,36 @@ type EntrypointChecks {
     null
   }
 
+  let unifiedGlobalApp(input: Workspace!): Workspace! {
+    goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
+      ws: input, isModule: true, name: "generate-app", clients: [],
+    )
+  }
+
+  """
+  Unified bindings don't offer module code what only the engine's main
+  client may call, as the Go runtime's embedded bindings don't: code that
+  calls dag.Host, dag.Engine or dag.CurrentWorkspace doesn't compile, and
+  the rest of core's Query, such as dag.Container, does.
+  """
+  mainClientCallsCheck(ws: Workspace!): Void @check {
+    let input = ws
+      .withNewFile(appPath + "/dagger-module.toml", "name = \"generate-app\"\n")
+      .withWorkdir(appPath)
+    # Generation compiles the module, whose DaggerEcho calls dag.Container.
+    assert("the unified module has no global client") {
+      unifiedGlobalApp(input).file("dagger.gen.go").contents.contains("var dag ")
+    }
+    ["Host", "Engine", "CurrentWorkspace"].each { call =>
+      let calling = input.withNewFile("main_client.go", "package generate_app\n\nvar _ = dag." + call + "()\n")
+      let refused = unifiedGlobalApp(calling).file("dagger.gen.go").contents rescue { err: Error => err.message }
+      assert("module code that calls dag." + call + " compiled: " + refused) {
+        refused.contains("dag." + call + " undefined")
+      }
+    }
+    null
+  }
+
   """
   A function's error reaches its caller with its text, not as the
   dispatcher's exit code: the dispatcher of a module with a Dang entrypoint

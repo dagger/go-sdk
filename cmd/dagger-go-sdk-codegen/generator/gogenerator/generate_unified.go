@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/template"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator/gogenerator/templates"
@@ -141,10 +142,13 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 	if address == "" {
 		transport = "defaultOrExplicit(connection)"
 	}
-	embeddedCore, initQuery := "", "&Query{query:q}"
+	embeddedCore, initQuery, coreQuery := "", "&Query{query:q}", ""
 	if g.Config.ModuleConfig != nil {
-		embeddedCore = "; *core.Query"
-		initQuery = "&Query{query:q,Query:new(core.Query).WithGraphQLQuery(q)}"
+		embeddedCore = "; coreQuery *core.Query"
+		initQuery = "&Query{query:q,coreQuery:new(core.Query).WithGraphQLQuery(q)}"
+		if coreQuery, err = moduleCoreQuery(schema, schemaVersion, g.Config); err != nil {
+			return nil, err
+		}
 	}
 	// loaded builds a core object from an ID a request returned, knowing it,
 	// where the library can (templates.KeepsLoadedIDs).
@@ -194,7 +198,8 @@ func assertNotNil(name string,value any){if reflect.ValueOf(value).IsNil(){panic
 func Ref[T core.Loadable[T]](client *Client,id core.ID)T{return core.Ref[T](new(core.Query).WithGraphQLQuery(client.query),id)}
 func Load[T core.Loadable[T]](ctx context.Context,client *Client,id core.ID)(T,error){return core.Load[T](ctx,new(core.Query).WithGraphQLQuery(client.query),id)}
 %s
-%s`, name, depImports.String(), aliases.String(), clientFields.String(), embeddedCore, transport, initQuery, clientInits.String(), loadedHelper, templates.IDMemoHelper)
+%s
+%s`, name, depImports.String(), aliases.String(), clientFields.String(), embeddedCore, transport, initQuery, clientInits.String(), loadedHelper, templates.IDMemoHelper, coreQuery)
 	formatted, err := imports.Process(filepath.Join(g.Config.OutputDir, "dagger.gen.go"), []byte(source), nil)
 	if err != nil {
 		return nil, err
@@ -203,6 +208,55 @@ func Load[T core.Loadable[T]](ctx context.Context,client *Client,id core.ID)(T,e
 		return nil, err
 	}
 	return &generator.GeneratedState{Overlay: mfs}, nil
+}
+
+// moduleCoreQueryTemplate renders a module's core Query fields as methods
+// that forward to dagger.io/dagger/core's Query.
+const moduleCoreQueryTemplate = `
+{{- $supportsVoid := CheckVersionCompatibility "v0.12.0" }}
+{{- range $field := .Fields }}
+{{ $field.Description | Comment }}
+{{- if $field.IsDeprecated }}
+//
+{{ $field.DeprecationReason | FormatDeprecation }}
+{{- end }}
+{{- if $field.Directives.IsExperimental }}
+//
+{{ $field.Directives.ExperimentalReason | FormatExperimental }}
+{{- end }}
+{{ FieldFunction $field false $supportsVoid "core" }} {
+	return r.coreQuery.{{ $field.Name | FormatName }}(
+		{{- if or (not $field.TypeRef.IsObject) (IsNullableObject $field.TypeRef) -}}
+		ctx,
+		{{- end -}}
+		{{- range $arg := $field.Args -}}
+		{{- if not (IsArgOptional $arg) -}}
+		{{ $arg.Name | FormatParamName }},
+		{{- end -}}
+		{{- end -}}
+		{{- if HasOptionals $field.Args -}}
+		opts...,
+		{{- end -}}
+	)
+}
+{{ end }}`
+
+// moduleCoreQuery renders the core API of a module's unified bindings: the
+// core fields of the Query that the engine serves module SDKs, forwarded to
+// dagger.io/dagger/core. The engine leaves out of that schema what only its
+// main client may call, such as host and engine, so the bindings don't offer
+// those, as the Go runtime's embedded bindings don't.
+func moduleCoreQuery(schema *introspection.Schema, schemaVersion string, cfg generator.Config) (string, error) {
+	core := schema.Exclude(schema.DependencyNames()...)
+	tmpl, err := template.New("module-core-query").Funcs(templates.GoTemplateFuncs(core, schema, schemaVersion, cfg)).Parse(moduleCoreQueryTemplate)
+	if err != nil {
+		return "", err
+	}
+	var b bytes.Buffer
+	if err := tmpl.Execute(&b, core.Query()); err != nil {
+		return "", fmt.Errorf("render the module's core query: %w", err)
+	}
+	return b.String(), nil
 }
 
 // coreHelpers names the option structs and With functions that core types

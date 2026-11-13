@@ -426,3 +426,25 @@ func TestListFilesKeepIDs(t *testing.T) {
 		require.NoError(t, err, string(out))
 	})
 }
+
+// A unified module's bindings offer the core Query fields of the schema the
+// engine serves module SDKs, and only those: not the whole of core's Query,
+// whose host and engine only the main client may call.
+func TestUnifiedModuleOffersTheModuleSchemasCoreFields(t *testing.T) {
+	schema := buildClientSchema()
+	schema.Types = append(schema.Types, &introspection.Type{Kind: introspection.TypeKindObject, Name: "Container"})
+	schema.Query().Fields = append(schema.Query().Fields, &introspection.Field{
+		Name:        "container",
+		Description: "Creates a scratch container.",
+		TypeRef:     &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindObject, Name: "Container"}},
+	})
+	generator.SetSchemaParents(schema)
+	gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: t.TempDir(), ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "app"}}}
+	state, err := gen.GenerateEmbeddedClient(t.Context(), schema, "v1.0.0-beta.15", "example.com/app/internal/dagger")
+	require.NoError(t, err)
+	bindings := readOverlay(t, state, "internal/dagger/dagger.gen.go")
+	require.Contains(t, bindings, "// Creates a scratch container.\nfunc (r *Query) Container() *core.Container {\n\treturn r.coreQuery.Container()\n}")
+	require.Contains(t, bindings, "coreQuery: new(core.Query).WithGraphQLQuery(q)")
+	require.NotContains(t, bindings, "\t*core.Query\n", "the bindings embed the whole of core's Query")
+	require.NotContains(t, bindings, "func (r *Query) Hello(")
+}
