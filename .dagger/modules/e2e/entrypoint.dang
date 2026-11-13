@@ -415,7 +415,8 @@ type EntrypointChecks {
   Unified bindings don't offer module code what only the engine's main
   client may call, as the Go runtime's embedded bindings don't: code that
   calls dag.Host, dag.Engine or dag.CurrentWorkspace doesn't compile, and
-  the rest of core's Query, such as dag.Container, does.
+  the rest of core's Query, such as dag.Container, does, also for a target
+  whose library lacks fields that the engine serves in that target's view.
   """
   mainClientCallsCheck(ws: Workspace!): Void @check {
     let input = ws
@@ -424,6 +425,14 @@ type EntrypointChecks {
     # Generation compiles the module, whose DaggerEcho calls dag.Container.
     assert("the unified module has no global client") {
       unifiedGlobalApp(input).file("dagger.gen.go").contents.contains("var dag ")
+    }
+    # beta.18's library lacks fields this engine serves in beta.18's view,
+    # such as identifier, and generation compiles the module.
+    let older = goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true, targetVersion: "v1.0.0-beta.18").generateScope(
+      ws: input, isModule: true, name: "generate-app", clients: [],
+    )
+    assert("the beta.18 module's library is not pinned:\n" + older.file("go.mod").contents) {
+      older.file("go.mod").contents.contains("dagger.io/dagger v1.0.0-beta.18\n")
     }
     ["Host", "Engine", "CurrentWorkspace"].each { call =>
       let calling = input.withNewFile("main_client.go", "package generate_app\n\nvar _ = dag." + call + "()\n")

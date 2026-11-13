@@ -132,3 +132,26 @@ func writeFile(t *testing.T, path, contents string) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(contents), 0o644))
 }
+
+// QueryMethods reads the methods of core.Query from the library go.mod
+// builds with: here, a local replacement, whose other types' methods and
+// unexported methods don't count.
+func TestQueryMethodsReadsTheReplacement(t *testing.T) {
+	goMod := writeGoMod(t, "module example.com/app\n\ngo 1.25\n\nreplace dagger.io/dagger => ./sdk\n")
+	core := filepath.Join(filepath.Dir(goMod), "sdk", "core")
+	require.NoError(t, os.MkdirAll(core, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(core, "core.gen.go"), []byte(`package core
+
+type Query struct{}
+type Container struct{}
+
+func (r *Query) Container() *Container { return nil }
+func (r *Query) Version() string       { return "" }
+func (r *Query) query() string         { return "" }
+func (r *Container) Stdout() string    { return "" }
+`), 0o644))
+
+	methods, err := QueryMethods(t.Context(), goMod, "v1.0.0-beta.18")
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"Container": true, "Version": true}, methods)
+}

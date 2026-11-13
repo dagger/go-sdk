@@ -448,3 +448,26 @@ func TestUnifiedModuleOffersTheModuleSchemasCoreFields(t *testing.T) {
 	require.NotContains(t, bindings, "\t*core.Query\n", "the bindings embed the whole of core's Query")
 	require.NotContains(t, bindings, "func (r *Query) Hello(")
 }
+
+// A unified module's bindings don't offer a core field of the module schema
+// that the module's library lacks: an engine serves an older release's view
+// fields added after that release, which a forwarder could not call.
+func TestUnifiedModuleOffersOnlyTheLibrarysCoreFields(t *testing.T) {
+	schema := buildClientSchema()
+	schema.Types = append(schema.Types, &introspection.Type{Kind: introspection.TypeKindObject, Name: "Container"})
+	str := &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindScalar, Name: "String"}}
+	schema.Query().Fields = append(schema.Query().Fields,
+		&introspection.Field{Name: "container", TypeRef: &introspection.TypeRef{Kind: introspection.TypeKindNonNull, OfType: &introspection.TypeRef{Kind: introspection.TypeKindObject, Name: "Container"}}},
+		&introspection.Field{Name: "namingDictionary", TypeRef: str},
+	)
+	generator.SetSchemaParents(schema)
+	gen := &GoGenerator{Config: generator.Config{UnifiedClient: true, OutputDir: t.TempDir(), ModuleConfig: &generator.ModuleGeneratorConfig{
+		ModuleName:       "app",
+		CoreQueryMethods: map[string]bool{"Container": true},
+	}}}
+	state, err := gen.GenerateEmbeddedClient(t.Context(), schema, "v1.0.0-beta.15", "example.com/app/internal/dagger")
+	require.NoError(t, err)
+	bindings := readOverlay(t, state, "internal/dagger/dagger.gen.go")
+	require.Contains(t, bindings, "func (r *Query) Container() *core.Container {")
+	require.NotContains(t, bindings, "NamingDictionary")
+}

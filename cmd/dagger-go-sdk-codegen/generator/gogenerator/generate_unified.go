@@ -245,15 +245,28 @@ const moduleCoreQueryTemplate = `
 // core fields of the Query that the engine serves module SDKs, forwarded to
 // dagger.io/dagger/core. The engine leaves out of that schema what only its
 // main client may call, such as host and engine, so the bindings don't offer
-// those, as the Go runtime's embedded bindings don't.
+// those, as the Go runtime's embedded bindings don't. Nor do they offer a
+// field that the module's library lacks: an engine can serve an older
+// release's view fields added after that release.
 func moduleCoreQuery(schema *introspection.Schema, schemaVersion string, cfg generator.Config) (string, error) {
 	core := schema.Exclude(schema.DependencyNames()...)
+	query := core.Query()
+	if methods := cfg.ModuleConfig.CoreQueryMethods; methods != nil {
+		offered := *query
+		offered.Fields = nil
+		for _, field := range query.Fields {
+			if methods[templates.FormatName(field.Name)] {
+				offered.Fields = append(offered.Fields, field)
+			}
+		}
+		query = &offered
+	}
 	tmpl, err := template.New("module-core-query").Funcs(templates.GoTemplateFuncs(core, schema, schemaVersion, cfg)).Parse(moduleCoreQueryTemplate)
 	if err != nil {
 		return "", err
 	}
 	var b bytes.Buffer
-	if err := tmpl.Execute(&b, core.Query()); err != nil {
+	if err := tmpl.Execute(&b, query); err != nil {
 		return "", fmt.Errorf("render the module's core query: %w", err)
 	}
 	return b.String(), nil

@@ -219,6 +219,15 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 	}
 	generator.SetSchemaParents(merged.Schema)
 	client.Config.UnifiedClient = cfg.UnifiedClient
+	if cfg.UnifiedClient {
+		// Unified bindings forward to the library's core.Query, so they offer
+		// only the fields it has.
+		methods, err := library.QueryMethods(ctx, goModPath, cfg.DaggerVersion)
+		if err != nil {
+			return fmt.Errorf("read the core API of %s %s: %w", library.Path, cfg.DaggerVersion, err)
+		}
+		client.Config.ModuleConfig.CoreQueryMethods = methods
+	}
 	removed, err := generateClient(ctx, client, merged.Schema, cfg.SchemaVersion, packageImport, root, true)
 	if err != nil {
 		return fmt.Errorf("generate module client: %w", err)
