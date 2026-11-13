@@ -30,4 +30,6 @@ type Versions {
   pub defaultTarget: String!
   pub daggerGo: String!
   pub daggerGoFloor: String!
+  pub runtimeImage: String!
+  pub goImage: String!
 }

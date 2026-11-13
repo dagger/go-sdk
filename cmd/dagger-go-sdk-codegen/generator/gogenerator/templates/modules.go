@@ -757,6 +757,11 @@ type parseState struct {
 	legacyGoSDKCompat bool
 	objs              []types.Object
 
+	// codeDir is the module's Go code directory relative to the module
+	// directory, "" or "." when they are the same. Source maps name files
+	// from the module directory.
+	codeDir string
+
 	// dependencyTypes are the dependency client types referenced through
 	// global client aliases. The module's schema has no dependencies, so its
 	// API cannot use them; private fields and function bodies can.

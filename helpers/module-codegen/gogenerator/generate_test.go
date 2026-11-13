@@ -364,6 +364,37 @@ func writeTestFile(t *testing.T, path, contents string) {
 	}
 }
 
+// Both builds of the module's process read the module context once in
+// dispatch, and the call mounts it once. A collection build overlays the
+// prepared runtime sources on both, so the binary and its call see them.
+func TestWriteCollectionBuildRewritesBothBuilds(t *testing.T) {
+	files := map[string][]byte{"items.go": []byte("package app\n")}
+	const mount = `.withMountedDirectory("/workspace", currentModule.contextDirectory)`
+	for name, entrypoint := range map[string]string{
+		"go build":  "  let dispatch: File! {\n    container\n      " + mount + "\n  }\n\n  pub call: JSON! {\n      " + mount + "\n  }\n",
+		"dagger/go": "  let dispatch(platform: Platform!): File! {\n    let ws = currentModule.contextDirectory.asWorkspace\n  }\n\n  pub call: JSON! {\n      " + mount + "\n  }\n",
+	} {
+		root := t.TempDir()
+		got, err := writeCollectionBuild(root, "currentModule.sourceSubpath", []byte(entrypoint), files)
+		if err != nil {
+			t.Fatalf("%s: writeCollectionBuild() error = %v", name, err)
+		}
+		text := string(got)
+		if strings.Contains(text, "currentModule.contextDirectory.asWorkspace") || strings.Contains(text, mount) {
+			t.Errorf("%s: the entrypoint still reads the module context without the runtime sources:\n%s", name, text)
+		}
+		if !strings.Contains(text, `.withFile(currentModule.sourceSubpath + "/items.go", currentModule.contextDirectory.file(currentModule.sourceSubpath + "/internal/dagger/entrypoint/runtime/items.go.src"))`) {
+			t.Errorf("%s: the entrypoint lacks the runtime source overlay:\n%s", name, text)
+		}
+		if strings.Count(text, "collectionContext") != 3 {
+			t.Errorf("%s: want the overlay defined once and read by dispatch and call:\n%s", name, text)
+		}
+		if _, err := os.Stat(filepath.Join(root, "internal/dagger/entrypoint/runtime/items.go.src")); err != nil {
+			t.Errorf("%s: the runtime source was not written: %v", name, err)
+		}
+	}
+}
+
 func TestWriteCollectionBuildRefusesMissingAnchors(t *testing.T) {
 	files := map[string][]byte{"items.go": []byte("package app\n")}
 	for name, entrypoint := range map[string]string{
@@ -372,8 +403,8 @@ func TestWriteCollectionBuildRefusesMissingAnchors(t *testing.T) {
 		"one mount": "  let dispatch: File! {\n" + `.withMountedDirectory("/workspace", currentModule.contextDirectory)` + "\n",
 	} {
 		root := t.TempDir()
-		_, err := writeCollectionBuild(root, []byte(entrypoint), files)
-		if err == nil || !strings.Contains(err.Error(), "one dispatch and two context mounts") {
+		_, err := writeCollectionBuild(root, "currentModule.sourceSubpath", []byte(entrypoint), files)
+		if err == nil || !strings.Contains(err.Error(), "collection build: the entrypoint needs one dispatch") {
 			t.Errorf("%s: writeCollectionBuild() error = %v", name, err)
 		}
 		if _, err := os.Stat(filepath.Join(root, "internal")); !errors.Is(err, os.ErrNotExist) {

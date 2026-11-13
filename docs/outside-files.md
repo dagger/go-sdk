@@ -102,7 +102,7 @@ Generation refuses on v1.0.0-beta.16 and older.
 
 ## The release the generated code targets
 
-Each go-sdk release targets one Dagger release, v1.0.0-beta.25 today.
+Each go-sdk release targets one Dagger release, v1.0.0-beta.27 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to exactly that release.
 Its generated entrypoint declares the release to the engine, in the
@@ -124,7 +124,7 @@ An engine update can change a dependency client if the engine's view of
 that dependency changes.
 An SDK update changes the targeted release unless `targetVersion` pins it.
 The `targetVersion` setting pins a release between v1.0.0-beta.18 and the
-release after the SDK's, the release in flight (v1.0.0-beta.26 today);
+release after the SDK's, the release in flight (v1.0.0-beta.28 today);
 generation refuses a setting outside that range.
 A release after the SDK's own generates on an engine of that release, and
 with unified clients needs its `dagger.io/dagger` published or replaced.
@@ -306,3 +306,37 @@ It removes `dependencies` when the scope's `clients` in `dagger.toml` list
 every dependency by module name: the entrypoint reaches them through the
 generated clients.
 It refuses a dependency that the scope's `clients` do not list, and names it.
+
+## Go code in a subdirectory of the module directory
+
+A module can keep its Go code in a subdirectory of the directory that holds
+its manifest, as `"source": "runtime"` says in `dagger.json`. The module
+directory then holds files that the Go code reads through the module's
+context, such as the SDK sources of a language SDK's runtime.
+
+Generating with `dangEntrypoint = true` keeps that layout:
+
+- the `go.mod`, the generated Go files and the Dang entrypoint go into the
+  subdirectory;
+- `dagger-module.toml` stays in the module directory and names the
+  entrypoint in the subdirectory, such as
+  `source = "./runtime/internal/dagger/entrypoint"`, which is how the next
+  generation finds the Go code again;
+- `dagger.json` is removed, as for any module that moves to the entrypoint.
+
+The engine loads the module from its directory, so a reference to the module
+stays the same. The generated entrypoint builds and runs the subdirectory, and
+source maps name files from the module directory, such as `runtime/main.go`.
+
+One thing changes for the module's own code. The Go runtime made the
+subdirectory the module's source, and the entrypoint makes the module
+directory its source. So `dag.CurrentModule().Source()` returns the module
+directory, and a file the code read from it as `template/main.py` is now
+`runtime/template/main.py`.
+
+The Go code's `go.mod` is in the subdirectory: generation creates one there
+when there is none, and refuses a `go.mod` above the subdirectory. A source
+outside the module directory is refused. So is a module in a subdirectory whose build reads files
+outside the subdirectory through a local `replace` directive: its include
+list would have to name paths from the module directory, which generation
+does not compute.

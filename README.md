@@ -3,7 +3,7 @@
 > [!NOTE]
 >
 > By default, this version of the Go SDK targets Dagger engine
-> `v1.0.0-beta.25`. See
+> `v1.0.0-beta.27`. See
 > [The release the generated code targets](docs/outside-files.md#the-release-the-generated-code-targets).
 
 A Dagger module for managing Dagger modules and module clients that use the
@@ -20,11 +20,11 @@ generated Dang entrypoint:
 dang = "2.1"
 
 [imports.Dagger]
-dagger = "v1.0.0-beta.25"
+dagger = "v1.0.0-beta.27"
 ```
 
 The `dagger` value is the release the module targets: the SDK's own release,
-v1.0.0-beta.25, or the `targetVersion` setting.
+v1.0.0-beta.27, or the `targetVersion` setting.
 It equals the `DAGGER_CLIENT_VERSION` value in the generated `main.dang`.
 The `dang` value is the Dang language version of the entrypoint source,
 which stays `2.1`.

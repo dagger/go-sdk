@@ -8,6 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -157,6 +160,85 @@ func CheckSelection(ctx context.Context, root, subject, target string) (bool, er
 		fix = "require versions of " + joinAnd(paths) + " that need " + Path + " " + target + " or earlier"
 	}
 	return false, fmt.Errorf("%s targets Dagger %s, and %s: set targetVersion to %s or later in the scope's settings in dagger.toml, or %s", subject, target, cause, selected.Version, fix)
+}
+
+// QueryMethods returns the names of the methods of the Query type in the
+// core package of the library that go.mod builds with at version: the
+// replacement's when a replace directive applies, else the published
+// release's.
+func QueryMethods(ctx context.Context, goModPath, version string) (map[string]bool, error) {
+	mod, _, err := parse(goModPath)
+	if err != nil {
+		return nil, err
+	}
+	modDir := filepath.Dir(goModPath)
+	module := Path + "@" + version
+	// Go applies a replacement of this version over one of every version.
+	var selected *modfile.Replace
+	for _, replace := range mod.Replace {
+		if replace.Old.Path != Path {
+			continue
+		}
+		if replace.Old.Version == version {
+			selected = replace
+			break
+		}
+		if replace.Old.Version == "" {
+			selected = replace
+		}
+	}
+	var dir string
+	if selected != nil {
+		if selected.New.Version == "" {
+			dir = selected.New.Path
+			if !filepath.IsAbs(dir) {
+				dir = filepath.Join(modDir, dir)
+			}
+		} else {
+			module = selected.New.Path + "@" + selected.New.Version
+		}
+	}
+	if dir == "" {
+		data, err := goOutput(ctx, modDir, "mod", "download", "-json", module)
+		if err != nil {
+			return nil, err
+		}
+		var downloaded struct{ Dir string }
+		if err := json.Unmarshal([]byte(data), &downloaded); err != nil {
+			return nil, fmt.Errorf("decode the download of %s: %w", module, err)
+		}
+		dir = downloaded.Dir
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "core", "*.go"))
+	if err != nil {
+		return nil, err
+	}
+	methods := map[string]bool{}
+	fset := token.NewFileSet()
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(fset, file, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s's core package: %w", module, err)
+		}
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 || !fn.Name.IsExported() {
+				continue
+			}
+			if star, ok := fn.Recv.List[0].Type.(*ast.StarExpr); ok {
+				if ident, ok := star.X.(*ast.Ident); ok && ident.Name == "Query" {
+					methods[fn.Name.Name] = true
+				}
+			}
+		}
+	}
+	if len(methods) == 0 {
+		return nil, fmt.Errorf("%s has no core.Query methods in %s", module, dir)
+	}
+	return methods, nil
 }
 
 func parse(goModPath string) (*modfile.File, []byte, error) {

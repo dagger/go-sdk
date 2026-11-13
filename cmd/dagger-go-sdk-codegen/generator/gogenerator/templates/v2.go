@@ -63,6 +63,19 @@ const platformFloor = "v1.0.0-beta.26"
 // is served at that view (not yet released).
 const identifierCasingFloor = "v1.0.0-beta.26"
 
+// errorValuesFloor is the first Dagger release whose entrypoint can raise a
+// Dagger Error, values and all, as the error of the function it calls
+// (dagger/dagger#15161; not yet released).
+const errorValuesFloor = "v1.0.0-beta.28"
+
+// passesErrorValues reports whether a function's error reaches its caller
+// as the Dagger Error the dispatcher builds from it, with the values of the
+// engine's error, such as a failed exec's exit code and output, rather than
+// as its message alone: whether the module targets errorValuesFloor or later.
+func (mod *v2Module) passesErrorValues() bool {
+	return mod.targetVersion != "" && semver.Compare(mod.targetVersion, errorValuesFloor) >= 0
+}
+
 // casesIdentifiers reports whether the entrypoint names enum members as the
 // view of identifierCasingFloor and later does: whether the module targets
 // identifierCasingFloor or later.
@@ -91,9 +104,11 @@ func GenerateV2Artifacts(
 	fset *token.FileSet,
 	packageImport string,
 	moduleSubpath string,
+	codeDir string,
 	goImage string,
 	runtimeImage string,
 	daggerGo bool,
+	goCacheVolumes bool,
 	targetVersion string,
 	sources *EntrypointSources,
 ) (*V2Artifacts, error) {
@@ -107,12 +122,18 @@ func GenerateV2Artifacts(
 		fullSchema:      schema,
 		schemaVersion:   schemaVersion,
 		pass:            1,
+		codeDir:         codeDir,
 	}
 
-	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, targetVersion, sources)
+	return funcs.generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage, daggerGo, goCacheVolumes, targetVersion, sources)
 }
 
 type v2Module struct {
+	// description is the module's description: its package's doc comment.
+	description string
+	// unified reports whether the module's bindings alias the core types of
+	// dagger.io/dagger/core rather than embedding their own.
+	unified        bool
 	objects        []*parsedObjectType
 	interfaces     []*parsedIfaceType
 	enums          []*parsedEnumType
@@ -126,13 +147,36 @@ type v2Module struct {
 	// daggerGo builds the module's process with dagger/go, a client of the
 	// module, instead of a go build of its own.
 	daggerGo bool
+	// goCacheVolumes mounts Go module and build cache volumes around the go
+	// build, for a target whose engines can't run dagger/go's per-package
+	// build. Without them, the build is the one exec, cached by its inputs.
+	goCacheVolumes bool
+	// codeDir is the module's Go code directory, relative to the module
+	// directory that holds its manifest: "." unless the manifest names a
+	// subdirectory, such as "runtime".
+	codeDir string
+}
+
+// moduleSubpathExpr is the Dang expression of the module directory's path in
+// its context.
+const moduleSubpathExpr = "currentModule.sourceSubpath"
+
+// CodeSubpathExpr is the Dang expression of the module's Go code directory's
+// path in its context, in the generated entrypoint: the module directory, or
+// the entrypoint's codeSubpath member when the code is in its subdirectory
+// codeDir.
+func CodeSubpathExpr(codeDir string) string {
+	if codeDir == "" || codeDir == "." {
+		return moduleSubpathExpr
+	}
+	return "codeSubpath"
 }
 
 // defaultRuntimeImage is the image a module's process runs in when the
 // generator isn't given one.
 const defaultRuntimeImage = "alpine:3.22"
 
-func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage string, daggerGo bool, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
+func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, goImage, runtimeImage string, daggerGo, goCacheVolumes bool, targetVersion string, sources *EntrypointSources) (*V2Artifacts, error) {
 	if !exposesModuleContext(funcs.schema) {
 		return nil, errors.New("the generated Dang entrypoint needs Dagger " + sourcesFloor + " or later")
 	}
@@ -143,10 +187,16 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		targetVersion:  targetVersion,
 		runtimeImage:   runtimeImage,
 		daggerGo:       daggerGo,
+		goCacheVolumes: goCacheVolumes,
+		codeDir:        funcs.codeDir,
+		unified:        funcs.cfg.UnifiedClient,
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
-		RootVisitor: func(_ string) error { return nil },
+		RootVisitor: func(pkgDoc string) error {
+			mod.description = pkgDoc
+			return nil
+		},
 		StructVisitor: func(ps *parseState, named *types.Named, _ *types.TypeName, spec *parsedObjectType, _ *types.Struct) error {
 			if err := ps.fillObjectFunctionCases(named, mod.functionCases); err != nil {
 				return fmt.Errorf("generate function cases for %s: %w", spec.name, err)
@@ -398,16 +448,26 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	fmt.Fprintf(&b, "# Needs Dagger %s or later; older engines report a missing \"workspace\" argument.\n", sourcesFloor)
 	b.WriteString("type Entrypoint implements ModuleEntrypoint {\n")
 	writeSources(&b, mod.sources)
-	workdir := `"/workspace/" + currentModule.sourceSubpath`
+	// The module's Go code is in its directory, or in the subdirectory the
+	// manifest names, which a member gives as a path in the context.
+	code := CodeSubpathExpr(mod.codeDir)
+	if code != moduleSubpathExpr {
+		fmt.Fprintf(&b, "  # The module's Go code: its directory's %s.\n", mod.codeDir)
+		b.WriteString("  let codeSubpath: String! {\n")
+		b.WriteString("    let src = currentModule.sourceSubpath\n")
+		fmt.Fprintf(&b, "    if (src == \".\") { %s } else { src + %s }\n", strconv.Quote(mod.codeDir), strconv.Quote("/"+mod.codeDir))
+		b.WriteString("  }\n\n")
+	}
+	workdir := `"/workspace/" + ` + code
 	buildTarget := "./cmd/" + strcase.ToKebab(moduleName) + "-dispatch"
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		buildTarget = "."
 	}
 	declares := mod.declaresPlatform()
 	if mod.daggerGo {
-		writeDaggerGoDispatch(&b, moduleSubpath, buildTarget, declares)
+		writeDaggerGoDispatch(&b, code, moduleSubpath, buildTarget, declares)
 	} else {
-		writeGoBuildDispatch(&b, goImage, workdir, buildTarget, declares)
+		writeGoBuildDispatch(&b, goImage, workdir, buildTarget, declares, mod.goCacheVolumes)
 	}
 	// The engine evaluates prebuild before the module's first call, so the
 	// call finds its binary built, or joins the build in flight. For another
@@ -430,6 +490,12 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	// than the entrypoint itself does, so every target declares it, and an
 	// engine that doesn't read it ignores it.
 	fmt.Fprintf(&b, "  pub runtimeImage(platform: Platform): Container! {\n    container(platform: platform ?? defaultPlatform).from(%s)\n  }\n\n", strconv.Quote(runtimeImage))
+	// The engine reads the module's description from description, as the Go
+	// runtime gives it with Module.withDescription; an engine that doesn't
+	// read it ignores it.
+	if description := strings.TrimSpace(mod.description); description != "" {
+		fmt.Fprintf(&b, "  pub description: String! {\n    %s\n  }\n\n", strconv.Quote(description))
+	}
 	b.WriteString("  pub types: [TypeDef!]! {\n")
 	b.WriteString("    [\n")
 	for i, def := range defs {
@@ -483,7 +549,19 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
   let raiseFunctionError(err: GraphQLError!): String! {
     let marker = "` + functionErrorMarker + `"
     let stderr = ((JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? "") rescue ""
-    let lines = stderr.split("\n").filter { line => line.hasPrefix(marker) }
+`)
+	if mod.passesErrorValues() {
+		b.WriteString(`    # The dispatcher's last line holds the ID of the Dagger Error it built
+    # from the function's error, when it could build one: raising that Error
+    # hands the caller its values, such as a failed exec's output.
+    let idMarker = "` + functionErrorIDMarker + `"
+    let ids = stderr.split("\n").filter { line => line.hasPrefix(idMarker) }
+    if (ids.isEmpty == false) {
+      raise node(id: ids.takeLast(1).join("").trimPrefix(idMarker) :: ID!).{{... on Dagger.Error!}}
+    }
+`)
+	}
+	b.WriteString(`    let lines = stderr.split("\n").filter { line => line.hasPrefix(marker) }
     if (lines.isEmpty) {
       raise err
     }
@@ -497,6 +575,68 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 // functionErrorMarker starts the stderr line on which the dispatcher reports
 // the function's error. The function's own output shares that stderr.
 const functionErrorMarker = "::dagger-function-error::"
+
+// daggerErrorIDSource is the dispatcher's code that builds the Dagger Error of
+// a module that passesErrorValues, as the Go runtime's convertError does, with
+// JSONTYPE for the JSON type of the module's bindings.
+const daggerErrorIDSource = `
+// errorID is the ID of the Dagger Error built from the function's error, or
+// empty when it could not be built.
+var errorID string
+
+// daggerErrorID returns the ID of a Dagger Error that carries err as the
+// engine reported it: its message, and each of its extensions as a value,
+// such as a failed exec's exit code and output. The entrypoint raises that
+// Error, so the function's caller gets it. It returns "" when the Error
+// can't be built; the entrypoint then raises err's message.
+func daggerErrorID(ctx context.Context, err error) string {
+	message := err.Error()
+	var values map[string]any
+	if gqlErr := findSingleGQLError(err); gqlErr != nil {
+		message = gqlErr.Message
+		values = gqlErr.Extensions
+	}
+	dagErr := dagger.Connect().Error(message)
+	for _, name := range slices.Sorted(maps.Keys(values)) {
+		value, err := json.Marshal(values[name])
+		if err != nil {
+			continue
+		}
+		dagErr = dagErr.WithValue(name, JSONTYPE(value))
+	}
+	id, err := dagErr.ID(ctx)
+	if err != nil {
+		return ""
+	}
+	return string(id)
+}
+
+// findSingleGQLError returns the GraphQL error that err wraps, or nil when it
+// wraps none or several. dagger.io/dagger wraps a response's errors as a
+// list, which holds one for a failed call.
+func findSingleGQLError(err error) *gqlerror.Error {
+	switch x := err.(type) {
+	case *gqlerror.Error:
+		return x
+	case gqlerror.List:
+		if len(x) == 1 {
+			return x[0]
+		}
+		return nil
+	case interface{ Unwrap() []error }:
+		return nil
+	case interface{ Unwrap() error }:
+		return findSingleGQLError(x.Unwrap())
+	default:
+		return nil
+	}
+}
+`
+
+// functionErrorIDMarker starts the stderr line, after the functionErrorMarker
+// line, on which the dispatcher of a module that passesErrorValues reports
+// the ID of the Dagger Error it built from the function's error.
+const functionErrorIDMarker = "::dagger-function-error-id::"
 
 // writeSources writes the sources function, which returns the module
 // directory and the files its build reads outside it at their paths from the
@@ -863,6 +1003,20 @@ func (mod *v2Module) renderDispatchSource(moduleName, packageImport string, pack
 	}
 	table.WriteString("}\n")
 
+	// A module that passesErrorValues reports, after the function's error,
+	// the ID of a Dagger Error built from it, which its entrypoint raises.
+	var errorImports, reportErrorID, printErrorID, errorIDSource string
+	if mod.passesErrorValues() {
+		jsonType := "dagger.JSON"
+		errorImports = fmt.Sprintf("\t\"maps\"\n\t\"slices\"\n\t\"github.com/vektah/gqlparser/v2/gqlerror\"\n\tdagger %q\n", packageImport+"/internal/dagger")
+		if mod.unified {
+			jsonType = "core.JSON"
+			errorImports += "\tcore \"dagger.io/dagger/core\"\n"
+		}
+		reportErrorID = `if err != nil && os.Args[1] == "engine-call" { errorID = daggerErrorID(ctx, err) }`
+		printErrorID = fmt.Sprintf(`if errorID != "" { fmt.Fprintf(os.Stderr, "%%s%%s\n", %q, errorID) }`, functionErrorIDMarker)
+		errorIDSource = strings.ReplaceAll(daggerErrorIDSource, "JSONTYPE", jsonType)
+	}
 	source := fmt.Sprintf(`// Code generated by dagger. DO NOT EDIT.
 
 package main
@@ -880,7 +1034,7 @@ import (
 	telemetry "github.com/dagger/otel-go"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
-
+%s
 	module %q
 )
 
@@ -925,6 +1079,7 @@ func main() {
 	case "call": err = developerCall(ctx, os.Args[2:], os.Stdout)
 	default: err = fmt.Errorf("unknown mode %%q", os.Args[1])
 	}
+	%s
 	// fatalf exits without running deferred calls, so spans are flushed first.
 	telemetry.Close()
 	if err != nil { fatalf("%%v", err) }
@@ -941,8 +1096,10 @@ func fatalf(format string, args ...any) {
 	}
 	encoded, _ := json.Marshal(reported)
 	fmt.Fprintf(os.Stderr, "%%s\n%%s%%s\n", message, %q, encoded)
+	%s
 	os.Exit(2)
 }
+%s
 
 func engineCall(ctx context.Context, input io.Reader, output io.Writer) error {
 	dec := json.NewDecoder(input)
@@ -1042,7 +1199,7 @@ func findFunction(name string) (functionSpec, error) {
 	if len(found) > 1 { return functionSpec{}, fmt.Errorf("function %%q is ambiguous; use engine-call with receiverType", name) }
 	return found[0], nil
 }
-`, packageImport, table.String(), functionErrorMarker)
+`, errorImports, packageImport, table.String(), reportErrorID, functionErrorMarker, printErrorID, errorIDSource)
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		source = strings.Replace(source, "\tmodule "+strconv.Quote(packageImport)+"\n", "", 1)
 		source = strings.Replace(source, "module.DaggerDispatch(", "DaggerDispatch(", 1)
@@ -1080,13 +1237,13 @@ func developerArgEncoding(spec ParsedType) string {
 }
 
 // writeGoBuildDispatch writes the entrypoint's dispatch member as a go build
-// of the module's process at buildTarget, in goImage, with the module's own
-// Go cache volumes. With declares, it builds for a platform it is given,
+// of the module's process at buildTarget, in goImage, in one exec; with
+// cacheVolumes, around Go module and build cache volumes. With declares, it builds for a platform it is given,
 // which the engine's own Go toolchain compiles for, and declares the binary
 // as made for that platform (Directory.withPlatform): an engine of that
 // platform finds the one an engine of another platform made, such as in the
 // entries its image ships.
-func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string, declares bool) {
+func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string, declares, cacheVolumes bool) {
 	if declares {
 		b.WriteString("  let dispatch(platform: Platform!): File! {\n")
 		b.WriteString("    # Platform is its own scalar; a template is how Dang turns one into text.\n")
@@ -1096,8 +1253,10 @@ func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string,
 	}
 	b.WriteString("    container\n")
 	fmt.Fprintf(b, "      .from(%s)\n", strconv.Quote(goImage))
-	b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
-	b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
+	if cacheVolumes {
+		b.WriteString("      .withMountedCache(\"/go/pkg/mod\", cacheVolume(\"go-sdk-v2-mod\"))\n")
+		b.WriteString("      .withMountedCache(\"/root/.cache/go-build\", cacheVolume(\"go-sdk-v2-build\"))\n")
+	}
 	b.WriteString("      .withMountedDirectory(\"/workspace\", currentModule.contextDirectory)\n")
 	fmt.Fprintf(b, "      .withWorkdir(%s)\n", workdir)
 	b.WriteString("      .withEnvVariable(\"CGO_ENABLED\", \"0\")\n")
@@ -1128,16 +1287,17 @@ func writeGoBuildDispatch(b *bytes.Buffer, goImage, workdir, buildTarget string,
 // writeDaggerGoDispatch writes the entrypoint's dispatch member as dagger/go's
 // build of the module's process at buildTarget: the same per-package builds,
 // cached the same way, as any dagger/go build, at the toolchain of the
-// module's go.mod. dagger/go is the module's client "go". moduleSubpath is
-// the module's directory under its Go module's.
-func writeDaggerGoDispatch(b *bytes.Buffer, moduleSubpath, buildTarget string, declares bool) {
+// module's go.mod. dagger/go is the module's client "go". code is the Dang
+// expression of the module's Go code directory in its context, and
+// moduleSubpath that directory under its Go module's.
+func writeDaggerGoDispatch(b *bytes.Buffer, code, moduleSubpath, buildTarget string, declares bool) {
 	if declares {
 		b.WriteString("  let dispatch(platform: Platform!): File! {\n")
 	} else {
 		b.WriteString("  let dispatch: File! {\n")
 	}
 	b.WriteString("    let ws = currentModule.contextDirectory.asWorkspace\n")
-	b.WriteString("    let src = currentModule.sourceSubpath\n")
+	fmt.Fprintf(b, "    let src = %s\n", code)
 	// dagger/go keys a package by its directory in the workspace.
 	if moduleSubpath == "." {
 		b.WriteString("    let root = src\n")
