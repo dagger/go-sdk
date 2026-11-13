@@ -30,7 +30,9 @@ const moduleEntrypointContract = `interface ModuleEntrypoint {
 // Check type-checks a generated Dang entrypoint against the ModuleEntrypoint
 // interface and the selected Dagger schema, the way the engine's Dang
 // entrypoint loader installs that interface next to the entrypoint source.
-func Check(ctx context.Context, entrypointDir, schemaPath string) error {
+// It checks the source at version, the Dang version its dang.toml declares,
+// as the engine evaluates it; the zero version is Dang's current one.
+func Check(ctx context.Context, entrypointDir, schemaPath string, version dang.Version) error {
 	schema, err := loadSchema(schemaPath)
 	if err != nil {
 		return err
@@ -67,6 +69,9 @@ func Check(ctx context.Context, entrypointDir, schemaPath string) error {
 		return fmt.Errorf("write module entrypoint contract: %w", err)
 	}
 
+	if !version.IsZero() {
+		ctx = dang.ContextWithVersion(ctx, version)
+	}
 	ctx = dang.ContextWithImportConfigs(ctx, dang.ImportConfig{
 		Name:       "Dagger",
 		Schema:     schema,

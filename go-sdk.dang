@@ -871,6 +871,9 @@ type GoSdk {
       "entrypoint-contract",
       "--entrypoint-dir", buildRoot + "/" + prefix + entrypointPath,
       "--introspection-json-path", "/contract-schema.json",
+      # The engine evaluates the entrypoint at the version its dang.toml
+      # declares, which generation writes below.
+      "--dang-version", dangLanguage,
     ]).directory(buildRoot)
     checkGenerated(workspaceRoot, generated, [prefix + ".dagger-generated.json", prefix + "internal/dagger/clients/*/.dagger-generated.json"])
     # Merge only what the generator owns, so the user's files are not
