@@ -260,6 +260,9 @@ type EntrypointChecks {
     assert("the entrypoint still uses the argument list") {
       entrypoint.contains("FunctionCallArgValue") == false
     }
+    assert("the entrypoint does not give the package's doc comment as the module's description") {
+      entrypoint.contains("  pub description: String! {\n    \"Greets with a prefix.\"\n  }\n")
+    }
     assert("the constructor does not use the empty function name") {
       entrypoint.contains("function(\"\", typeDef.withObject(\"GenerateApp\"))")
     }

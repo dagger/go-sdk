@@ -116,6 +116,8 @@ func GenerateV2Artifacts(
 }
 
 type v2Module struct {
+	// description is the module's description: its package's doc comment.
+	description    string
 	objects        []*parsedObjectType
 	interfaces     []*parsedIfaceType
 	enums          []*parsedEnumType
@@ -174,7 +176,10 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
-		RootVisitor: func(_ string) error { return nil },
+		RootVisitor: func(pkgDoc string) error {
+			mod.description = pkgDoc
+			return nil
+		},
 		StructVisitor: func(ps *parseState, named *types.Named, _ *types.TypeName, spec *parsedObjectType, _ *types.Struct) error {
 			if err := ps.fillObjectFunctionCases(named, mod.functionCases); err != nil {
 				return fmt.Errorf("generate function cases for %s: %w", spec.name, err)
@@ -468,6 +473,12 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 	// than the entrypoint itself does, so every target declares it, and an
 	// engine that doesn't read it ignores it.
 	fmt.Fprintf(&b, "  pub runtimeImage(platform: Platform): Container! {\n    container(platform: platform ?? defaultPlatform).from(%s)\n  }\n\n", strconv.Quote(runtimeImage))
+	// The engine reads the module's description from description, as the Go
+	// runtime gives it with Module.withDescription; an engine that doesn't
+	// read it ignores it.
+	if description := strings.TrimSpace(mod.description); description != "" {
+		fmt.Fprintf(&b, "  pub description: String! {\n    %s\n  }\n\n", strconv.Quote(description))
+	}
 	b.WriteString("  pub types: [TypeDef!]! {\n")
 	b.WriteString("    [\n")
 	for i, def := range defs {

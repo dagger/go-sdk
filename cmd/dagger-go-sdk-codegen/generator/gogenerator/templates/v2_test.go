@@ -76,6 +76,18 @@ func TestEntrypointContractSurface(t *testing.T) {
 	require.NotContains(t, text, "FunctionCallArgValue")
 }
 
+// The entrypoint gives the engine the module's description, its package's doc
+// comment, from its description member, and declares no member without one.
+func TestEntrypointDeclaresModuleDescription(t *testing.T) {
+	source, err := (&v2Module{description: "Greets.\n\nWith \"quotes\".\n"}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.Contains(t, string(source), "  pub description: String! {\n    \"Greets.\\n\\nWith \\\"quotes\\\".\"\n  }\n")
+
+	source, err = (&v2Module{}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.NotContains(t, string(source), "description: String!")
+}
+
 // The entrypoint builds and runs the module in the images it's given, which
 // the SDK pins by digest, and runs it in alpine without one.
 func TestEntrypointImages(t *testing.T) {
