@@ -445,6 +445,45 @@ type EntrypointChecks {
   }
 
   """
+  A module's client of a local dependency calls the dependency by its path
+  from the module, as a dependency in the manifest is named: the module and
+  the dependency inside it still work when copied together to another
+  directory, the way a vendored or moved module is.
+  """
+  movedLocalClientCheck(ws: Workspace!): Void @check {
+    let fixture = "/" + fixtureRoot + "/moved"
+    let from = outputRoot + "/moved-from"
+    let to = outputRoot + "/moved/elsewhere"
+    let input = ws
+      .withDirectory(from, ws.directory(fixture, exclude: ["probe"]))
+      .withNewFile(from + "/dagger-module.toml", "name = \"moved-app\"\n")
+      .withWorkdir(from)
+    let generated = goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
+      ws: input, isModule: true, name: "moved-app",
+      clients: [input.withWorkdir(".").moduleSource("/" + from + "/dep")],
+    )
+    let moved = ws.withDirectory(to, generated.directory("."))
+    let called = container.from("golang:1.27-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/probe", ws.directory(fixture + "/probe"))
+      .withDirectory("/workspace", moved.directory("/", include: [to + "/**"]))
+      .withNewFile("/probe/go.mod", "module example.com/moved-probe\n\ngo 1.27\n\nrequire dagger.io/dagger v1.0.0-beta.27\n")
+      .withWorkdir("/probe")
+      .withExec(["go", "mod", "tidy"])
+      .withEnvVariable("MODULE_PATH", to)
+      .withExec(["go", "run", "."], experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    assert("the moved module failed to call its dependency:\n" + called.stdout + called.stderr) {
+      called.exitCode == 0 and called.stdout.trimSpace == "hello from the dependency"
+    }
+    let client = generated.file("internal/dagger/clients/moved-dep/dagger.gen.go").contents
+    assert("the client does not name its dependency by its path from the module:\n" + client) {
+      client.contains("dagger.ModuleGraphQLClient(connection, \"./dep\", \"\")")
+    }
+    null
+  }
+
+  """
   A function's error reaches its caller with its text, not as the
   dispatcher's exit code: the dispatcher of a module with a Dang entrypoint
   ends its stderr with the error of the module it calls, on the marker line

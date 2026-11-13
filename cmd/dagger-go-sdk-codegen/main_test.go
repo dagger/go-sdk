@@ -81,3 +81,19 @@ func TestPackageImportPath(t *testing.T) {
 		t.Fatalf("package import = %q, want %q", got, want)
 	}
 }
+
+// A module's client names its dependency by its path from the module's
+// directory, as an explicit relative address the engine resolves from there.
+func TestModuleRelativePath(t *testing.T) {
+	for _, c := range []struct{ moduleDir, target, want string }{
+		{"local-dep-parent", "local-dep-parent/dep", "./dep"},
+		{".", "dep", "./dep"},
+		{".", "a/b/dep", "./a/b/dep"},
+		{"a/b", "a/c", "../c"},
+		{"a/b", "c", "../../c"},
+		{"a/b", "a/b", "./"},
+		{"a/b", "a", ".."},
+	} {
+		require.Equal(t, c.want, moduleRelativePath(c.moduleDir, c.target), "%s from %s", c.target, c.moduleDir)
+	}
+}

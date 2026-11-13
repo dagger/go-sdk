@@ -49,8 +49,10 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 	}
 	address := bound.Ref
 	if bound.Kind != generator.ModuleKindGit {
+		// A path from the workspace root is absolute; a module's client
+		// names its dependency by an explicit relative path from the module.
 		address = bound.Path
-		if address != "" && !strings.HasPrefix(address, "/") {
+		if address != "" && !strings.HasPrefix(address, "/") && !strings.HasPrefix(address, "./") && !strings.HasPrefix(address, "../") {
 			address = "/" + address
 		}
 	}

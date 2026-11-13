@@ -148,14 +148,14 @@ type GoSdk {
       let entrypointDeps = if (usesDaggerGo(name, target)) { [moduleSource(versions.daggerGo)] } else { [] :: [ModuleSource!]! }
       # Clients go to the module's Go root, which is in its Go code directory.
       let withClients = if (unified) {
-        generateStandaloneClients(codeWorkspace(initialized), clients, true, target, false).withWorkdir(normalizePath(initialized.cwd))
+        generateStandaloneClients(codeWorkspace(initialized), clients, true, target, false, normalizePath(initialized.cwd)).withWorkdir(normalizePath(initialized.cwd))
       } else { initialized }
       entrypointModule(withClients, name, unified, target, entrypointDeps)
     } else if (isModule and hasCustomRunner(initialized)) {
       # A runtime or entrypoint the user chose remains theirs. Only explicitly
       # requested standalone clients are generated beside it.
       if (clients.length == 0) { initialized } else {
-        generateStandaloneClients(initialized, clients, false, "", true)
+        generateStandaloneClients(initialized, clients, false, "", true, normalizePath(initialized.cwd))
       }
     } else if (isModule) {
       let configured = generatedManifest(initialized, name, clients, hadManifest)
@@ -163,13 +163,13 @@ type GoSdk {
       # generatedModuleCode excludes manifests, so the configured ones survive
       # the merge. Rewriting them here would repeat the same workspace edit.
       if (dualClients) {
-        generateStandaloneClients(generated, clients, false, "", false)
+        generateStandaloneClients(generated, clients, false, "", false, normalizePath(generated.cwd))
       } else {
         generated
       }
     } else {
       # Standalone clients are the only output here, so dualClients does not apply.
-      generateStandaloneClients(initialized, clients, false, "", false)
+      generateStandaloneClients(initialized, clients, false, "", false, "")
     }
   }
 
@@ -411,6 +411,8 @@ type GoSdk {
   target is the release a module with a Dang entrypoint targets, which its
   clients pin; empty for the other scopes. With keepStyle, an unset
   unifiedClients keeps each existing client's style and embeds a new one.
+  moduleDir is the directory, from the workspace root, of the module whose
+  code calls the clients; empty for a scope without a module.
   """
   let generateStandaloneClients(
     ws: Workspace!,
@@ -418,6 +420,7 @@ type GoSdk {
     moduleUnified: Boolean!,
     target: String!,
     keepStyle: Boolean!,
+    moduleDir: String!,
   ): Workspace! {
     let originalScope = normalizePath(ws.cwd)
     let goScope = findClientRoot(ws)
@@ -442,7 +445,7 @@ type GoSdk {
       # Only the completed batch needs to be merged into the workspace.
       let subject = "scope " + JSON.encode(goScope)
       let generated = clients.reduce(base) { current, client =>
-        generateStandaloneClient(current, client, unifiedClient(scoped, client, moduleUnified, keepStyle), ws, pinned, subject)
+        generateStandaloneClient(current, client, unifiedClient(scoped, client, moduleUnified, keepStyle), ws, pinned, subject, moduleDir)
       }
       let pruned = generated.withExec([
         "dagger-go-sdk-codegen", "prune-clients",
@@ -1243,12 +1246,13 @@ type GoSdk {
   }
 
   """Generate one target client in the batch's Go module at /out; pinned is the library the scope pins, or empty."""
-  let generateStandaloneClient(ctr: Container!, client: ModuleSource!, unified: Boolean!, ws: Workspace!, pinned: String!, subject: String!): Container! {
+  let generateStandaloneClient(ctr: Container!, client: ModuleSource!, unified: Boolean!, ws: Workspace!, pinned: String!, subject: String!, moduleDir: String!): Container! {
     let targetName = client.moduleOriginalName
     let outputPath = "internal/dagger/clients/" + targetName
     let metaJSON = "{\"engineVersion\":" + JSON.encode(client.engineVersion) +
       ",\"targetVersion\":" + JSON.encode(pinned) +
       ",\"subject\":" + JSON.encode(subject) +
+      ",\"moduleDir\":" + JSON.encode(moduleDir) +
       ",\"module\":" + boundModuleJSON(
         JSON.encode(client.kind),
         client.sourceRootSubpath,
