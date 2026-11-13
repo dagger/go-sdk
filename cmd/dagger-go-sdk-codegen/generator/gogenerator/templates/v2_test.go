@@ -279,10 +279,21 @@ func TestEntrypointExposesDefaultConstructor(t *testing.T) {
 // DaggerDispatch is the fixture, and returns the binary's path.
 func buildDispatchCommand(t *testing.T, packageName, fixture string) string {
 	t.Helper()
+	return buildModuleDispatchCommand(t, &v2Module{}, packageName, fixture, nil)
+}
+
+// buildModuleDispatchCommand builds mod's dispatch command, with the fixture's
+// DaggerDispatch and the other files at their paths in the module.
+func buildModuleDispatchCommand(t *testing.T, mod *v2Module, packageName, fixture string, files map[string]string) string {
+	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.43.0\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "module.go"), []byte("package "+packageName+"\n"+fixture), 0644))
-	generated, err := (&v2Module{}).renderDispatchSource("hello", "example.com/hello", packageName)
+	for name, contents := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0644))
+	}
+	generated, err := mod.renderDispatchSource("hello", "example.com/hello", packageName)
 	require.NoError(t, err)
 	dir := root
 	target := "."
@@ -546,4 +557,112 @@ func TestEntrypointDeclaresPlatformFromFloor(t *testing.T) {
 			require.Contains(t, text, "      .directory(\"/tmp/dispatch\")\n      .withPlatform(platform: platform)\n      .file(\"dispatch\")\n")
 		}
 	}
+}
+
+// fakeErrorBindings stands in for a module's embedded bindings: the ID of
+// the Error it builds is that Error as JSON, its message and its values in
+// order, and building one fails when FAIL_ERROR_ID is set, as it would
+// without an engine.
+const fakeErrorBindings = `package dagger
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+)
+
+type JSON string
+
+type ErrorID string
+
+type Client struct{}
+
+func Connect() *Client { return &Client{} }
+
+type Error struct {
+	Message string
+	Values  [][2]string
+}
+
+func (*Client) Error(message string) *Error { return &Error{Message: message} }
+
+func (e *Error) WithValue(name string, value JSON) *Error {
+	return &Error{Message: e.Message, Values: append(append([][2]string{}, e.Values...), [2]string{name, string(value)})}
+}
+
+func (e *Error) ID(context.Context) (ErrorID, error) {
+	if os.Getenv("FAIL_ERROR_ID") != "" {
+		return "", errors.New("no engine")
+	}
+	encoded, err := json.Marshal(e)
+	return ErrorID(encoded), err
+}
+`
+
+// From errorValuesFloor on, a failed function's dispatcher reports, last,
+// the ID of a Dagger Error that carries the engine's error as the Go runtime
+// returned it: the GraphQL error's message, and each of its extensions as a
+// value. It reports the message as before, and no ID when it can't build
+// the Error.
+func TestDispatchCommandReportsTheErrorID(t *testing.T) {
+	for _, packageName := range []string{"main", "hello"} {
+		t.Run(packageName, func(t *testing.T) {
+			binary := buildModuleDispatchCommand(t, &v2Module{targetVersion: errorValuesFloor}, packageName, `
+import("context";"errors";"fmt";"github.com/vektah/gqlparser/v2/gqlerror")
+func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string][]byte) (any, error) {
+ if fnName == "plain" { return nil, errors.New("plain failure") }
+ failed := &gqlerror.Error{Message: "exit code: 1", Extensions: map[string]any{"stderr": "boom", "_type": "EXEC_ERROR", "exitCode": 1}}
+ if fnName == "listed" { return nil, fmt.Errorf("run the tests: %w", gqlerror.List{failed}) }
+ if fnName == "several" { return nil, gqlerror.List{failed, failed} }
+ return nil, fmt.Errorf("run the tests: %w", failed)
+}
+`, map[string]string{"internal/dagger/dagger.gen.go": fakeErrorBindings})
+			reported := func(fnName string, env ...string) []string {
+				var stderr strings.Builder
+				call := exec.CommandContext(t.Context(), binary, "engine-call", filepath.Join(t.TempDir(), "result.json"))
+				call.Env = append(os.Environ(), env...)
+				call.Stdin = strings.NewReader(`{"receiverType":"Hello","fnName":"` + fnName + `","fnArgs":{}}`)
+				call.Stderr = &stderr
+				var exitErr *exec.ExitError
+				require.ErrorAs(t, call.Run(), &exitErr)
+				require.Equal(t, 2, exitErr.ExitCode())
+				return strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+			}
+
+			lines := reported("exec")
+			require.Equal(t, functionErrorMarker+`"run the tests: input: exit code: 1"`, lines[len(lines)-2])
+			require.Equal(t, functionErrorIDMarker+`{"Message":"exit code: 1","Values":[["_type","\"EXEC_ERROR\""],["exitCode","1"],["stderr","\"boom\""]]}`, lines[len(lines)-1])
+
+			// dagger.io/dagger wraps a response's errors as a list.
+			lines = reported("listed")
+			require.Equal(t, functionErrorIDMarker+`{"Message":"exit code: 1","Values":[["_type","\"EXEC_ERROR\""],["exitCode","1"],["stderr","\"boom\""]]}`, lines[len(lines)-1])
+			lines = reported("several")
+			require.True(t, strings.HasPrefix(lines[len(lines)-1], functionErrorIDMarker) && strings.HasSuffix(lines[len(lines)-1], `"Values":null}`), lines[len(lines)-1])
+
+			lines = reported("plain")
+			require.Equal(t, functionErrorIDMarker+`{"Message":"plain failure","Values":null}`, lines[len(lines)-1])
+
+			lines = reported("exec", "FAIL_ERROR_ID=1")
+			require.Equal(t, functionErrorMarker+`"run the tests: input: exit code: 1"`, lines[len(lines)-1])
+		})
+	}
+}
+
+// Below errorValuesFloor, the dispatcher reports the message alone, and the
+// entrypoint raises it; from the floor on, the entrypoint raises the Error
+// whose ID the dispatcher reports, if it reports one.
+func TestEntrypointRaisesTheErrorFromErrorValuesFloor(t *testing.T) {
+	below, err := (&v2Module{targetVersion: identifierCasingFloor}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.NotContains(t, string(below), functionErrorIDMarker)
+	dispatch, err := (&v2Module{targetVersion: identifierCasingFloor}).renderDispatchSource("hello", "example.com/hello", "hello")
+	require.NoError(t, err)
+	require.NotContains(t, string(dispatch), functionErrorIDMarker)
+
+	from, err := (&v2Module{targetVersion: errorValuesFloor}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+	require.NoError(t, err)
+	require.Contains(t, string(from), `let idMarker = "`+functionErrorIDMarker+`"`)
+	require.Contains(t, string(from), "raise node(id: ids.takeLast(1).join(\"\").trimPrefix(idMarker) :: ID!).{{... on Dagger.Error!}}")
+	require.Contains(t, string(from), `let marker = "`+functionErrorMarker+`"`)
 }

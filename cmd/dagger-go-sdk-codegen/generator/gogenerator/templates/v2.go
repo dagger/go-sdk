@@ -63,6 +63,19 @@ const platformFloor = "v1.0.0-beta.26"
 // is served at that view (not yet released).
 const identifierCasingFloor = "v1.0.0-beta.26"
 
+// errorValuesFloor is the first Dagger release whose entrypoint can raise a
+// Dagger Error, values and all, as the error of the function it calls
+// (dagger/dagger#15161; not yet released).
+const errorValuesFloor = "v1.0.0-beta.28"
+
+// passesErrorValues reports whether a function's error reaches its caller
+// as the Dagger Error the dispatcher builds from it, with the values of the
+// engine's error, such as a failed exec's exit code and output, rather than
+// as its message alone: whether the module targets errorValuesFloor or later.
+func (mod *v2Module) passesErrorValues() bool {
+	return mod.targetVersion != "" && semver.Compare(mod.targetVersion, errorValuesFloor) >= 0
+}
+
 // casesIdentifiers reports whether the entrypoint names enum members as the
 // view of identifierCasingFloor and later does: whether the module targets
 // identifierCasingFloor or later.
@@ -117,7 +130,10 @@ func GenerateV2Artifacts(
 
 type v2Module struct {
 	// description is the module's description: its package's doc comment.
-	description    string
+	description string
+	// unified reports whether the module's bindings alias the core types of
+	// dagger.io/dagger/core rather than embedding their own.
+	unified        bool
 	objects        []*parsedObjectType
 	interfaces     []*parsedIfaceType
 	enums          []*parsedEnumType
@@ -173,6 +189,7 @@ func (funcs goTemplateFuncs) generateV2Artifacts(packageImport, moduleSubpath, g
 		daggerGo:       daggerGo,
 		goCacheVolumes: goCacheVolumes,
 		codeDir:        funcs.codeDir,
+		unified:        funcs.cfg.UnifiedClient,
 	}
 
 	err := funcs.visitTypes(true, &visitorFuncs{
@@ -532,7 +549,19 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
   let raiseFunctionError(err: GraphQLError!): String! {
     let marker = "` + functionErrorMarker + `"
     let stderr = ((JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? "") rescue ""
-    let lines = stderr.split("\n").filter { line => line.hasPrefix(marker) }
+`)
+	if mod.passesErrorValues() {
+		b.WriteString(`    # The dispatcher's last line holds the ID of the Dagger Error it built
+    # from the function's error, when it could build one: raising that Error
+    # hands the caller its values, such as a failed exec's output.
+    let idMarker = "` + functionErrorIDMarker + `"
+    let ids = stderr.split("\n").filter { line => line.hasPrefix(idMarker) }
+    if (ids.isEmpty == false) {
+      raise node(id: ids.takeLast(1).join("").trimPrefix(idMarker) :: ID!).{{... on Dagger.Error!}}
+    }
+`)
+	}
+	b.WriteString(`    let lines = stderr.split("\n").filter { line => line.hasPrefix(marker) }
     if (lines.isEmpty) {
       raise err
     }
@@ -546,6 +575,68 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 // functionErrorMarker starts the stderr line on which the dispatcher reports
 // the function's error. The function's own output shares that stderr.
 const functionErrorMarker = "::dagger-function-error::"
+
+// daggerErrorIDSource is the dispatcher's code that builds the Dagger Error of
+// a module that passesErrorValues, as the Go runtime's convertError does, with
+// JSONTYPE for the JSON type of the module's bindings.
+const daggerErrorIDSource = `
+// errorID is the ID of the Dagger Error built from the function's error, or
+// empty when it could not be built.
+var errorID string
+
+// daggerErrorID returns the ID of a Dagger Error that carries err as the
+// engine reported it: its message, and each of its extensions as a value,
+// such as a failed exec's exit code and output. The entrypoint raises that
+// Error, so the function's caller gets it. It returns "" when the Error
+// can't be built; the entrypoint then raises err's message.
+func daggerErrorID(ctx context.Context, err error) string {
+	message := err.Error()
+	var values map[string]any
+	if gqlErr := findSingleGQLError(err); gqlErr != nil {
+		message = gqlErr.Message
+		values = gqlErr.Extensions
+	}
+	dagErr := dagger.Connect().Error(message)
+	for _, name := range slices.Sorted(maps.Keys(values)) {
+		value, err := json.Marshal(values[name])
+		if err != nil {
+			continue
+		}
+		dagErr = dagErr.WithValue(name, JSONTYPE(value))
+	}
+	id, err := dagErr.ID(ctx)
+	if err != nil {
+		return ""
+	}
+	return string(id)
+}
+
+// findSingleGQLError returns the GraphQL error that err wraps, or nil when it
+// wraps none or several. dagger.io/dagger wraps a response's errors as a
+// list, which holds one for a failed call.
+func findSingleGQLError(err error) *gqlerror.Error {
+	switch x := err.(type) {
+	case *gqlerror.Error:
+		return x
+	case gqlerror.List:
+		if len(x) == 1 {
+			return x[0]
+		}
+		return nil
+	case interface{ Unwrap() []error }:
+		return nil
+	case interface{ Unwrap() error }:
+		return findSingleGQLError(x.Unwrap())
+	default:
+		return nil
+	}
+}
+`
+
+// functionErrorIDMarker starts the stderr line, after the functionErrorMarker
+// line, on which the dispatcher of a module that passesErrorValues reports
+// the ID of the Dagger Error it built from the function's error.
+const functionErrorIDMarker = "::dagger-function-error-id::"
 
 // writeSources writes the sources function, which returns the module
 // directory and the files its build reads outside it at their paths from the
@@ -912,6 +1003,20 @@ func (mod *v2Module) renderDispatchSource(moduleName, packageImport string, pack
 	}
 	table.WriteString("}\n")
 
+	// A module that passesErrorValues reports, after the function's error,
+	// the ID of a Dagger Error built from it, which its entrypoint raises.
+	var errorImports, reportErrorID, printErrorID, errorIDSource string
+	if mod.passesErrorValues() {
+		jsonType := "dagger.JSON"
+		errorImports = fmt.Sprintf("\t\"maps\"\n\t\"slices\"\n\t\"github.com/vektah/gqlparser/v2/gqlerror\"\n\tdagger %q\n", packageImport+"/internal/dagger")
+		if mod.unified {
+			jsonType = "core.JSON"
+			errorImports += "\tcore \"dagger.io/dagger/core\"\n"
+		}
+		reportErrorID = `if err != nil && os.Args[1] == "engine-call" { errorID = daggerErrorID(ctx, err) }`
+		printErrorID = fmt.Sprintf(`if errorID != "" { fmt.Fprintf(os.Stderr, "%%s%%s\n", %q, errorID) }`, functionErrorIDMarker)
+		errorIDSource = strings.ReplaceAll(daggerErrorIDSource, "JSONTYPE", jsonType)
+	}
 	source := fmt.Sprintf(`// Code generated by dagger. DO NOT EDIT.
 
 package main
@@ -929,7 +1034,7 @@ import (
 	telemetry "github.com/dagger/otel-go"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
-
+%s
 	module %q
 )
 
@@ -974,6 +1079,7 @@ func main() {
 	case "call": err = developerCall(ctx, os.Args[2:], os.Stdout)
 	default: err = fmt.Errorf("unknown mode %%q", os.Args[1])
 	}
+	%s
 	// fatalf exits without running deferred calls, so spans are flushed first.
 	telemetry.Close()
 	if err != nil { fatalf("%%v", err) }
@@ -990,8 +1096,10 @@ func fatalf(format string, args ...any) {
 	}
 	encoded, _ := json.Marshal(reported)
 	fmt.Fprintf(os.Stderr, "%%s\n%%s%%s\n", message, %q, encoded)
+	%s
 	os.Exit(2)
 }
+%s
 
 func engineCall(ctx context.Context, input io.Reader, output io.Writer) error {
 	dec := json.NewDecoder(input)
@@ -1091,7 +1199,7 @@ func findFunction(name string) (functionSpec, error) {
 	if len(found) > 1 { return functionSpec{}, fmt.Errorf("function %%q is ambiguous; use engine-call with receiverType", name) }
 	return found[0], nil
 }
-`, packageImport, table.String(), functionErrorMarker)
+`, errorImports, packageImport, table.String(), reportErrorID, functionErrorMarker, printErrorID, errorIDSource)
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		source = strings.Replace(source, "\tmodule "+strconv.Quote(packageImport)+"\n", "", 1)
 		source = strings.Replace(source, "module.DaggerDispatch(", "DaggerDispatch(", 1)
