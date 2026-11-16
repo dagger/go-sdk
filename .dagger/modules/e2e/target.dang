@@ -10,10 +10,10 @@ type TargetChecks {
   let dangConfigPath: String! = "internal/dagger/entrypoint/dang.toml"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.25"
+  let sdkTarget: String! = "v1.0.0-beta.27"
 
   """The newest release a scope can pin: the release after sdkTarget."""
-  let newestTarget: String! = "v1.0.0-beta.26"
+  let newestTarget: String! = "v1.0.0-beta.28"
 
   let pins(ws: Workspace!, release: String!): Boolean! {
     ws.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
@@ -37,15 +37,17 @@ type TargetChecks {
 
   """
   Serve the generated module from a nested client and return the data of
-  one query, so the engine runs the module's generated code.
+  one query, so the engine runs the module's generated code. The probe
+  builds in goPath, the module's Go code directory, which is scopePath
+  unless the module keeps its code in a subdirectory.
   """
-  let called(ws: Workspace!, scopePath: String!, query: String!): String! {
+  let called(ws: Workspace!, scopePath: String!, query: String!, goPath: String! = ""): String! {
     let ran = container.from("golang:1.27-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/workspace", ws.directory("/", exclude: ["**/.git"]))
       .withFile("/probe/main.go", ws.file("/" + probePath))
-      .withWorkdir("/workspace/" + scopePath)
+      .withWorkdir("/workspace/" + (if (goPath == "") { scopePath } else { goPath }))
       .withEnvVariable("GOFLAGS", "-mod=mod")
       .withEnvVariable("MODULE_PATH", scopePath)
       .withEnvVariable("QUERY", query)
@@ -81,6 +83,96 @@ type TargetChecks {
     assert("generating again changed files") { again.changes(first).isEmpty }
     let out = called(first, scopePath, "query($ws:ID!){targetDefault(ws:$ws){container{withExec(args:[\"cat\",\"/etc/alpine-release\"]){stdout}}}}")
     assert("the starter did not run on the SDK's release: " + out) { out.contains("\"stdout\":\"3.21.") }
+    null
+  }
+
+  """
+  A module whose dagger.json names a subdirectory for its Go code keeps the
+  code there. Generation writes the Go files into the subdirectory and the
+  manifest into the module directory, naming the entrypoint in the
+  subdirectory; source maps name files from the module directory. The
+  engine loads the module from its directory and runs the code, and
+  generating again changes nothing.
+  """
+  codeSubdirectoryCheck(ws: Workspace!): Void @check {
+    let name = "target-subdirectory"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+      .withNewFile("dagger.json", "{\"name\": \"target-subdirectory\", \"sdk\": {\"source\": \"go\"}, \"source\": \"runtime\"}\n")
+      .withNewFile("runtime/main.go", "package main\n\n// TargetSubdirectory greets.\ntype TargetSubdirectory struct{}\n\n// Hello greets from the subdirectory.\nfunc (m *TargetSubdirectory) Hello() string {\n\treturn \"hello from runtime\"\n}\n")
+    let sdk = goSdk(dangEntrypoint: true)
+    let first = sdk.generateScope(ws: input, isModule: true, name: name, clients: [])
+    let manifest = first.file("dagger-module.toml").contents
+    assert("the manifest does not name the entrypoint in the subdirectory:\n" + manifest) {
+      manifest.contains("source = \"./runtime/internal/dagger/entrypoint\"")
+    }
+    assert("dagger.json was kept") { first.directory(".", include: ["dagger.json"]).exists("dagger.json") == false }
+    let generated = first.directory("runtime", include: ["go.mod", "dagger.gen.go", "internal/dagger/entrypoint/main.dang", "internal/dagger/entrypoint/dang.toml"])
+    assert("the generated files are not in the subdirectory") {
+      generated.exists("go.mod") and generated.exists("dagger.gen.go") and
+        generated.exists("internal/dagger/entrypoint/main.dang") and generated.exists("internal/dagger/entrypoint/dang.toml")
+    }
+    assert("generated files reached the module directory") {
+      first.directory(".", include: ["internal/**", "dagger.gen.go", "go.mod"]).glob(pattern: "**").length == 0
+    }
+    assert("source maps do not name the file from the module directory") {
+      first.file("runtime/internal/dagger/entrypoint/main.dang").contents.contains("sourceMap(\"runtime/main.go\"")
+    }
+    let again = sdk.generateScope(ws: first, isModule: true, name: name, clients: [])
+    assert("generating again changed files") { again.changes(first).isEmpty }
+    let out = called(first, scopePath, "{targetSubdirectory{hello}}", goPath: scopePath + "/runtime")
+    assert("the module did not run its code: " + out) { out.contains("hello from runtime") }
+    null
+  }
+
+  """
+  A new module with a collection generates with no settings, which builds
+  its process with dagger/go from the collection's runtime sources, and the
+  engine runs the collection.
+  """
+  collectionCheck(ws: Workspace!): Void @check {
+    let name = "target-collection"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withWorkdir(scopePath).withNewFile("main.go",
+      "package target_collection\n\ntype TargetCollection struct{}\n\n" +
+      "func (*TargetCollection) Items() *Items { return &Items{Keys: []string{\"a\", \"b\"}} }\n\n" +
+      "// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n" +
+      "// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
+      "type Item struct{ Name string }\n")
+    let generated = goSdk.generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the new module does not build with dagger/go:\n" + generated.file("dagger-module.toml").contents) {
+      generated.file("dagger-module.toml").contents.contains("\"github.com/dagger/go@")
+    }
+    assert("dagger/go does not build the module's process from the collection's runtime sources") {
+      generated.file("internal/dagger/entrypoint/main.dang").contents.contains("collectionContext.asWorkspace")
+    }
+    let out = called(generated, scopePath, "{targetCollection{items{keys}}}")
+    assert("the collection did not run: " + out) { out.contains("[\"a\",\"b\"]") }
+    null
+  }
+
+  """
+  A collection in a module whose Go code is in a subdirectory builds its
+  process from the collection's runtime sources in that subdirectory, and
+  the engine runs the collection.
+  """
+  codeSubdirectoryCollectionCheck(ws: Workspace!): Void @check {
+    let name = "target-subdirectory-collection"
+    let scopePath = outputRoot + "/" + name
+    let input = ws.withNewDirectory(scopePath, directory).withWorkdir(scopePath)
+      .withNewFile("dagger.json", "{\"name\": \"target-subdirectory-collection\", \"sdk\": {\"source\": \"go\"}, \"source\": \"runtime\"}\n")
+      .withNewFile("runtime/main.go",
+        "package main\n\ntype TargetSubdirectoryCollection struct{}\n\n" +
+        "func (*TargetSubdirectoryCollection) Items() *Items { return &Items{Keys: []string{\"a\", \"b\"}} }\n\n" +
+        "// +collection\ntype Items struct {\n\t// +keys\n\tKeys []string\n}\n\n" +
+        "// +get\nfunc (items *Items) Lookup(key string) *Item { return &Item{Name: key} }\n\n" +
+        "type Item struct{ Name string }\n")
+    let generated = goSdk(dangEntrypoint: true).generateScope(ws: input, isModule: true, name: name, clients: [])
+    assert("the collection's runtime sources are not read from the subdirectory") {
+      generated.file("runtime/internal/dagger/entrypoint/main.dang").contents.contains("currentModule.contextDirectory.file(codeSubpath + \"/internal/dagger/entrypoint/runtime/")
+    }
+    let out = called(generated, scopePath, "{targetSubdirectoryCollection{items{keys}}}", goPath: scopePath + "/runtime")
+    assert("the collection did not run: " + out) { out.contains("[\"a\",\"b\"]") }
     null
   }
 
@@ -390,7 +482,7 @@ type TargetChecks {
     expectRefusal(goSdk(targetVersion: "v1.0.0-beta.17"), input, name,
       subject + "v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below " + floor + ", the oldest engine the generated entrypoint loads on. " + fix)
     let above = ", which this release of the Go SDK cannot generate for: it targets " + newestTarget + " at most. " + fix + ", or install the SDK release built for "
-    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.27"), input, name, subject + "v1.0.0-beta.27" + above + "v1.0.0-beta.27")
+    expectRefusal(goSdk(targetVersion: "v1.0.0-beta.29"), input, name, subject + "v1.0.0-beta.29" + above + "v1.0.0-beta.29")
     expectRefusal(goSdk(targetVersion: "99.0.0"), input, name, subject + "v99.0.0" + above + "v99.0.0")
     let malformed = ", which is not a Dagger release such as " + sdkTarget + ". " + fix
     expectRefusal(goSdk(targetVersion: "latest"), input, name, subject + "\"latest\"" + malformed)

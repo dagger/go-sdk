@@ -10,8 +10,6 @@ type Entrypoint implements ModuleEntrypoint {
   let dispatch: File! {
     container
       .from("golang:1.26.1-alpine")
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-build"))
       .withMountedDirectory("/workspace", currentModule.contextDirectory)
       .withWorkdir("/workspace/" + currentModule.sourceSubpath)
       .withEnvVariable("CGO_ENABLED", "0")

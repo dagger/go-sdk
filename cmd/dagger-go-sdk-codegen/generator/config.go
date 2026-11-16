@@ -53,6 +53,11 @@ type ModuleGeneratorConfig struct {
 	// TargetVersion is the Dagger release the module targets, whose
 	// dagger.io/dagger it builds with; empty for the default target.
 	TargetVersion string
+
+	// CoreQueryMethods names the methods of core.Query in the dagger.io/dagger
+	// the module builds with, which unified bindings can forward to; nil
+	// forwards every core field of the schema.
+	CoreQueryMethods map[string]bool
 }
 
 // ModuleSourceDependency describes one dependency in a module schema.

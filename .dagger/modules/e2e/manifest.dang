@@ -28,6 +28,9 @@ type ManifestChecks {
     assert("generation changed an existing file") {
       generated.file("keep.txt").contents == "keep"
     }
+    assert("the starter does not import its bindings by the module path of the existing go.mod") {
+      generated.file("main.go").contents.contains("\"example.com/app/internal/dagger\"")
+    }
     assert("generation changed the current directory") {
       generated.cwd == input.cwd
     }

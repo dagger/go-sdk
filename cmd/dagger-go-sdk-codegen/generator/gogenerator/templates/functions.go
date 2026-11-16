@@ -100,6 +100,10 @@ type goTemplateFuncs struct {
 	fullSchema    *introspection.Schema
 	schemaVersion string
 	pass          int
+	// codeDir is the module's Go code directory relative to the module
+	// directory, for a module whose manifest names a subdirectory. Source
+	// maps name files from the module directory.
+	codeDir string
 }
 
 func (funcs goTemplateFuncs) FuncMap() template.FuncMap {
@@ -295,6 +299,10 @@ func (funcs goTemplateFuncs) isPointer(t introspection.InputValue) (bool, error)
 
 // formatName formats a GraphQL name (e.g. object, field, arg) into a Go equivalent
 // Example: `fooId` -> `FooID`
+// FormatName is the Go name of a GraphQL name, such as of the method of a
+// field.
+func FormatName(s string) string { return formatName(s) }
+
 func formatName(s string) string {
 	if len(s) > 0 {
 		s = strings.ToUpper(string(s[0])) + s[1:]

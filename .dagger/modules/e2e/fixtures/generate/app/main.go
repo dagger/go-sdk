@@ -1,3 +1,4 @@
+// Greets with a prefix.
 package generate_app
 
 import (

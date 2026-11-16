@@ -11,9 +11,5 @@ source = "."
 check.skip = ["*"]
 generate.skip = ["*"]
 
-[modules.dang-sdk]
-source = "github.com/dagger/dang-sdk"
-check.skip = ["*"]
-
 [sdks.go]
 module = "go-sdk"

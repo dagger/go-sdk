@@ -73,7 +73,10 @@ func collectionBuildSources(ctx context.Context, buildRoot, root string) (map[st
 	return result, nil
 }
 
-func writeCollectionBuild(root string, entrypoint []byte, files map[string][]byte) ([]byte, error) {
+// writeCollectionBuild writes the collection's runtime sources beside the
+// entrypoint and makes the entrypoint build its dispatcher from them. code is
+// the Dang expression of the module's Go code directory in its context.
+func writeCollectionBuild(root, code string, entrypoint []byte, files map[string][]byte) ([]byte, error) {
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -87,9 +90,14 @@ func writeCollectionBuild(root string, entrypoint []byte, files map[string][]byt
 	if declared := []byte("  let dispatch(platform: Platform!): File! {"); bytes.Contains(entrypoint, declared) {
 		dispatch = declared
 	}
+	// The call runs the binary on the module context. A go build dispatch
+	// mounts the context too; a dagger/go one reads it as a workspace.
 	mount := []byte(`.withMountedDirectory("/workspace", currentModule.contextDirectory)`)
-	if bytes.Count(entrypoint, dispatch) != 1 || bytes.Count(entrypoint, mount) != 2 {
-		return nil, fmt.Errorf("collection build: the entrypoint needs one dispatch and two context mounts to rewrite")
+	workspace := []byte("currentModule.contextDirectory.asWorkspace")
+	goBuild := bytes.Count(entrypoint, mount) == 2 && !bytes.Contains(entrypoint, workspace)
+	daggerGo := bytes.Count(entrypoint, mount) == 1 && bytes.Count(entrypoint, workspace) == 1
+	if bytes.Count(entrypoint, dispatch) != 1 || !(goBuild || daggerGo) {
+		return nil, fmt.Errorf("collection build: the entrypoint needs one dispatch, which reads the module context once, and one call that mounts it, to rewrite")
 	}
 	var overlay strings.Builder
 	overlay.WriteString("  let collectionContext: Directory! {\n    currentModule.contextDirectory")
@@ -105,11 +113,12 @@ func writeCollectionBuild(root string, entrypoint []byte, files map[string][]byt
 		if err := writeFile(filepath.Join(root, rel), data); err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(&overlay, "\n      .withFile(currentModule.sourceSubpath + %s, currentModule.contextDirectory.file(currentModule.sourceSubpath + %s))",
-			strconv.Quote("/"+name), strconv.Quote("/"+rel))
+		fmt.Fprintf(&overlay, "\n      .withFile(%s + %s, currentModule.contextDirectory.file(%s + %s))",
+			code, strconv.Quote("/"+name), code, strconv.Quote("/"+rel))
 	}
 	overlay.WriteString("\n  }\n\n")
 	overlay.Write(dispatch)
 	entrypoint = bytes.Replace(entrypoint, dispatch, []byte(overlay.String()), 1)
+	entrypoint = bytes.ReplaceAll(entrypoint, workspace, []byte("collectionContext.asWorkspace"))
 	return bytes.ReplaceAll(entrypoint, mount, []byte(`.withMountedDirectory("/workspace", collectionContext)`)), nil
 }

@@ -153,6 +153,10 @@ type UnifiedChecks {
       .withExec(["git", "config", "user.name", "SDK test"])
       .withExec(["git", "config", "user.email", "sdk-test@example.com"])
       .withExec(["git", "add", "."])
+      # A module commits its entrypoint's dang.toml, which declares the
+      # release the engine serves it at; this repository's .gitignore
+      # ignores dang.toml.
+      .withExec(["git", "add", "-f", root + "/internal/dagger/entrypoint/dang.toml"])
       .withExec(["git", "commit", "-m", "generated module fixture"])
       .withExec(["git", "clone", "--bare", ".", "/srv/repo.git"])
       .withExposedPort(9418)
@@ -161,5 +165,39 @@ type UnifiedChecks {
     let out = probe(ready, "hello entrypoint", repo: repo)
     assert("the Git module probe failed: " + out) { out.contains("unified entrypoint passed") }
     null
+  }
+
+  """
+  A module that targets the Go SDK's errorValuesFloor hands a function's
+  caller the engine's error, values and all, such as a failed exec's exit
+  code and output, and has its package's doc comment as its description.
+  It needs an engine with dagger/dagger#15161, which no release has yet, so
+  it isn't a check: engine-e2e's errorValuesCheck runs it on an engine
+  source that has it. It returns what the probe printed: the error the
+  caller got.
+  """
+  errorValues(ws: Workspace!): String! {
+    let path = ".dagger/modules/e2e/out/error-values"
+    let fixture = "/" + fixtures + "/error-values"
+    let input = ws.withDirectory(path + "/runtime-sdk", runtimeSdk)
+      .withFile(path + "/main.go", ws.file(fixture + "/main.go"))
+      .withFile(path + "/probe/main.go", ws.file(fixture + "/probe/main.go"))
+      .withNewFile(path + "/go.mod", "module example.com/error-values\n\ngo 1.27\n\nrequire dagger.io/dagger v1.0.0-beta.15\nreplace dagger.io/dagger => ./runtime-sdk\n")
+      .withNewFile(path + "/dagger-module.toml", "name = \"error-values\"\n")
+      .withWorkdir(path)
+    let ready = goSdk(dangEntrypoint: true, unifiedClients: true, targetVersion: "v1.0.0-beta.28").generateScope(
+      ws: input, isModule: true, name: "error-values", clients: [],
+    )
+    let called = container.from("golang:1.27-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/workspace", ready.directory("/"))
+      .withWorkdir("/workspace/" + path)
+      .withEnvVariable("MODULE_PATH", path)
+      .withExec(["go", "run", "-buildvcs=false", "./probe"], experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    assert("the error values probe failed:\n" + called.stdout + called.stderr) {
+      called.exitCode == 0 and called.stdout.contains("error values passed")
+    }
+    called.stdout
   }
 }

@@ -2,50 +2,199 @@
 Checks the Go SDK against the Dagger development engine.
 """
 type EngineE2e {
-  """Root initialization does not import ignored files."""
+  """Both starters initialize a root module without uploading ignored files."""
   ignoredInitializationCheck(ws: Workspace!): Void @check {
-    ignoredCheck(ws, "ignores:initialization-check")
+    let engine = uploadEngine
+    [true, false].each { entrypoint =>
+      let fields = "is-module = true\nname = \"ignored-init\"\n[sdks.go.scopes.\".\".settings]\nunifiedClients = false\ndangEntrypoint = " + JSON.encode(entrypoint) + "\n"
+      let tree = directory
+        .withNewFile("dagger.toml", uploadConfig(".", fields))
+        .withNewFile(".gitignore", "gitignore-upload-poison/\n")
+      let generated = uploadGenerate(uploadClient(engine, ws, tree))
+        .withExec(["test", "-f", "main.go"])
+        .withExec(["test", "-f", "dagger.gen.go"])
+        .withExec(["test", "-f", "dagger-module.toml"])
+      assertPreserved(generated)
+      null
+    }
+    null
   }
 
-  """Ignored files stay on the client during standalone generation."""
+  """Standalone clients filter their inputs and merge only generated changes."""
   ignoredStandaloneCheck(ws: Workspace!): Void @check {
-    ignoredCheck(ws, "ignores:standalone-check")
+    let tree = directory
+      .withNewFile("dagger.toml", uploadConfig(".", "clients = [\"./dep\"]\n"))
+      .withNewFile("go.mod", "module example.com/ignored-standalone\n\ngo 1.26.1\n")
+      .withNewFile("main.go", "package standalone\n")
+      .withNewFile(".gitignore", "gitignore-upload-poison/\nignored.go\n")
+      .withNewFile("ignored.go", "this ignored Go file does not parse\n")
+      .withNewFile("dep/dagger-module.toml", "name = \"dep\"\n[runtime]\nsource = \"dang\"\n")
+      .withNewFile("dep/main.dang", "type Dep { hello: String! { \"hello\" } }\n")
+    let generated = uploadGenerate(uploadClient(uploadEngine, ws, tree))
+      .withExec(["test", "-f", "internal/dagger/clients/dep/dagger.gen.go"])
+    assertPreserved(generated)
+    assertPreserved(uploadGenerate(generated))
+    null
   }
 
-  """Ignored files stay on the client during entrypoint generation."""
+  """Entrypoint generation filters the module and writes only owned files."""
   ignoredEntrypointCheck(ws: Workspace!): Void @check {
-    ignoredCheck(ws, "ignores:entrypoint-check")
+    let tree = directory
+      .withNewFile("dagger.toml", uploadConfig(".", "is-module = true\nname = \"ignored-app\"\n[sdks.go.scopes.\".\".settings]\nunifiedClients = false\n"))
+      .withNewFile("go.mod", "module example.com/ignored-app\n\ngo 1.26.1\n")
+      .withNewFile("main.go", "package main\n\ntype IgnoredApp struct{}\n\nfunc (*IgnoredApp) Hello() string { return \"hello\" }\n")
+      .withNewFile(".gitignore", "gitignore-upload-poison/\nignored.go\n")
+      .withNewFile("ignored.go", "this ignored Go file does not parse\n")
+    let generated = uploadGenerate(uploadClient(uploadEngine, ws, tree))
+      .withExec(["test", "-f", "internal/dagger/entrypoint/main.dang"])
+      .withExec(["test", "-f", "dagger.gen.go"])
+    assertPreserved(generated)
+    assertPreserved(uploadGenerate(generated))
+    let edited = generated.file("/repo/dagger.gen.go").contents + "\n// user edit\n"
+    let refused = uploadRefused(generated
+      .withNewFile("/repo/.gitignore", "gitignore-upload-poison/\nignored.go\n/dagger.gen.go\n/.dagger-generated.json\n/internal/dagger/\n/cmd/\n")
+      .withNewFile("/repo/dagger.gen.go", edited))
+    assert("generation overwrote an ignored generated file with user changes") {
+      refused.exitCode != 0 and refused.stderr.contains("contains user changes; refusing to overwrite it") and
+        refused.file("/repo/dagger.gen.go").contents == edited
+    }
+    null
   }
 
-  """Replacement discovery does not import ignored dependency sources."""
+  """Local replacement discovery skips ignored Go files in dependencies."""
   ignoredReplacementCheck(ws: Workspace!): Void @check {
-    ignoredCheck(ws, "ignores:replacement-check")
+    let tree = directory
+      .withNewFile("dagger.toml", uploadConfig("app", "is-module = true\nname = \"ignored-app\"\n[sdks.go.scopes.app.settings]\nunifiedClients = false\n"))
+      .withNewFile("app/go.mod", "module example.com/ignored-app\n\ngo 1.26.1\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n")
+      .withNewFile("app/main.go", "package main\n\nimport \"example.com/lib/greet\"\n\ntype IgnoredApp struct{}\n\nfunc (*IgnoredApp) Hello() string { return greet.Hello() }\n")
+      .withNewFile("lib/go.mod", "module example.com/lib\n\ngo 1.26.1\n")
+      .withNewFile("lib/greet/greet.go", "package greet\n\nfunc Hello() string { return \"hello\" }\n")
+      .withNewFile("lib/gitignore-upload-poison/ignored.go", "this ignored Go file does not parse\n")
+      .withNewFile(".gitignore", "gitignore-upload-poison/\n")
+    let generated = uploadGenerate(uploadClient(uploadEngine, ws, tree)).withExec(["test", "-f", "app/internal/dagger/entrypoint/main.dang"])
+    assertPreserved(generated)
+    null
   }
 
-  """Ignored generated clients retain ownership and cleanup behavior."""
+  """Ignoring generated clients keeps ownership checks and stale-file cleanup."""
   ignoredGeneratedCheck(ws: Workspace!): Void @check {
-    ignoredCheck(ws, "ignores:ignored-generated-check")
+    let engine = uploadEngine
+    let tree = directory
+      .withNewFile("dagger.toml", uploadConfig(".", "clients = [\"./dep\", \"./other\"]\n"))
+      .withNewFile("go.mod", "module example.com/ignored-generated\n\ngo 1.26.1\n")
+      .withNewFile("main.go", "package standalone\n")
+      .withNewFile(".gitignore", "gitignore-upload-poison/\n")
+      .withNewFile("dep/dagger-module.toml", "name = \"dep\"\n[runtime]\nsource = \"dang\"\n")
+      .withNewFile("dep/main.dang", "type Dep { hello: String! { \"hello\" } }\n")
+      .withNewFile("other/dagger-module.toml", "name = \"other\"\n[runtime]\nsource = \"dang\"\n")
+      .withNewFile("other/main.dang", "type Other { hello: String! { \"hello\" } }\n")
+    let generated = uploadGenerate(uploadClient(engine, ws, tree))
+      .withNewFile("/repo/.gitignore", "gitignore-upload-poison/\ninternal/dagger/clients/\n")
+      .withNewFile("/repo/internal/dagger/clients/dep/user.txt", "keep this client file\n")
+    let repeated = uploadGenerate(generated)
+    let removed = uploadGenerate(repeated.withNewFile("/repo/dagger.toml", uploadConfig(".", "clients = [\"./other\"]\n")))
+      .withExec(["test", "!", "-e", "internal/dagger/clients/dep/dagger.gen.go"])
+      .withExec(["test", "-f", "internal/dagger/clients/other/dagger.gen.go"])
+    assert("pruning an ignored client deleted a user file") {
+      removed.file("/repo/internal/dagger/clients/dep/user.txt").contents == "keep this client file\n"
+    }
+    assertPreserved(removed)
+    let invalid = uploadRefused(removed
+      .withNewFile("/repo/internal/dagger/clients/other/.dagger-generated.json", "{\"version\":1,\"files\":{\"../../outside.go\":\"" + "0000000000000000000000000000000000000000000000000000000000000000" + "\"}}"))
+    assert("an ownership record could read outside its generated directory") {
+      invalid.exitCode != 0 and invalid.stderr.contains("invalid generated ownership entry")
+    }
+    let untracked = uploadRefused(uploadClient(engine, ws, tree
+      .withNewFile(".gitignore", "gitignore-upload-poison/\ninternal/dagger/clients/\n")
+      .withNewFile("internal/dagger/clients/dep/dagger.gen.go", "package user\n")))
+    assert("generation overwrote an ignored user file without an ownership record") {
+      untracked.exitCode != 0 and untracked.stderr.contains("contains user changes; refusing to overwrite it") and
+        untracked.file("/repo/internal/dagger/clients/dep/dagger.gen.go").contents == "package user\n"
+    }
+    null
   }
 
   """Ownership records cannot import Git metadata."""
   ignoredGitMetadataOwnershipCheck(ws: Workspace!): Void @check {
-    ignoredCheck(ws, "ignores:git-metadata-ownership-check")
-  }
-
-  let ignoredCheck(ws: Workspace!, name: String!): Void {
     let client = sdkClient(ws, engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase), engineCommit)
     client.withExec([
       "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
-      "dagger", "check", "-m", ".dagger/modules/e2e", name,
+      "dagger", "check", "-m", ".dagger/modules/e2e", "ignores:git-metadata-ownership-check",
     ]).sync
     null
   }
 
   """
-  Commit of release v1.0.0-beta.18, shared by engine-dev and the target
-  engine. Keep it aligned with the dependency in dagger-module.toml.
+  A client of the engine under test that can run the uploads check. Its CLI
+  is a session's own client, not one nested in an exec: since dagger/dagger
+  #15100 a nested CLI no longer passes the engine's spans to its collector,
+  and check-uploads.py reads the engine's upload spans from there.
   """
-  let engineCommit: String! = "249edbd646e63c5181053c8af72623ed9bdf030d"
+  let uploadEngine: Container! {
+    let base = container
+      .from("python:3.13-alpine")
+      .withExec(["apk", "add", "--no-cache", "git"])
+      .withEnvVariable("HOME", "/root")
+      .withWorkdir("/root")
+    engineDev(ws: daggerSource(engineCommit)).installClient(client: base)
+  }
+
+  """
+  The repository generation runs in: tree, with this SDK as its go-sdk, an
+  ignored directory, a user file and a symlink to it.
+  """
+  let uploadClient(engine: Container!, ws: Workspace!, tree: Directory!): Container! {
+    engine
+      .withFile("/check-uploads.py", currentModule.source.file("check_uploads.py"))
+      .withDirectory("/repo/.sdk-source", ws.directory("/", exclude: [".git", ".dagger"], gitignore: true))
+      .withDirectory("/repo", tree)
+      .withNewFile("/repo/gitignore-upload-poison/keep.txt", "keep\n")
+      .withNewFile("/repo/keep.txt", "user file\n")
+      .withExec(["ln", "-s", "keep.txt", "/repo/keep-link"])
+      .withWorkdir("/repo")
+      .withExec(["git", "init", "--quiet"])
+  }
+
+  let uploadConfig(scope: String!, fields: String!): String! {
+    "[modules.go-sdk]\nsource = \".sdk-source\"\ncheck.skip = [\"*\"]\n" +
+      "[sdks.go]\nmodule = \"go-sdk\"\n" +
+      "[sdks.go.scopes." + JSON.encode(scope) + "]\n" + fields
+  }
+
+  """The session credentials the outer engine injects would make the CLI a nested client."""
+  let uploadCommand: [String!]! = ["env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN", "dagger", "generate", "go-sdk", "-y"]
+
+  """Generate, failing if the CLI uploaded the ignored directory or uploaded nothing."""
+  let uploadGenerate(client: Container!): Container! {
+    client.withExec(["python3", "/check-uploads.py"] + uploadCommand)
+  }
+
+  """Generate where generation must refuse."""
+  let uploadRefused(client: Container!): Container! {
+    client.withExec(uploadCommand, expect: ReturnType.ANY)
+  }
+
+  let assertPreserved(client: Container!): Void {
+    assert("generation changed a user file") { client.file("/repo/keep.txt").contents == "user file\n" }
+    client.withExec(["test", "-L", "/repo/keep-link"]).sync
+    assert("generation changed an ignored file") { client.file("/repo/gitignore-upload-poison/keep.txt").contents == "keep\n" }
+    null
+  }
+
+  """
+  Commit of release v1.0.0-beta.27, the SDK's default target, shared by
+  engine-dev and the target engine: a new module targets it, and an older
+  engine can't load what it generates. Keep it aligned with the dependency
+  in dagger-module.toml.
+  """
+  let engineCommit: String! = "400b82d6f3c09ef096d2f59b3e920267b5969bf4"
+
+  """
+  Commit of release v1.0.0-beta.18, shared by the sources-floor-engine-dev
+  dependency and the engine of the sources check: the oldest engine the
+  generated entrypoint loads on, and one that calls its sources function.
+  """
+  let sourcesFloorCommit: String! = "249edbd646e63c5181053c8af72623ed9bdf030d"
 
   """
   Commit of release v1.0.0-beta.12, shared by the runtime-floor-engine-dev
@@ -176,6 +325,26 @@ type EngineE2e {
     null
   }
 
+  """
+  Run e2e's unified errorValues on the supplied engine source, which needs
+  dagger/dagger#15161. It isn't a check until engineCommit is a release
+  that has it; it then joins integratedSdkCheck. engineDev must build the
+  supplied source: until then, pin engine-dev to that source's commit.
+  """
+  errorValuesCheck(ws: Workspace!, engineSource: Directory!): Void {
+    let source = selectedEngineSource(engineSource)
+    let client = sdkClient(ws, engineDev(ws: source).installClient(client: clientBase), engineCommit)
+      .withMountedDirectory("/integrated-runtime-sdk", source.directory("/sdk/go"))
+    let called = client.withExec([
+      "env", "-u", "DAGGER_SESSION_PORT", "-u", "DAGGER_SESSION_TOKEN",
+      "dagger", "-m", ".dagger/modules/e2e", "call", "unified",
+      "--runtime-sdk", "/integrated-runtime-sdk",
+      "error-values", "--ws", ".",
+    ])
+    print(called.stdout)
+    null
+  }
+
   """Run selected older target versions without repeating the complete suite."""
   integratedLegacyClientsCheck(
     ws: Workspace!,
@@ -244,16 +413,17 @@ type EngineE2e {
   }
 
   """
-  On an engine that calls sources, the module builds from its context,
-  reuses results across sessions until an included file changes, and runs
-  from anywhere. engineSource replaces the pinned engine with a dagger
-  checkout.
+  On an engine that calls sources, v1.0.0-beta.18, the module builds from
+  its context, reuses results across sessions until an included file
+  changes, and runs from anywhere. engineSource replaces the pinned engine
+  with a dagger checkout.
   """
   sourcesCheck(ws: Workspace!, engineSource: Directory = null): Void @check {
+    let source = if (engineSource == null) { daggerSource(sourcesFloorCommit) } else { engineSource.asWorkspace }
     sourcesCalls(sdkClient(
       ws,
-      engineDev(ws: selectedEngineSource(engineSource)).installClient(client: clientBase),
-      engineCommit,
+      sourcesFloorEngineDev(ws: source).installClient(client: clientBase),
+      sourcesFloorCommit,
     ))
   }
 
@@ -533,8 +703,8 @@ type EngineE2e {
   entrypointFloorChecks(ws: Workspace!, checks: [String!]!): Void {
     runChecks(sdkClient(
       ws,
-      engineDev(ws: daggerSource(engineCommit)).installClient(client: clientBase),
-      engineCommit,
+      sourcesFloorEngineDev(ws: daggerSource(sourcesFloorCommit)).installClient(client: clientBase),
+      sourcesFloorCommit,
     ), checks)
   }
 
