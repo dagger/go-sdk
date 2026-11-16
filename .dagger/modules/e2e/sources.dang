@@ -401,8 +401,8 @@ type SourcesChecks {
       .replace("\"example.com/lib/greet\"\n", "\"example.com/lib/greet\"\n\t\"example.com/lib/words\"\n")
       .replace("{ return greet.Greeting() }", "{ return greet.Greeting() + words.Word() }")
     let stale = runDagger(controlAgain.withNewFile("/repo/app/main.go", appMain), "/repo", greeting)
-    assert("a build that misses a file did not say to generate again:\n" + stale.stderr) {
-      stale.exitCode != 0 and stale.stderr.contains("run dagger generate")
+    assert("a build that misses a file did not fail on the missing package:\n" + stale.stderr) {
+      stale.exitCode != 0 and stale.stderr.contains("no required module provides package example.com/lib/words")
     }
 
     gitSourceCall(ws, cli)
