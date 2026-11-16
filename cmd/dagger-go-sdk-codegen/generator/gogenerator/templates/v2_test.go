@@ -576,10 +576,13 @@ func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string]
  case "listed": return nil, fmt.Errorf("run the tests: %w", gqlerror.List{failed})
  case "several": return nil, gqlerror.List{failed, failed}
  case "huge": return nil, &gqlerror.Error{Message: "exit code: 2", Extensions: map[string]any{"stderr": strings.Repeat("x\u00e9\x01", 100000) + "the end"}}
+ case "long-cmd": return nil, &gqlerror.Error{Message: "exit code: 42", Extensions: map[string]any{"_type": "EXEC_ERROR", "exitCode": 42, "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", "cmd": []any{"sh", "-c", strings.Repeat("a", 60000), strings.Repeat("b", 60000)}, "stdout": strings.Repeat("o", 70000), "stderr": strings.Repeat("e", 70000)}}
  }
  return nil, fmt.Errorf("run the tests: %w", failed)
 }
 `, nil)
+			// The entrypoint gets only the last 100 KiB of a failed exec's
+			// stderr, and the function may have written to it.
 			reported := func(fnName string) []string {
 				var stderr strings.Builder
 				call := exec.CommandContext(t.Context(), binary, "engine-call", filepath.Join(t.TempDir(), "result.json"))
@@ -588,7 +591,11 @@ func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string]
 				var exitErr *exec.ExitError
 				require.ErrorAs(t, call.Run(), &exitErr)
 				require.Equal(t, 2, exitErr.ExitCode())
-				return strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+				tail := stderr.String()
+				if len(tail) > 100<<10 {
+					tail = tail[len(tail)-100<<10:]
+				}
+				return strings.Split(strings.TrimRight(tail, "\n"), "\n")
 			}
 			const execValues = `{"message":"exit code: 1","values":[{"name":"_type","value":"\"EXEC_ERROR\""},{"name":"exitCode","value":"1"},{"name":"stderr","value":"\"boom\""}]}`
 
@@ -620,6 +627,29 @@ func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string]
 			require.NoError(t, json.Unmarshal([]byte(huge.Values[0].Value), &stderrValue))
 			require.True(t, strings.HasPrefix(stderrValue, "...") && strings.HasSuffix(stderrValue, "the end"), stderrValue[:20])
 			require.True(t, utf8.ValidString(stderrValue))
+
+			// Long strings inside the command shrink too, and short values stay whole.
+			lines = reported("long-cmd")
+			last = lines[len(lines)-1]
+			require.True(t, strings.HasPrefix(last, functionErrorValuesMarker), last[:min(len(last), 80)])
+			require.LessOrEqual(t, len(last), len(functionErrorValuesMarker)+64<<10)
+			var long struct {
+				Message string
+				Values  []struct{ Name, Value string }
+			}
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(last, functionErrorValuesMarker)), &long))
+			require.Equal(t, "exit code: 42", long.Message)
+			got := map[string]string{}
+			for _, v := range long.Values {
+				got[v.Name] = v.Value
+			}
+			require.Equal(t, `"EXEC_ERROR"`, got["_type"])
+			require.Equal(t, "42", got["exitCode"])
+			require.Equal(t, `"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"`, got["traceparent"])
+			var cmd []string
+			require.NoError(t, json.Unmarshal([]byte(got["cmd"]), &cmd))
+			require.Equal(t, []string{"sh", "-c"}, cmd[:2])
+			require.True(t, strings.HasPrefix(cmd[2], "...") && strings.HasSuffix(cmd[3], "b"), cmd[3][:10])
 		})
 	}
 }

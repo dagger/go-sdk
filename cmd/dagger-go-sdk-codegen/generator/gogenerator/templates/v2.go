@@ -589,18 +589,17 @@ const functionErrorValuesBudget = 64 << 10
 
 // reportedError is the function's error as JSON: the message of the GraphQL
 // error it wraps and each of that error's extensions as a value, such as a
-// failed exec's exit code and output, or its text and no values. Long string
-// values keep their end, where output usually says what failed, so the line
-// fits functionErrorValuesBudget.
+// failed exec's exit code and output, or its text and no values. The line
+// never exceeds functionErrorValuesBudget: long strings, nested ones too,
+// keep their end, where output usually says what failed, down to 256 bytes,
+// so short values such as an exit code stay whole; then the largest values
+// go, then all of them.
 func reportedError(err error) string {
 	message := err.Error()
 	var extensions map[string]any
 	if gqlErr := findSingleGQLError(err); gqlErr != nil {
 		message = gqlErr.Message
 		extensions = gqlErr.Extensions
-	}
-	if len(message) > 16<<10 {
-		message = strings.ToValidUTF8(message[:16<<10], "") + "..."
 	}
 	names := make([]string, 0, len(extensions))
 	for name := range extensions {
@@ -611,27 +610,69 @@ func reportedError(err error) string {
 		Name  string \x60json:"name"\x60
 		Value string \x60json:"value"\x60
 	}
-	for limit := 32 << 10; ; limit /= 2 {
-		values := make([]value, 0, len(names))
+	encode := func(message string, values []value) []byte {
+		line, _ := json.Marshal(struct {
+			Message string  \x60json:"message"\x60
+			Values  []value \x60json:"values"\x60
+		}{message, values})
+		return line
+	}
+	values := make([]value, 0, len(names))
+	for limit := 32 << 10; limit >= 256; limit /= 2 {
+		values = values[:0]
 		for _, name := range names {
-			v := extensions[name]
-			if text, ok := v.(string); ok && len(text) > limit {
-				v = "..." + strings.ToValidUTF8(text[len(text)-limit:], "")
-			}
-			encoded, err := json.Marshal(v)
+			encoded, err := json.Marshal(shortenedValue(extensions[name], limit))
 			if err != nil {
 				continue
 			}
 			values = append(values, value{Name: name, Value: string(encoded)})
 		}
-		line, _ := json.Marshal(struct {
-			Message string  \x60json:"message"\x60
-			Values  []value \x60json:"values"\x60
-		}{message, values})
-		if len(line) <= functionErrorValuesBudget || limit == 0 {
+		shortMessage := message
+		if len(shortMessage) > max(limit, 1<<10) {
+			shortMessage = strings.ToValidUTF8(shortMessage[:max(limit, 1<<10)], "") + "..."
+		}
+		message = shortMessage
+		if line := encode(message, values); len(line) <= functionErrorValuesBudget {
 			return string(line)
 		}
 	}
+	for len(values) > 0 {
+		largest := 0
+		for i := range values {
+			if len(values[i].Value) > len(values[largest].Value) {
+				largest = i
+			}
+		}
+		values = append(values[:largest], values[largest+1:]...)
+		if line := encode(message, values); len(line) <= functionErrorValuesBudget {
+			return string(line)
+		}
+	}
+	return string(encode(message, []value{}))
+}
+
+// shortenedValue is v with each string longer than limit, at any depth,
+// cut to its last limit bytes after "...".
+func shortenedValue(v any, limit int) any {
+	switch x := v.(type) {
+	case string:
+		if len(x) > limit {
+			return "..." + strings.ToValidUTF8(x[len(x)-limit:], "")
+		}
+	case []any:
+		shortened := make([]any, len(x))
+		for i, item := range x {
+			shortened[i] = shortenedValue(item, limit)
+		}
+		return shortened
+	case map[string]any:
+		shortened := make(map[string]any, len(x))
+		for key, item := range x {
+			shortened[key] = shortenedValue(item, limit)
+		}
+		return shortened
+	}
+	return v
 }
 
 // findSingleGQLError returns the GraphQL error that err wraps, or nil when it
