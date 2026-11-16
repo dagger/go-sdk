@@ -38,6 +38,9 @@ type E2e {
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
   # Dagger Go library source used by the generated-client compile check.
   let daggerSourceRef: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
+  # dagger/dagger v1.0.0-beta.27, whose cmd/codegen generate-library writes
+  # the reference core bindings for coreParityCheck.
+  let coreParityRef: String! = "400b82d6f3c09ef096d2f59b3e920267b5969bf4"
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.27"
 
@@ -458,6 +461,53 @@ type E2e {
       assert("the library of " + path + " is not pinned to " + release + ":\n" + module.file("go.mod").contents) {
         module.file("go.mod").contents.contains("dagger.io/dagger " + release + "\n")
       }
+    }
+    null
+  }
+
+  """
+  dagger-go-sdk-codegen core writes the same core and dag bindings as
+  dagger/dagger's cmd/codegen generate-library, for each core schema fixture.
+  """
+  coreParityCheck(ws: Workspace!): Void @check {
+    let golang = container
+      .from("golang:1.27-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+    let generator = golang
+      .withDirectory("/src", ws.directory("/cmd/dagger-go-sdk-codegen"))
+      .withWorkdir("/src")
+      .withExec(["go", "build", "-o", "/out/dagger-go-sdk-codegen", "."])
+      .file("/out/dagger-go-sdk-codegen")
+    let reference = golang
+      .withDirectory("/dagger", git("https://github.com/dagger/dagger").commit(coreParityRef).tree)
+      .withWorkdir("/dagger")
+      .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "./cmd/codegen"])
+      .withFile("/usr/local/bin/dagger-go-sdk-codegen", generator)
+      # Neither generator may pass by leaving files it did not write.
+      .withExec(["rm", "sdk/go/core/core.gen.go", "sdk/go/dag/dag.gen.go"])
+      .withExec(["mkdir", "-p", "/go-sdk/core", "/go-sdk/dag"])
+      .withExec(["cp", "sdk/go/go.mod", "/go-sdk/go.mod"])
+    # candidate/schema.json is cmd/codegen introspect of a dev engine whose
+    # engine sources are those of dagger/dagger 5155ae01f8 (capture SHA-256
+    # 0c1e4c41ff5e51ba8d3b8256885f4e39122137ae0f26c17700a752559ed7de8a),
+    # compacted with Go's json.Compact (SHA-256
+    # e30c279295dabd5ea4ad86c0056f7e7e075dff019c8d635c911a15cc1acd535b).
+    let fixtures = "/cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core"
+    [fixtures + "/schema.json", fixtures + "/candidate/schema.json"].each { schema =>
+      reference
+        .withFile("/schema.json", ws.file(schema))
+        .withExec(["codegen", "generate-library", "--output", "./sdk/go", "--introspection-json-path", "/schema.json"])
+        .withWorkdir("/go-sdk")
+        # dagger-go-sdk-codegen names identifiers through the session's
+        # Query.naming at the schema's version; generate-library compiles
+        # those rules in.
+        .withExec(["dagger-go-sdk-codegen", "core", "--output", "./core", "--dag-output", "./dag", "--introspection-json-path", "/schema.json"],
+          experimentalPrivilegedNesting: true)
+        .withExec(["diff", "-u", "/dagger/sdk/go/core/core.gen.go", "core/core.gen.go"])
+        .withExec(["diff", "-u", "/dagger/sdk/go/dag/dag.gen.go", "dag/dag.gen.go"])
+        .sync
     }
     null
   }
