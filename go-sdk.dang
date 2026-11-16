@@ -816,10 +816,7 @@ type GoSdk {
   command, and the entrypoint into the module's Go root. sdk-helpers then
   writes the manifest that names the entrypoint and removes dagger.json.
   """
-  let entrypointModule(input: Workspace!, name: String!, unified: Boolean!, target: String!, deps: [ModuleSource!]!): Workspace! {
-    # Name and validate the module with the exact dang.toml we publish.
-    # Writing it after codegen would query the previous version's names.
-    let ws = withDangConfig(input, target, entrypointDir(input))
+  let entrypointModule(ws: Workspace!, name: String!, unified: Boolean!, target: String!, deps: [ModuleSource!]!): Workspace! {
     let scopePath = normalizePath(ws.cwd)
     # The module's Go code is in its directory or in the subdirectory its
     # manifest names; the generated files go there, and the manifest stays
@@ -837,7 +834,7 @@ type GoSdk {
     let staged = stagedManifest.generate(ws, lock: false, legacyJson: false)
     let source = staged.withWorkdir(".").moduleSource(rootedPath(scopePath))
     let schemaVersion = source.engineVersion
-    let served = entrypointModuleSource(ws, name, scopePath, entrypointSource, deps)
+    let served = entrypointModuleSource(ws, name, scopePath, entrypointSource, target)
     let naming = served.naming
     # The entrypoint is checked against a schema with its dependencies; the
     # module's Go bindings come from the one without, so the module compiles
@@ -938,22 +935,15 @@ type GoSdk {
     let manifested = sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointSource)
-      .generate(pruned, lock: false, legacyJson: false)
+      .generate(withDangConfig(pruned, target, entrypointSource), lock: false, legacyJson: false)
     let includedManifest = withManifestInclude(manifested, codegen.file("/include.txt"))
-    withEntrypointDependencies(includedManifest, deps, scopePath)
-  }
-
-  """
-  The manifest at ws.cwd with the entrypoint's dependencies, which manifest
-  version 2 lists without a runtime; sdk-helpers writes dependencies only
-  with one.
-  """
-  let withEntrypointDependencies(ws: Workspace!, deps: [ModuleSource!]!, scopePath: String!): Workspace! {
-    if (deps.length == 0) { return ws }
+    if (deps.length == 0) { return includedManifest }
+    # The entrypoint's dependencies, which manifest version 2 lists without a
+    # runtime; sdk-helpers writes dependencies only with one.
     let tables = deps.map { dep =>
       "\n[[dependencies]]\n  name = " + JSON.encode(dep.moduleOriginalName) + "\n  source = " + JSON.encode(dependencySource(dep, scopePath)) + "\n"
     }.join("")
-    mergeGenerated(ws, directory.withNewFile("dagger-module.toml", ws.file("dagger-module.toml").contents + tables))
+    mergeGenerated(includedManifest, directory.withNewFile("dagger-module.toml", includedManifest.file("dagger-module.toml").contents + tables))
   }
 
   """
@@ -1076,18 +1066,26 @@ type GoSdk {
 
   """
   The module source the engine serves the module as: the module with the
-  generated entrypoint and its dependencies, whose dang.toml decides the
-  version the engine names its declarations by. The staged schema's source
-  isn't it: the bindings' Go identifiers follow the schema, but the module's
-  schema names come from this source's naming (ModuleSource.naming). Loading
-  it needs no generated entrypoint.
+  generated entrypoint, whose dang.toml decides the version the engine names
+  its declarations by. The staged schema's source isn't it: the bindings' Go
+  identifiers follow the schema, but the module's schema names come from
+  this source's naming (ModuleSource.naming). It holds only the manifest and
+  the entrypoint's dang.toml, configured for target as generation publishes
+  it, so the names follow the new target. A new module's entrypoint
+  directory doesn't exist on the client, so neither configuring the file nor
+  loading the source goes through ws.
   """
-  let entrypointModuleSource(ws: Workspace!, name: String!, scopePath: String!, entrypointSource: String!, deps: [ModuleSource!]!): ModuleSource! {
-    let manifested = sdkHelpers.moduleManifest
+  let entrypointModuleSource(ws: Workspace!, name: String!, scopePath: String!, entrypointSource: String!, target: String!): ModuleSource! {
+    let config = entrypointSource + "/dang.toml"
+    let path = normalizePath(scopePath + "/" + entrypointSource)
+    let seed = if (exists(ws, config)) {
+      directory.withFile(path + "/dang.toml", ws.file(config))
+    } else { directory.withDirectory(path, directory) }
+    let isolated = withDangConfig(seed.asWorkspace.withWorkdir(scopePath), target, entrypointSource)
+    sdkHelpers.moduleManifest
       .withName(name: name)
       .withDangEntrypoint(source: "./" + entrypointSource)
-      .generate(ws, lock: false, legacyJson: false)
-    withEntrypointDependencies(manifested, deps, scopePath)
+      .generate(isolated, lock: false, legacyJson: false)
       .withWorkdir(".")
       .moduleSource(rootedPath(scopePath))
   }
