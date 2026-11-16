@@ -204,8 +204,9 @@ type TargetChecks {
   A dependency client aliases the core types of the targeted release, read
   from the running engine's view of the dependency, and compiles against
   the pinned library; generating again on the same engine changes nothing.
-  On the SDK's release, the engine runs the module, which calls the
-  dependency and returns its core object. An older pin aliases the same way.
+  On the floor release, the engine runs the module, which calls the
+  dependency and returns its core object. A pin to the floor aliases the
+  same way.
   """
   dependencyCheck(ws: Workspace!): Void @check {
     let name = "target-dependency"
@@ -225,10 +226,10 @@ type TargetChecks {
     assert("the dependency client does not alias core:\n" + client) {
       client.contains("type Container = core.Container\n")
     }
-    let again = goSdk.generateScope(ws: generated, isModule: true, name: name, clients: [dependency])
+    let again = sdk.generateScope(ws: generated, isModule: true, name: name, clients: [dependency])
     assert("generating again changed files") { again.changes(generated).isEmpty }
     let out = called(generated, scopePath, "{targetDependency{greet box{file(path:\"/value\"){contents}}}}")
-    assert("the module did not call its dependency on the SDK's release: " + out) {
+    assert("the module did not call its dependency on the floor release: " + out) {
       out.contains("\"greet\":\"hello target\"") and out.contains("\"contents\":\"target\"")
     }
 
