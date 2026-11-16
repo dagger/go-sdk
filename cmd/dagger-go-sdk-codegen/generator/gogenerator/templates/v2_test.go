@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"bytes"
 	"encoding/json"
 	"go/parser"
 	"go/token"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -167,6 +169,31 @@ func TestEntrypointGoBuildCacheVolumes(t *testing.T) {
 	require.Contains(t, text, "go build -o /tmp/dispatch .")
 	require.Contains(t, text, `.withMountedCache("/go/pkg/mod", cacheVolume("go-sdk-v2-mod"))`)
 	require.Contains(t, text, `.withMountedCache("/root/.cache/go-build", cacheVolume("go-sdk-v2-build"))`)
+}
+
+// The go build dispatch tells the author to generate again when the build
+// misses a package that the module's sources leave out.
+func TestGoBuildDispatchHintsGenerateOnMissingPackage(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n\ngo 1.21\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nimport _ \"example.com/lib/words\"\n\nfunc main() {}\n"), 0o600))
+	var b bytes.Buffer
+	writeGoBuildDispatch(&b, "golang:1.26-alpine", `"."`, ".", false, false)
+	_, quoted, ok := strings.Cut(b.String(), `.withExec(["sh", "-c", `)
+	require.True(t, ok)
+	quoted, _, _ = strings.Cut(quoted, "])\n")
+	script, err := strconv.Unquote(quoted)
+	require.NoError(t, err)
+	// The script writes under /tmp in its container; here it writes into dir,
+	// its working directory, with paths the shell doesn't split.
+	build := exec.CommandContext(t.Context(), "sh", "-c", strings.ReplaceAll(script, "/tmp/", "./"))
+	build.Dir = dir
+	build.Env = append(os.Environ(), "GOPROXY=off", "GOFLAGS=", "GOWORK=off")
+	out, err := build.CombinedOutput()
+	require.Error(t, err, string(out))
+	require.Contains(t, string(out), "no required module provides package example.com/lib/words")
+	require.Contains(t, string(out), "run dagger generate")
+	require.FileExists(t, filepath.Join(dir, "build.log"))
 }
 
 func TestEntrypointWithoutOutsideFilesReturnsItsOwnDirectory(t *testing.T) {
