@@ -17,7 +17,7 @@ type NamingChecks {
 
   """
   The fixture generated as an embedded entrypoint module. Generation writes
-  the target's v1.0.0-beta.26 dang.toml before asking for the module's names.
+  the target's v1.0.0-beta.27 dang.toml before asking for the module's names.
   With pinned, an existing pre-cut import is upgraded; without it, the
   generated import is new.
   """
@@ -76,7 +76,7 @@ type NamingChecks {
       let module = generated.directory(".")
       let label = if (want.pinned) { "the upgraded module" } else { "the new module" }
       assert(label + " does not declare the target") {
-        module.file("internal/dagger/entrypoint/dang.toml").contents.contains("v1.0.0-beta.26")
+        module.file("internal/dagger/entrypoint/dang.toml").contents.contains("v1.0.0-beta.27")
       }
       let again = goSdk(dangEntrypoint: true, unifiedClients: false, globalClient: true).generateScope(
         ws: generated, isModule: true, name: "naming-app", clients: [],
