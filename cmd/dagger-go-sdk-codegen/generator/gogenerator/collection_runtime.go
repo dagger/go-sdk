@@ -73,7 +73,7 @@ func PrepareCollectionRuntime(dir string) error {
 		return nil
 	}
 	pkgs, err := packages.Load(&packages.Config{
-		Dir: dir, Fset: fset, Mode: packages.LoadSyntax,
+		Dir: dir, Fset: fset, Mode: packages.LoadSyntax, Env: cgoDisabledEnv(),
 		ParseFile: func(fset *token.FileSet, path string, src []byte) (*ast.File, error) {
 			if file := files[path]; file != nil {
 				return file, nil
