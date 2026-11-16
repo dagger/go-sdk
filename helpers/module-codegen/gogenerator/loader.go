@@ -25,6 +25,7 @@ func loadPackage(ctx context.Context, dir string, allowEmpty bool) (*packages.Pa
 	pkgs, err := packages.Load(&packages.Config{
 		Context: ctx,
 		Dir:     dir,
+		Env:     cgoDisabledEnv(),
 		Tests:   false,
 		Fset:    fset,
 		Mode: packages.NeedName |
@@ -74,8 +75,7 @@ func loadPackage(ctx context.Context, dir string, allowEmpty bool) (*packages.Pa
 // imports. Their types come from export data, which a loader older than the
 // Go toolchain cannot read. The declarations that use them would then have
 // invalid types, and the generated code would describe them wrongly.
-// Packages from modules are left to the build, which compiles the module
-// without cgo, unlike the loader.
+// Packages from modules are left to the build.
 func stdlibImportErrors(pkg *packages.Package) error {
 	var errs []error
 	for _, path := range slices.Sorted(maps.Keys(pkg.Imports)) {
