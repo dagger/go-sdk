@@ -113,6 +113,9 @@ type clientMeta struct {
 	// Subject names the module or scope the client is generated for, in
 	// messages about its library.
 	Subject string `json:"subject"`
+	// ModuleDir is the directory, from the workspace root, of the module
+	// whose code calls the client; empty for a scope without a module.
+	ModuleDir string `json:"moduleDir"`
 	// Workspace and Git are set for a GIT_SOURCE module, to recognize a module
 	// of the Git workspace that generates the client.
 	Workspace workspaceMeta `json:"workspace"`
@@ -134,6 +137,58 @@ type gitMeta struct {
 // Its address then names that commit, which every commit changes. A workspace
 // without a selector resolves its modules at the default branch, which its
 // address does not name, so any selector at its commit matches.
+// clientModule is the module a client serves. A module's unified client
+// names a local module by its path from the module: the engine resolves the
+// relative address from the module's directory, as the manifest names a
+// local dependency, so the module and its dependency work wherever they are
+// copied together. An embedded client's bootstrap reads the module from the
+// workspace, so it keeps the path from the workspace root.
+func clientModule(meta clientMeta, unified bool) generator.BoundModule {
+	module := meta.Module
+	if unified && meta.ModuleDir != "" && module.Kind != generator.ModuleKindGit {
+		module.Path = moduleRelativePath(meta.ModuleDir, module.Path)
+	}
+	return module
+}
+
+// moduleRelativePath is the path of target from moduleDir, both from the
+// workspace root, as an explicit relative address: "./dep" or "../dep".
+func moduleRelativePath(moduleDir, target string) string {
+	rel := path.Clean(target)
+	if dir := path.Clean(moduleDir); dir != "." {
+		rel = relativePath(dir, rel)
+	}
+	switch {
+	case rel == ".":
+		return "./"
+	case rel == ".." || strings.HasPrefix(rel, "../"):
+		return rel
+	default:
+		return "./" + rel
+	}
+}
+
+// relativePath is target relative to dir, two clean relative slash paths.
+func relativePath(dir, target string) string {
+	from, to := strings.Split(dir, "/"), strings.Split(target, "/")
+	if target == "." {
+		to = nil
+	}
+	common := 0
+	for common < len(from) && common < len(to) && from[common] == to[common] {
+		common++
+	}
+	parts := make([]string, 0, len(from)-common+len(to)-common)
+	for range from[common:] {
+		parts = append(parts, "..")
+	}
+	parts = append(parts, to[common:]...)
+	if len(parts) == 0 {
+		return "."
+	}
+	return strings.Join(parts, "/")
+}
+
 func workspaceModule(meta clientMeta) bool {
 	if meta.Module.Kind != generator.ModuleKindGit || meta.Git.CloneRef == "" || meta.Module.Pin == "" || meta.Module.Pin != meta.Workspace.Commit {
 		return false
@@ -276,6 +331,7 @@ func runClient(args []string) error {
 	if inWorkspace {
 		meta.Module = generator.BoundModule{Kind: generator.ModuleKindLocal, Path: meta.Module.Path}
 	}
+	meta.Module = clientModule(meta, *unified)
 
 	packageImport, err := packageImportPath(*moduleRoot, *outputDir)
 	if err != nil {

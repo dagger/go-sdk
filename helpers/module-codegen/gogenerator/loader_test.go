@@ -1,6 +1,7 @@
 package gogenerator
 
 import (
+	"go/types"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,4 +50,28 @@ func TestGenerateReportsUnreadableStdlibImport(t *testing.T) {
 	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26-alpine"}
 	err := Generate(t.Context(), cfg)
 	require.ErrorContains(t, err, "reload module package: import context:")
+}
+
+// The type-check reads the files the module's build compiles, which builds
+// with cgo off, even where the environment turns cgo on.
+func TestLoadPackageReadsTheFilesTheBuildCompiles(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":         "module example.com/hello\n\ngo 1.26\n",
+		"main.go":        "package hello\n\ntype Hello struct{}\n",
+		"with_cgo.go":    "//go:build cgo\n\npackage hello\n\nfunc (h *Hello) CgoOnly() string { return \"\" }\n",
+		"without_cgo.go": "//go:build !cgo\n\npackage hello\n\nfunc (h *Hello) Echo(text string) string { return text }\n",
+	}
+	for name, source := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(source), 0644))
+	}
+	t.Setenv("CGO_ENABLED", "1")
+
+	pkg, _, err := loadPackage(t.Context(), root, false)
+	require.NoError(t, err)
+	hello := pkg.Types.Scope().Lookup("Hello")
+	require.NotNil(t, hello)
+	methods := types.NewMethodSet(types.NewPointer(hello.Type()))
+	require.NotNil(t, methods.Lookup(pkg.Types, "Echo"), "the no-cgo file's method is missing")
+	require.Nil(t, methods.Lookup(pkg.Types, "CgoOnly"), "the cgo-only file was read")
 }

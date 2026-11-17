@@ -559,110 +559,117 @@ func TestEntrypointDeclaresPlatformFromFloor(t *testing.T) {
 	}
 }
 
-// fakeErrorBindings stands in for a module's embedded bindings: the ID of
-// the Error it builds is that Error as JSON, its message and its values in
-// order, and building one fails when FAIL_ERROR_ID is set, as it would
-// without an engine.
-const fakeErrorBindings = `package dagger
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"os"
-)
-
-type JSON string
-
-type ErrorID string
-
-type Client struct{}
-
-func Connect() *Client { return &Client{} }
-
-type Error struct {
-	Message string
-	Values  [][2]string
-}
-
-func (*Client) Error(message string) *Error { return &Error{Message: message} }
-
-func (e *Error) WithValue(name string, value JSON) *Error {
-	return &Error{Message: e.Message, Values: append(append([][2]string{}, e.Values...), [2]string{name, string(value)})}
-}
-
-func (e *Error) ID(context.Context) (ErrorID, error) {
-	if os.Getenv("FAIL_ERROR_ID") != "" {
-		return "", errors.New("no engine")
-	}
-	encoded, err := json.Marshal(e)
-	return ErrorID(encoded), err
-}
-`
-
 // From errorValuesFloor on, a failed function's dispatcher reports, last,
-// the ID of a Dagger Error that carries the engine's error as the Go runtime
-// returned it: the GraphQL error's message, and each of its extensions as a
-// value. It reports the message as before, and no ID when it can't build
-// the Error.
-func TestDispatchCommandReportsTheErrorID(t *testing.T) {
+// the engine's error as the Go runtime returned it: the GraphQL error's
+// message, and each of its extensions as a value. It still reports the
+// message on the line before. A long string value keeps its end, so the line
+// fits what the entrypoint reads.
+func TestDispatchCommandReportsTheErrorValues(t *testing.T) {
 	for _, packageName := range []string{"main", "hello"} {
 		t.Run(packageName, func(t *testing.T) {
 			binary := buildModuleDispatchCommand(t, &v2Module{targetVersion: errorValuesFloor}, packageName, `
-import("context";"errors";"fmt";"github.com/vektah/gqlparser/v2/gqlerror")
+import("context";"errors";"fmt";"strings";"github.com/vektah/gqlparser/v2/gqlerror")
 func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string][]byte) (any, error) {
- if fnName == "plain" { return nil, errors.New("plain failure") }
  failed := &gqlerror.Error{Message: "exit code: 1", Extensions: map[string]any{"stderr": "boom", "_type": "EXEC_ERROR", "exitCode": 1}}
- if fnName == "listed" { return nil, fmt.Errorf("run the tests: %w", gqlerror.List{failed}) }
- if fnName == "several" { return nil, gqlerror.List{failed, failed} }
+ switch fnName {
+ case "plain": return nil, errors.New("plain failure")
+ case "listed": return nil, fmt.Errorf("run the tests: %w", gqlerror.List{failed})
+ case "several": return nil, gqlerror.List{failed, failed}
+ case "huge": return nil, &gqlerror.Error{Message: "exit code: 2", Extensions: map[string]any{"stderr": strings.Repeat("x\u00e9\x01", 100000) + "the end"}}
+ case "long-cmd": return nil, &gqlerror.Error{Message: "exit code: 42", Extensions: map[string]any{"_type": "EXEC_ERROR", "exitCode": 42, "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", "cmd": []any{"sh", "-c", strings.Repeat("a", 60000), strings.Repeat("b", 60000)}, "stdout": strings.Repeat("o", 70000), "stderr": strings.Repeat("e", 70000)}}
+ }
  return nil, fmt.Errorf("run the tests: %w", failed)
 }
-`, map[string]string{"internal/dagger/dagger.gen.go": fakeErrorBindings})
-			reported := func(fnName string, env ...string) []string {
+`, nil)
+			// The entrypoint gets only the last 100 KiB of a failed exec's
+			// stderr, and the function may have written to it.
+			reported := func(fnName string) []string {
 				var stderr strings.Builder
 				call := exec.CommandContext(t.Context(), binary, "engine-call", filepath.Join(t.TempDir(), "result.json"))
-				call.Env = append(os.Environ(), env...)
 				call.Stdin = strings.NewReader(`{"receiverType":"Hello","fnName":"` + fnName + `","fnArgs":{}}`)
 				call.Stderr = &stderr
 				var exitErr *exec.ExitError
 				require.ErrorAs(t, call.Run(), &exitErr)
 				require.Equal(t, 2, exitErr.ExitCode())
-				return strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+				tail := stderr.String()
+				if len(tail) > 100<<10 {
+					tail = tail[len(tail)-100<<10:]
+				}
+				return strings.Split(strings.TrimRight(tail, "\n"), "\n")
 			}
+			const execValues = `{"message":"exit code: 1","values":[{"name":"_type","value":"\"EXEC_ERROR\""},{"name":"exitCode","value":"1"},{"name":"stderr","value":"\"boom\""}]}`
 
 			lines := reported("exec")
 			require.Equal(t, functionErrorMarker+`"run the tests: input: exit code: 1"`, lines[len(lines)-2])
-			require.Equal(t, functionErrorIDMarker+`{"Message":"exit code: 1","Values":[["_type","\"EXEC_ERROR\""],["exitCode","1"],["stderr","\"boom\""]]}`, lines[len(lines)-1])
+			require.Equal(t, functionErrorValuesMarker+execValues, lines[len(lines)-1])
 
 			// dagger.io/dagger wraps a response's errors as a list.
 			lines = reported("listed")
-			require.Equal(t, functionErrorIDMarker+`{"Message":"exit code: 1","Values":[["_type","\"EXEC_ERROR\""],["exitCode","1"],["stderr","\"boom\""]]}`, lines[len(lines)-1])
+			require.Equal(t, functionErrorValuesMarker+execValues, lines[len(lines)-1])
+
 			lines = reported("several")
-			require.True(t, strings.HasPrefix(lines[len(lines)-1], functionErrorIDMarker) && strings.HasSuffix(lines[len(lines)-1], `"Values":null}`), lines[len(lines)-1])
+			require.True(t, strings.HasPrefix(lines[len(lines)-1], functionErrorValuesMarker) && strings.HasSuffix(lines[len(lines)-1], `"values":[]}`), lines[len(lines)-1])
 
 			lines = reported("plain")
-			require.Equal(t, functionErrorIDMarker+`{"Message":"plain failure","Values":null}`, lines[len(lines)-1])
+			require.Equal(t, functionErrorValuesMarker+`{"message":"plain failure","values":[]}`, lines[len(lines)-1])
 
-			lines = reported("exec", "FAIL_ERROR_ID=1")
-			require.Equal(t, functionErrorMarker+`"run the tests: input: exit code: 1"`, lines[len(lines)-1])
+			lines = reported("huge")
+			last := lines[len(lines)-1]
+			require.LessOrEqual(t, len(last), len(functionErrorValuesMarker)+64<<10)
+			var huge struct {
+				Message string
+				Values  []struct{ Name, Value string }
+			}
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(last, functionErrorValuesMarker)), &huge))
+			require.Equal(t, "exit code: 2", huge.Message)
+			require.Len(t, huge.Values, 1)
+			var stderrValue string
+			require.NoError(t, json.Unmarshal([]byte(huge.Values[0].Value), &stderrValue))
+			require.True(t, strings.HasPrefix(stderrValue, "...") && strings.HasSuffix(stderrValue, "the end"), stderrValue[:20])
+			require.True(t, utf8.ValidString(stderrValue))
+
+			// Long strings inside the command shrink too, and short values stay whole.
+			lines = reported("long-cmd")
+			last = lines[len(lines)-1]
+			require.True(t, strings.HasPrefix(last, functionErrorValuesMarker), last[:min(len(last), 80)])
+			require.LessOrEqual(t, len(last), len(functionErrorValuesMarker)+64<<10)
+			var long struct {
+				Message string
+				Values  []struct{ Name, Value string }
+			}
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(last, functionErrorValuesMarker)), &long))
+			require.Equal(t, "exit code: 42", long.Message)
+			got := map[string]string{}
+			for _, v := range long.Values {
+				got[v.Name] = v.Value
+			}
+			require.Equal(t, `"EXEC_ERROR"`, got["_type"])
+			require.Equal(t, "42", got["exitCode"])
+			require.Equal(t, `"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"`, got["traceparent"])
+			var cmd []string
+			require.NoError(t, json.Unmarshal([]byte(got["cmd"]), &cmd))
+			require.Equal(t, []string{"sh", "-c"}, cmd[:2])
+			require.True(t, strings.HasPrefix(cmd[2], "...") && strings.HasSuffix(cmd[3], "b"), cmd[3][:10])
 		})
 	}
 }
 
 // Below errorValuesFloor, the dispatcher reports the message alone, and the
-// entrypoint raises it; from the floor on, the entrypoint raises the Error
-// whose ID the dispatcher reports, if it reports one.
+// entrypoint raises it; from the floor on, the entrypoint raises a Dagger
+// Error rebuilt from the message and values on the dispatcher's last line.
 func TestEntrypointRaisesTheErrorFromErrorValuesFloor(t *testing.T) {
 	below, err := (&v2Module{targetVersion: identifierCasingFloor}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
 	require.NoError(t, err)
-	require.NotContains(t, string(below), functionErrorIDMarker)
+	require.NotContains(t, string(below), functionErrorValuesMarker)
 	dispatch, err := (&v2Module{targetVersion: identifierCasingFloor}).renderDispatchSource("hello", "example.com/hello", "hello")
 	require.NoError(t, err)
-	require.NotContains(t, string(dispatch), functionErrorIDMarker)
+	require.NotContains(t, string(dispatch), functionErrorValuesMarker)
 
 	from, err := (&v2Module{targetVersion: errorValuesFloor}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
 	require.NoError(t, err)
-	require.Contains(t, string(from), `let idMarker = "`+functionErrorIDMarker+`"`)
-	require.Contains(t, string(from), "raise node(id: ids.takeLast(1).join(\"\").trimPrefix(idMarker) :: ID!).{{... on Dagger.Error!}}")
+	require.Contains(t, string(from), `let valuesMarker = "`+functionErrorValuesMarker+`"`)
+	require.Contains(t, string(from), `let last = stderr.trimSpace.split("\n").takeLast(1).join("")`)
+	require.Contains(t, string(from), `raise (reported.values ?? []).reduce(Dagger.error(reported.message ?? "")) { e, v => e.withValue(v.name ?? "", (v.value ?? "null") :: Dagger.JSON!) }`)
+	require.NotContains(t, string(from), "node(id:")
 	require.Contains(t, string(from), `let marker = "`+functionErrorMarker+`"`)
 }

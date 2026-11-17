@@ -81,3 +81,36 @@ func TestPackageImportPath(t *testing.T) {
 		t.Fatalf("package import = %q, want %q", got, want)
 	}
 }
+
+// A module's client names its dependency by its path from the module's
+// directory, as an explicit relative address the engine resolves from there.
+func TestModuleRelativePath(t *testing.T) {
+	for _, c := range []struct{ moduleDir, target, want string }{
+		{"local-dep-parent", "local-dep-parent/dep", "./dep"},
+		{".", "dep", "./dep"},
+		{".", "a/b/dep", "./a/b/dep"},
+		{"a/b", "a/c", "../c"},
+		{"a/b", "c", "../../c"},
+		{"a/b", "a/b", "./"},
+		{"a/b", "a", ".."},
+	} {
+		require.Equal(t, c.want, moduleRelativePath(c.moduleDir, c.target), "%s from %s", c.target, c.moduleDir)
+	}
+}
+
+// A module's unified client names a local module by its path from the
+// module; an embedded client, whose bootstrap reads the module from the
+// workspace, keeps the path from the workspace root, as does a scope without
+// a module, and a Git module keeps its address.
+func TestClientModule(t *testing.T) {
+	local := clientMeta{ModuleDir: "modules/app", Module: generator.BoundModule{Kind: generator.ModuleKindLocal, Path: "modules/app/dep"}}
+	require.Equal(t, "./dep", clientModule(local, true).Path)
+	require.Equal(t, "modules/app/dep", clientModule(local, false).Path)
+
+	scope := local
+	scope.ModuleDir = ""
+	require.Equal(t, "modules/app/dep", clientModule(scope, true).Path)
+
+	git := clientMeta{ModuleDir: "modules/app", Module: generator.BoundModule{Kind: generator.ModuleKindGit, Path: "dep", Ref: "github.com/example/dep@v1"}}
+	require.Equal(t, git.Module, clientModule(git, true))
+}

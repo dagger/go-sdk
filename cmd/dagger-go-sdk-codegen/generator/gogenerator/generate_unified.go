@@ -49,8 +49,10 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 	}
 	address := bound.Ref
 	if bound.Kind != generator.ModuleKindGit {
+		// A path from the workspace root is absolute; a module's client
+		// names its dependency by an explicit relative path from the module.
 		address = bound.Path
-		if address != "" && !strings.HasPrefix(address, "/") {
+		if address != "" && !strings.HasPrefix(address, "/") && !relativeAddress(address) {
 			address = "/" + address
 		}
 	}
@@ -208,6 +210,24 @@ func Load[T core.Loadable[T]](ctx context.Context,client *Client,id core.ID)(T,e
 		return nil, err
 	}
 	return &generator.GeneratedState{Overlay: mfs}, nil
+}
+
+// cgoDisabledEnv is the environment with cgo off, as the module's build
+// compiles it, so generation reads the files that build compiles.
+func cgoDisabledEnv() []string {
+	var env []string
+	for _, setting := range os.Environ() {
+		if !strings.HasPrefix(setting, "CGO_ENABLED=") {
+			env = append(env, setting)
+		}
+	}
+	return append(env, "CGO_ENABLED=0")
+}
+
+// relativeAddress reports whether address is an explicit relative path,
+// such as "./dep", "../dep" or "..".
+func relativeAddress(address string) bool {
+	return address == "." || address == ".." || strings.HasPrefix(address, "./") || strings.HasPrefix(address, "../")
 }
 
 // moduleCoreQueryTemplate renders a module's core Query fields as methods
@@ -467,12 +487,7 @@ func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, 
 	}
 	cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-json=Dir,GoFiles,CgoFiles", "./...")
 	cmd.Dir = cfg.OutputDir
-	for _, setting := range os.Environ() {
-		if !strings.HasPrefix(setting, "CGO_ENABLED=") {
-			cmd.Env = append(cmd.Env, setting)
-		}
-	}
-	cmd.Env = append(cmd.Env, "CGO_ENABLED=0")
+	cmd.Env = cgoDisabledEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()

@@ -60,3 +60,25 @@ func main() {
 	require.NoError(t, err, string(out))
 	require.Equal(t, "{\"Keys\":[\"b\"],\"__daggerCollectionBase\":\"original\"}\n[{\"Keys\":[\"c\"]},{\"Keys\":[\"d\"]},{\"Keys\":[\"e\"]},{\"Keys\":[\"f\"]},{\"Keys\":[\"g\"]},{\"Keys\":[\"h\"]}]\n", string(out))
 }
+
+// The collection runtime is read with cgo off, as the module's build compiles
+// it, whatever the environment sets: a file that builds only without cgo is
+// part of the package.
+func TestCollectionRuntimeReadsTheFilesTheBuildCompiles(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\ngo 1.26\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
+// +collection
+type Items struct { Keys []string }
+func main() { println(noCgo()) }
+`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "nocgo.go"), []byte(`//go:build !cgo
+
+package main
+
+func noCgo() string { return "no cgo" }
+`), 0600))
+	t.Setenv("CGO_ENABLED", "1")
+	t.Chdir(dir)
+	require.NoError(t, PrepareCollectionRuntime("."))
+}

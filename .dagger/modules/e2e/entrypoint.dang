@@ -405,6 +405,27 @@ type EntrypointChecks {
     null
   }
 
+  """
+  What a caller of the module at path in ws gets from query: the result's
+  data as JSON, or "error: " and the error. The workspace it calls in holds
+  only the paths under include.
+  """
+  let probe(ws: Workspace!, path: String!, include: [String!]!, query: String!): String! {
+    let called = container.from("golang:1.27-alpine").withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/probe", ws.directory("/" + fixtureRoot + "/probe"))
+      .withDirectory("/workspace", ws.directory("/", include: include.map { dir => dir + "/**" }))
+      .withNewFile("/probe/go.mod", "module example.com/probe\n\ngo 1.27\n\nrequire dagger.io/dagger v1.0.0-beta.27\n")
+      .withWorkdir("/probe")
+      .withExec(["go", "mod", "tidy"])
+      .withEnvVariable("MODULE_PATH", path)
+      .withEnvVariable("QUERY", query)
+      .withExec(["go", "run", "."], experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
+    assert("the probe failed:\n" + called.stdout + called.stderr) { called.exitCode == 0 }
+    called.stdout.trimSpace
+  }
+
   let unifiedGlobalApp(input: Workspace!): Workspace! {
     goSdk(dangEntrypoint: true, unifiedClients: true, globalClient: true).generateScope(
       ws: input, isModule: true, name: "generate-app", clients: [],
@@ -445,11 +466,42 @@ type EntrypointChecks {
   }
 
   """
+  A module's client of a local dependency calls the dependency by its path
+  from the module, as a dependency in the manifest is named: the module and
+  the dependency inside it still work when copied together to another
+  directory, the way a vendored or moved module is.
+  """
+  movedLocalClientCheck(ws: Workspace!): Void @check {
+    let fixture = "/" + fixtureRoot + "/moved"
+    let from = outputRoot + "/moved-from"
+    let to = outputRoot + "/moved/elsewhere"
+    let input = ws
+      .withDirectory(from, ws.directory(fixture))
+      .withNewFile(from + "/dagger-module.toml", "name = \"moved-app\"\n")
+      .withWorkdir(from)
+    let generated = goSdk(dangEntrypoint: true, unifiedClients: true).generateScope(
+      ws: input, isModule: true, name: "moved-app",
+      clients: [input.withWorkdir(".").moduleSource("/" + from + "/dep")],
+    )
+    let moved = ws.withDirectory(to, generated.directory("."))
+    let called = probe(moved, to, [to], "{movedApp{hello}}")
+    assert("the moved module failed to call its dependency: " + called) {
+      called == "{\"movedApp\":{\"hello\":\"hello from the dependency\"}}"
+    }
+    let client = generated.file("internal/dagger/clients/moved-dep/dagger.gen.go").contents
+    assert("the client does not name its dependency by its path from the module:\n" + client) {
+      client.contains("dagger.ModuleGraphQLClient(connection, \"./dep\", \"\")")
+    }
+    null
+  }
+
+  """
   A function's error reaches its caller with its text, not as the
   dispatcher's exit code: the dispatcher of a module with a Dang entrypoint
   ends its stderr with the error of the module it calls, on the marker line
-  the entrypoint raises. The called module is a fixture of this repository,
-  since a generated client loads its target from the host.
+  the entrypoint raises. The relay module is called through the engine, as
+  its caller calls it: its client names the module it calls by its path
+  from the relay.
   """
   errorTextCheck(ws: Workspace!): Void @check {
     let relayPath = outputRoot + "/error-relay"
@@ -460,20 +512,9 @@ type EntrypointChecks {
       ws: staged.withWorkdir(relayPath), isModule: true, name: "error-relay",
       clients: [staged.withWorkdir(".").moduleSource("/" + fixtureRoot + "/error/leaf")],
     )
-    let dispatcher = container.from("golang:1.26-alpine").withoutEntrypoint
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/module", relay.directory(".")).withWorkdir("/module")
-      .withExec(["go", "build", "-o", "/usr/local/bin/dispatch", "."])
-    let ran = dispatcher.withExec(
-      ["dispatch", "engine-call"],
-      stdin: JSON.encode({{ receiverType: "ErrorRelay", receiverValue: "{}", fnName: "RelayCheck", fnArgs: "{}" }}),
-      experimentalPrivilegedNesting: true,
-      expect: ReturnType.ANY,
-    )
-    let message = ran.stderr.split("::dagger-function-error::")[1] ?? ""
-    assert("the relayed error lost its text: " + ran.stderr) {
-      ran.exitCode != 0 and message.contains("error-leaf failed: boom") and message.contains("exit code") == false
+    let called = probe(staged.withDirectory(relayPath, relay.directory(".")), relayPath, [relayPath, fixtureRoot + "/error/leaf"], "{errorRelay{relayCheck}}")
+    assert("the relayed error lost its text: " + called) {
+      called.hasPrefix("error: ") and called.contains("error-leaf failed: boom") and called.contains("exit code") == false
     }
     null
   }

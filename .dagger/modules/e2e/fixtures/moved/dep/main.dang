@@ -1,0 +1,11 @@
+"""
+A local dependency of the moved module.
+"""
+type MovedDep {
+  """
+  Says hello.
+  """
+  pub hello: String! {
+    "hello from the dependency"
+  }
+}

@@ -696,17 +696,25 @@ func compileGeneratedModule(ctx context.Context, buildRoot, root, target string,
 
 	cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", os.DevNull, target)
 	cmd.Dir = dir
-	for _, setting := range os.Environ() {
-		if !strings.HasPrefix(setting, "CGO_ENABLED=") {
-			cmd.Env = append(cmd.Env, setting)
-		}
-	}
-	cmd.Env = append(cmd.Env, "CGO_ENABLED=0")
+	cmd.Env = cgoDisabledEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("compile generated module: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// cgoDisabledEnv is the environment with cgo off, as the generated entrypoint
+// builds the module, so that what generation reads and compiles of the module
+// are the files its build compiles, whatever tools the image holds.
+func cgoDisabledEnv() []string {
+	var env []string
+	for _, setting := range os.Environ() {
+		if !strings.HasPrefix(setting, "CGO_ENABLED=") {
+			env = append(env, setting)
+		}
+	}
+	return append(env, "CGO_ENABLED=0")
 }
 
 // The temporary embedded client can promote runtime dependencies to direct
