@@ -2,6 +2,7 @@ package templates
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -103,4 +104,19 @@ func TestIDsNotRememberedWithoutReevaluateDirective(t *testing.T) {
 	host := renderTemplate(t, parseTemplateFiles(t, schema, "_types/object.go.tmpl"), schema.Types.Get("Host"))
 	require.NotContains(t, host, "refetchID")
 	require.NotContains(t, host, "memoizedID")
+}
+
+// Generated bindings reach Loaded only as core.Loaded, so this SDK defines it
+// for the core library alone; dagger/dagger 1aaeba3120 also defines it in
+// module bindings.
+func TestCoreLibraryObjectsKeepLoadedIDs(t *testing.T) {
+	schema := loadReevaluateSchema(t, true)
+	for _, coreLibrary := range []bool{true, false} {
+		tree, err := buildTemplateTree(GoTemplateFuncs(schema, nil, "v0.0.0", generator.Config{Names: styled, CoreLibrary: coreLibrary}))
+		require.NoError(t, err)
+		file := renderTemplate(t, tree.Lookup("_types/object.go.tmpl"), schema.Types.Get("File"))
+		require.Equal(t, coreLibrary, strings.Contains(file, `func (r *File) withLoadedID(q *querybuilder.Selection, id ID) *File {
+	return &File{query: q, id: &id}
+}`))
+	}
 }
