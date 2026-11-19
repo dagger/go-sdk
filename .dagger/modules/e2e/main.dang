@@ -416,7 +416,7 @@ type E2e {
       .withExec(["apk", "add", "--no-cache", "git"])
       .withFile("/usr/local/bin/dagger", container.from("registry.dagger.io/engine:" + (version.split("+")[0] ?? version)).file("/usr/local/bin/dagger"))
       .withDirectory("/go-sdk", ws.directory("/", exclude: ["**/.git", outputRoot]))
-      .withFile("/go-sdk/dagger.toml", ws.file("/.dagger/modules/engine-e2e/workspace.toml"))
+      .withFile("/go-sdk/dagger.toml", ws.file("/.dagger/modules/e2e/workspace.toml"))
       .withWorkdir("/go-sdk")
       .withExec(["git", "init", "-q"])
     assert("the CLI does not list the Go SDK") { runCli(client, ["sdk", "list"]).stdout.contains("go") }
@@ -459,7 +459,7 @@ type E2e {
       .withExec(["apk", "add", "--no-cache", "git"])
       .withFile("/usr/local/bin/dagger", cli, permissions: 755)
       .withDirectory("/go-sdk", ws.directory("/", exclude: ["**/.git", outputRoot]))
-      .withFile("/go-sdk/dagger.toml", ws.file("/.dagger/modules/engine-e2e/workspace.toml"))
+      .withFile("/go-sdk/dagger.toml", ws.file("/.dagger/modules/e2e/workspace.toml"))
       .withWorkdir("/go-sdk")
       .withExec(["git", "init", "-q"])
     let initGo = ["dagger", "--auto-apply", "module", "init", "go"]

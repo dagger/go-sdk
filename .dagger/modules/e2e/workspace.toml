@@ -1,0 +1,7 @@
+[modules.go-sdk]
+source = "."
+check.skip = ["*"]
+generate.skip = ["*"]
+
+[sdks.go]
+module = "go-sdk"

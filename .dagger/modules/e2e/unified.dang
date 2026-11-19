@@ -180,9 +180,8 @@ type UnifiedChecks {
   caller the engine's error, values and all, such as a failed exec's exit
   code and output, and has its package's doc comment as its description.
   It needs an engine with dagger/dagger#15161, which no release has yet, so
-  it isn't a check: engine-e2e's errorValuesCheck runs it on an engine
-  source that has it. It returns what the probe printed: the error the
-  caller got.
+  it isn't a check: call it on such an engine, with that engine's sdk/go as
+  runtimeSdk. It returns what the probe printed: the error the caller got.
   """
   errorValues(ws: Workspace!): String! {
     let path = ".dagger/modules/e2e/out/error-values"

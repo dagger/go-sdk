@@ -104,3 +104,8 @@ SDK generated.
 
 Parsing the versioned import in this file needs the Dang implementation
 v2.2.0 or later, so older standalone Dang tools can reject the file.
+
+The checks of this repository run on the engine that runs `dagger check`: in
+CI, the latest Dagger release.
+No check runs on an older engine, so the `sourcesFloor` release in
+`versions.toml` is declared but not verified.
