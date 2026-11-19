@@ -101,6 +101,14 @@ type UnifiedChecks {
     null
   }
 
+  """Targets of older releases, and a module in package main."""
+  legacyClientsCheck(ws: Workspace!): Void @check {
+    ["v0.20.8", "v0.18.0", "v0.16.0", "v0.15.0"].each { version =>
+      UnifiedChecks(runtimeSdk: runtimeSdk, legacyVersion: version, packageMain: false).callsCheck(ws)
+    }
+    UnifiedChecks(runtimeSdk: runtimeSdk, legacyVersion: legacyVersion, packageMain: true).callsCheck(ws)
+  }
+
   """A changed target takes effect without regenerating the caller bindings."""
   changedTargetCheck(ws: Workspace!): Void @check {
     let ready = generated(ws)

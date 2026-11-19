@@ -15,9 +15,16 @@ type E2e {
   """
   entrypoint: EntrypointChecks! { EntrypointChecks }
 
-  """Checks that need the shared runtime SDK from the engine checkout."""
-  unified(runtimeSdk: Directory!, legacyVersion: String! = "v0.21.7", packageMain: Boolean! = false): UnifiedChecks! {
-    UnifiedChecks(runtimeSdk: runtimeSdk, legacyVersion: legacyVersion, packageMain: packageMain)
+  """
+  Checks that need the shared runtime SDK: by default, the one of
+  daggerRelease.
+  """
+  unified(runtimeSdk: Directory = null, legacyVersion: String! = "v0.21.7", packageMain: Boolean! = false): UnifiedChecks! {
+    UnifiedChecks(
+      runtimeSdk: runtimeSdk ?? git("https://github.com/dagger/dagger").tag(daggerRelease).tree.directory("sdk/go"),
+      legacyVersion: legacyVersion,
+      packageMain: packageMain,
+    )
   }
 
   """Checks for modules whose build reads files outside the module directory."""
@@ -35,8 +42,10 @@ type E2e {
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
-  # Dagger Go library source used by the generated-client compile check.
-  let daggerSourceRef: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
+  """The newest Dagger release."""
+  let daggerRelease: String! = "v1.0.0-beta.28"
+  """Commit of daggerRelease, whose Go library the generated clients compile against."""
+  let daggerSourceRef: String! = "856a3dac239a2d5a8b0cd3ad7e26a1c11dd8abb8"
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.27"
 
@@ -302,9 +311,6 @@ type E2e {
   Two embedded standalone target packages compile in one Go module.
   """
   standaloneClientCompilesCheck(ws: Workspace!): Void @check {
-    let sourceRef = if (ws.directory("/").exists(".dagger/modules/e2e/engine-commit")) {
-      ws.file("/.dagger/modules/e2e/engine-commit").contents.trimSpace
-    } else { daggerSourceRef }
     let scopePath = fixtureRoot + "/go-scope"
     let input = ws
       .withNewFile(scopePath + "/go.mod", "module example.com/compile\n\ngo 1.25\n")
@@ -327,7 +333,7 @@ type E2e {
       .withDirectory(
         "/dagger-sdk",
         git("https://github.com/dagger/dagger")
-          .commit(sourceRef)
+          .commit(daggerSourceRef)
           .tree
           .directory("sdk/go"),
       )

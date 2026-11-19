@@ -3,6 +3,9 @@
 [modules.engine-e2e]
 source = ".dagger/modules/engine-e2e"
 
+[modules.e2e]
+source = ".dagger/modules/e2e"
+
 [modules.dang-sdk]
 source = "dagger.io/sdk/dang"
 
