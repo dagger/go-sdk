@@ -1,19 +1,17 @@
-"""Exercise the shared runtime before its first published SDK version."""
+"""Exercise the shared runtime of the published dagger.io/dagger library."""
 type UnifiedChecks {
-  runtimeSdk: Directory!
   legacyVersion: String!
   packageMain: Boolean!
   let root: String! = ".dagger/modules/e2e/out/unified-app"
   let fixtures: String! = ".dagger/modules/e2e/fixtures"
 
   let prepared(ws: Workspace!): Workspace! {
-    ws.withDirectory(root + "/runtime-sdk", runtimeSdk)
-      .withNewFile("own.txt", "caller files")
+    ws.withNewFile("own.txt", "caller files")
       .withNewFile(root + "/own.txt", "own module")
       .withDirectory(root + "/dep", ws.directory("/" + fixtures + "/unified-legacy"))
       .withNewFile(root + "/dep/dagger.json", "{\"name\":\"client-dep\",\"engineVersion\":" + JSON.encode(legacyVersion) + ",\"sdk\":{\"source\":\"go\"}}\n")
       .withNewFile(root + "/dep/go.mod", "module example.com/legacy-client-dep\n\ngo 1.26.1\n\nrequire dagger.io/dagger " + legacyVersion + "\n")
-      .withNewFile(root + "/go.mod", "module example.com/unified\n\ngo 1.26.1\n\nrequire dagger.io/dagger v1.0.0-beta.15\nreplace dagger.io/dagger => ./runtime-sdk\n")
+      .withNewFile(root + "/go.mod", "module example.com/unified\n\ngo 1.26.1\n")
       .withNewFile(root + "/main.go", if (packageMain) {
         ws.file("/" + fixtures + "/unified/main.go").contents.replace("package unified_app", "package main")
       } else {
@@ -88,10 +86,8 @@ type UnifiedChecks {
     let called = container.from("golang:1.26-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/runtime-sdk", runtimeSdk)
       .withDirectory("/src", generated.directory("."))
       .withWorkdir("/src")
-      .withExec(["go", "mod", "edit", "-replace", "dagger.io/dagger=/runtime-sdk"])
       .withExec(["go", "mod", "tidy"])
       .withExec(["go", "run", "-buildvcs=false", "."],
         experimentalPrivilegedNesting: true, expect: ReturnType.ANY)
@@ -104,9 +100,9 @@ type UnifiedChecks {
   """Targets of older releases, and a module in package main."""
   legacyClientsCheck(ws: Workspace!): Void @check {
     ["v0.20.8", "v0.18.0", "v0.16.0", "v0.15.0"].each { version =>
-      UnifiedChecks(runtimeSdk: runtimeSdk, legacyVersion: version, packageMain: false).callsCheck(ws)
+      UnifiedChecks(legacyVersion: version, packageMain: false).callsCheck(ws)
     }
-    UnifiedChecks(runtimeSdk: runtimeSdk, legacyVersion: legacyVersion, packageMain: true).callsCheck(ws)
+    UnifiedChecks(legacyVersion: legacyVersion, packageMain: true).callsCheck(ws)
   }
 
   """A changed target takes effect without regenerating the caller bindings."""
@@ -180,16 +176,15 @@ type UnifiedChecks {
   caller the engine's error, values and all, such as a failed exec's exit
   code and output, and has its package's doc comment as its description.
   It needs an engine with dagger/dagger#15161, which no release has yet, so
-  it isn't a check: call it on such an engine, with that engine's sdk/go as
-  runtimeSdk. It returns what the probe printed: the error the caller got.
+  it isn't a check: call it on such an engine. It returns what the probe
+  printed: the error the caller got.
   """
   errorValues(ws: Workspace!): String! {
     let path = ".dagger/modules/e2e/out/error-values"
     let fixture = "/" + fixtures + "/error-values"
-    let input = ws.withDirectory(path + "/runtime-sdk", runtimeSdk)
-      .withFile(path + "/main.go", ws.file(fixture + "/main.go"))
+    let input = ws.withFile(path + "/main.go", ws.file(fixture + "/main.go"))
       .withFile(path + "/probe/main.go", ws.file(fixture + "/probe/main.go"))
-      .withNewFile(path + "/go.mod", "module example.com/error-values\n\ngo 1.27\n\nrequire dagger.io/dagger v1.0.0-beta.15\nreplace dagger.io/dagger => ./runtime-sdk\n")
+      .withNewFile(path + "/go.mod", "module example.com/error-values\n\ngo 1.27\n")
       .withNewFile(path + "/dagger-module.toml", "name = \"error-values\"\n")
       .withWorkdir(path)
     let ready = goSdk(dangEntrypoint: true, unifiedClients: true, targetVersion: "v1.0.0-beta.28").generateScope(

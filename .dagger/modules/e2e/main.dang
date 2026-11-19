@@ -15,16 +15,9 @@ type E2e {
   """
   entrypoint: EntrypointChecks! { EntrypointChecks }
 
-  """
-  Checks that need the shared runtime SDK: by default, the one of
-  daggerRelease.
-  """
-  unified(runtimeSdk: Directory = null, legacyVersion: String! = "v0.21.7", packageMain: Boolean! = false): UnifiedChecks! {
-    UnifiedChecks(
-      runtimeSdk: runtimeSdk ?? git("https://github.com/dagger/dagger").tag(daggerRelease).tree.directory("sdk/go"),
-      legacyVersion: legacyVersion,
-      packageMain: packageMain,
-    )
+  """Checks of unified clients, which share the core runtime of dagger.io/dagger."""
+  unified(legacyVersion: String! = "v0.21.7", packageMain: Boolean! = false): UnifiedChecks! {
+    UnifiedChecks(legacyVersion: legacyVersion, packageMain: packageMain)
   }
 
   """Checks for modules whose build reads files outside the module directory."""
@@ -42,10 +35,6 @@ type E2e {
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
-  """The newest Dagger release."""
-  let daggerRelease: String! = "v1.0.0-beta.28"
-  """Commit of daggerRelease, whose Go library the generated clients compile against."""
-  let daggerSourceRef: String! = "856a3dac239a2d5a8b0cd3ad7e26a1c11dd8abb8"
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.27"
 
@@ -316,7 +305,7 @@ type E2e {
       .withNewFile(scopePath + "/go.mod", "module example.com/compile\n\ngo 1.25\n")
       .withNewFile(scopePath + "/main.go", "package compile\n")
       .withWorkdir(scopePath)
-    let generated = goSdk(unifiedClients: false).generateScope(
+    let generated = goSdk(unifiedClients: false, targetVersion: sdkTarget).generateScope(
       ws: input,
       isModule: false,
       name: "standalone-compile",
@@ -330,16 +319,8 @@ type E2e {
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory(
-        "/dagger-sdk",
-        git("https://github.com/dagger/dagger")
-          .commit(daggerSourceRef)
-          .tree
-          .directory("sdk/go"),
-      )
       .withDirectory("/src", generated.directory("."))
       .withWorkdir("/src")
-      .withExec(["go", "mod", "edit", "-replace", "dagger.io/dagger=/dagger-sdk"])
       .withExec(["go", "mod", "tidy"])
       .withExec(["go", "build", "./..."])
       .stdout
