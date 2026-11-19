@@ -282,5 +282,5 @@ Local commands:
 dagger check
 ```
 
-`dagger check` runs `engine-e2e`. It builds the pinned engine, runs the e2e
-module inside it, and initializes and calls a module with `--dang-entrypoint`.
+`dagger check` runs the e2e checks on the engine that runs it. One of them
+initializes and calls a module with `--dang-entrypoint`.

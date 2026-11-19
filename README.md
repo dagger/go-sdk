@@ -94,14 +94,18 @@ entrypoint's own `dang.toml`.
 Released engines from v1.0.0-beta.18 to v1.0.0-beta.25 copy only `.dang`
 files to evaluate an entrypoint, so they ignore this file and serve the
 module at their own version.
-[dagger/dagger#14902](https://github.com/dagger/dagger/pull/14902) and
-[dagger/dagger#14958](https://github.com/dagger/dagger/pull/14958), which are
-not merged, make the engine read the `Dagger` version of this file and serve
-the module at that release.
-With those changes, an entrypoint without a Dagger version gets
-v1.0.0-beta.24, so a module that targets any other release needs the file.
+[dagger/dagger#14958](https://github.com/dagger/dagger/pull/14958), released
+in v1.0.0-beta.27, makes the engine read the `Dagger` version of this file
+and serve the module at that release.
+On those engines, an entrypoint without a Dagger version gets
+v1.0.0-beta.25, so a module that targets any other release needs the file.
 Run `dagger generate` to add the file to a module whose entrypoint an older
 SDK generated.
 
 Parsing the versioned import in this file needs the Dang implementation
 v2.2.0 or later, so older standalone Dang tools can reject the file.
+
+The checks of this repository run on the engine that runs `dagger check`: in
+CI, the latest Dagger release.
+No check runs on an older engine, so the `sourcesFloor` release in
+`versions.toml` is declared but not verified.

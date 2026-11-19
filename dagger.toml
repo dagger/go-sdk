@@ -1,7 +1,8 @@
-# Run SDK checks inside the development engine.
+# The e2e checks run on the engine that runs dagger check: in CI, the latest
+# Dagger release.
 
-[modules.engine-e2e]
-source = ".dagger/modules/engine-e2e"
+[modules.e2e]
+source = ".dagger/modules/e2e"
 
 [modules.dang-sdk]
 source = "dagger.io/sdk/dang"

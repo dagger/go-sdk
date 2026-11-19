@@ -15,9 +15,9 @@ type E2e {
   """
   entrypoint: EntrypointChecks! { EntrypointChecks }
 
-  """Checks that need the shared runtime SDK from the engine checkout."""
-  unified(runtimeSdk: Directory!, legacyVersion: String! = "v0.21.7", packageMain: Boolean! = false): UnifiedChecks! {
-    UnifiedChecks(runtimeSdk: runtimeSdk, legacyVersion: legacyVersion, packageMain: packageMain)
+  """Checks of unified clients, which share the core runtime of dagger.io/dagger."""
+  unified(legacyVersion: String! = "v0.21.7", packageMain: Boolean! = false): UnifiedChecks! {
+    UnifiedChecks(legacyVersion: legacyVersion, packageMain: packageMain)
   }
 
   """Checks for modules whose build reads files outside the module directory."""
@@ -35,8 +35,6 @@ type E2e {
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
-  # Dagger Go library source used by the generated-client compile check.
-  let daggerSourceRef: String! = "0da36c8da9cb6a682c7d27eca9bd2c125de5ed09"
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.27"
 
@@ -302,15 +300,12 @@ type E2e {
   Two embedded standalone target packages compile in one Go module.
   """
   standaloneClientCompilesCheck(ws: Workspace!): Void @check {
-    let sourceRef = if (ws.directory("/").exists(".dagger/modules/e2e/engine-commit")) {
-      ws.file("/.dagger/modules/e2e/engine-commit").contents.trimSpace
-    } else { daggerSourceRef }
     let scopePath = fixtureRoot + "/go-scope"
     let input = ws
       .withNewFile(scopePath + "/go.mod", "module example.com/compile\n\ngo 1.25\n")
       .withNewFile(scopePath + "/main.go", "package compile\n")
       .withWorkdir(scopePath)
-    let generated = goSdk(unifiedClients: false).generateScope(
+    let generated = goSdk(unifiedClients: false, targetVersion: sdkTarget).generateScope(
       ws: input,
       isModule: false,
       name: "standalone-compile",
@@ -324,16 +319,8 @@ type E2e {
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory(
-        "/dagger-sdk",
-        git("https://github.com/dagger/dagger")
-          .commit(sourceRef)
-          .tree
-          .directory("sdk/go"),
-      )
       .withDirectory("/src", generated.directory("."))
       .withWorkdir("/src")
-      .withExec(["go", "mod", "edit", "-replace", "dagger.io/dagger=/dagger-sdk"])
       .withExec(["go", "mod", "tidy"])
       .withExec(["go", "build", "./..."])
       .stdout
@@ -402,6 +389,44 @@ type E2e {
   }
 
   """
+  The CLI of the engine running the check lists the Go SDK, and the module
+  that dagger module init go creates from each starter runs.
+  """
+  cliStartersCheck(ws: Workspace!): Void @check {
+    let client = container.from("alpine:3.22").withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "git"])
+      .withFile("/usr/local/bin/dagger", container.from("registry.dagger.io/engine:" + (version.split("+")[0] ?? version)).file("/usr/local/bin/dagger"))
+      .withDirectory("/go-sdk", ws.directory("/", exclude: ["**/.git", outputRoot]))
+      .withFile("/go-sdk/dagger.toml", ws.file("/.dagger/modules/e2e/workspace.toml"))
+      .withWorkdir("/go-sdk")
+      .withExec(["git", "init", "-q"])
+    assert("the CLI does not list the Go SDK") { runCli(client, ["sdk", "list"]).stdout.contains("go") }
+    starter(client, "sdk-smoke", ["--dang-entrypoint=false", "--unified-clients=false"], "dag.Container().",
+      ["dagger.gen.go", "internal/dagger/dagger.gen.go"])
+    starter(client, "sdk-entrypoint", [], "core.NewContainer().",
+      ["internal/dagger/entrypoint/main.dang", "cmd/sdk-entrypoint-dispatch/main.go"])
+    starter(client, "sdk-global", ["--global-client=true"], "dag.Container().", [])
+    starter(client, "sdk-embedded", ["--unified-clients=false"], "dagger.Connect().Container().", [])
+  }
+
+  """Initialize a module from a starter, check its files and its client call, and run it."""
+  let starter(client: Container!, name: String!, settings: [String!]!, call: String!, files: [String!]!): Void {
+    let path = ".dagger/modules/" + name
+    let initialized = runCli(client, ["--auto-apply", "module", "init", "go", "--name", name, "--path", path] + settings)
+      .withExec(["test", "-f", path + "/dagger-module.toml"])
+      .withExec(["test", "!", "-e", path + "/dagger.json"])
+      .withExec(["grep", "-qF", call, path + "/main.go"])
+    let checked = files.reduce(initialized) { ctr, file => ctr.withExec(["test", "-f", path + "/" + file]) }
+    let release = runCli(checked, ["-m", path, "call", "container", "file", "--path", "/etc/alpine-release", "contents"]).stdout
+    assert("the module from the " + name + " starter did not run") { release.trimSpace != "" }
+    null
+  }
+
+  let runCli(client: Container!, args: [String!]!): Container! {
+    client.withExec(["dagger"] + args, daggerInDaggerNewSession: true)
+  }
+
+  """
   The CLI refuses the removed clientVersion and fat settings as arguments.
   Generation ignores them in the module settings and in a scope's settings
   of dagger.toml, where targetVersion keeps its pin. cli is this engine's
@@ -415,7 +440,7 @@ type E2e {
       .withExec(["apk", "add", "--no-cache", "git"])
       .withFile("/usr/local/bin/dagger", cli, permissions: 755)
       .withDirectory("/go-sdk", ws.directory("/", exclude: ["**/.git", outputRoot]))
-      .withFile("/go-sdk/dagger.toml", ws.file("/.dagger/modules/engine-e2e/workspace.toml"))
+      .withFile("/go-sdk/dagger.toml", ws.file("/.dagger/modules/e2e/workspace.toml"))
       .withWorkdir("/go-sdk")
       .withExec(["git", "init", "-q"])
     let initGo = ["dagger", "--auto-apply", "module", "init", "go"]
