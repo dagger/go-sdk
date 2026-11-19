@@ -49,7 +49,7 @@ func TestGenerateReportsUnreadableStdlibImport(t *testing.T) {
 	t.Setenv("GOCACHE", t.TempDir())
 	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: moduleContextSchema(t), SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26-alpine"}
 	err := Generate(t.Context(), cfg)
-	require.ErrorContains(t, err, "reload module package: import context:")
+	require.ErrorContains(t, err, "load module package: import context:")
 }
 
 // The type-check reads the files the module's build compiles, which builds
