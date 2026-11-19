@@ -31,6 +31,12 @@ func (g *GoGenerator) GenerateUnifiedClient(ctx context.Context, schema *introsp
 	schema = projectChecks(schema)
 	generator.SetSchemaParents(schema)
 	generator.SetSchema(schema)
+	return g.withNames(schema, func() (*generator.GeneratedState, error) {
+		return g.generateUnifiedClient(ctx, schema, schemaVersion)
+	})
+}
+
+func (g *GoGenerator) generateUnifiedClient(ctx context.Context, schema *introspection.Schema, schemaVersion string) (*generator.GeneratedState, error) {
 	if g.Config.PackageImport == "" {
 		return nil, fmt.Errorf("package import path is required")
 	}
@@ -271,17 +277,19 @@ const moduleCoreQueryTemplate = `
 func moduleCoreQuery(schema *introspection.Schema, schemaVersion string, cfg generator.Config) (string, error) {
 	core := schema.Exclude(schema.DependencyNames()...)
 	query := core.Query()
+	funcs := templates.GoTemplateFuncs(core, schema, schemaVersion, cfg)
 	if methods := cfg.ModuleConfig.CoreQueryMethods; methods != nil {
+		formatName := funcs["FormatName"].(func(string) string)
 		offered := *query
 		offered.Fields = nil
 		for _, field := range query.Fields {
-			if methods[templates.FormatName(field.Name)] {
+			if methods[formatName(field.Name)] {
 				offered.Fields = append(offered.Fields, field)
 			}
 		}
 		query = &offered
 	}
-	tmpl, err := template.New("module-core-query").Funcs(templates.GoTemplateFuncs(core, schema, schemaVersion, cfg)).Parse(moduleCoreQueryTemplate)
+	tmpl, err := template.New("module-core-query").Funcs(funcs).Parse(moduleCoreQueryTemplate)
 	if err != nil {
 		return "", err
 	}

@@ -176,10 +176,10 @@ return &{{ $typeName }}{
 	var results {{ $field.TypeRef | InterfaceListResultType }}
 	for _, idResult := range idResults {
 		{{- if IsSharedCoreObject $field.TypeRef }}
-        results = append(results, new({{ $typeName | FormatArrayToSingleType | InterfaceClientName }}).WithGraphQLQuery(selectNode(q.Root(), idResult.Id, "{{ $typeName | FormatArrayToSingleType }}")))
+        results = append(results, new({{ $typeName | FormatArrayToSingleType | InterfaceClientName }}).WithGraphQLQuery(selectNode(q.Root(), idResult.Id, "{{ $field.TypeRef | InnerType | ObjectName }}")))
         {{- else }}
         results = append(results, &{{ $typeName | FormatArrayToSingleType | InterfaceClientName }}{
-			query: selectNode(q.Root(), idResult.Id, "{{ $typeName | FormatArrayToSingleType }}"),
+			query: selectNode(q.Root(), idResult.Id, "{{ $field.TypeRef | InnerType | ObjectName }}"),
 		})
         {{- end }}
 	}

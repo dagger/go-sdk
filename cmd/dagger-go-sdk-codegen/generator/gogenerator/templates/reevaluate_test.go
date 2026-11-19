@@ -89,7 +89,7 @@ func TestReevaluatedFieldsRefetchIDs(t *testing.T) {
 
 	// An interface method may dispatch to an implementation that must be
 	// reevaluated, so objects it returns always refetch their ID.
-	tree, err := buildTemplateTree(GoTemplateFuncs(schema, nil, "v0.0.0", generator.Config{}))
+	tree, err := buildTemplateTree(GoTemplateFuncs(schema, nil, "v0.0.0", generator.Config{Names: styled}))
 	require.NoError(t, err)
 	ifaceTmpl := tree.Lookup("_types/interface.go.tmpl")
 	require.NotNil(t, ifaceTmpl)
