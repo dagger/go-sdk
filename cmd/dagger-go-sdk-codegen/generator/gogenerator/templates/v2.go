@@ -539,10 +539,18 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
     (result :: JSON!)
   }
 
-  # The exec error carries the end of the dispatcher's stderr, where its last
-  # marker line holds the function's error; without one, the exec failed
-  # before the function returned, and its error is raised again.
+  # An engine that gives the dispatcher a file for the function's error marks
+  # its exec's error as the module process's, and fails the call with the
+  # error the file holds, values and all, or the exec's own if it holds none:
+  # the exec's error is raised as it is. For an older engine, the exec error
+  # carries the end of the dispatcher's stderr, where its last marker line
+  # holds the function's error; without one, the exec failed before the
+  # function returned, and its error is raised again.
   let raiseFunctionError(err: GraphQLError!): String! {
+    let process = ((JSON.decode(err.extensions) :: {{moduleProcess: Boolean}}).moduleProcess ?? false) rescue false
+    if (process) {
+      raise err
+    }
     let marker = "` + functionErrorMarker + `"
     let stderr = ((JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? "") rescue ""
 `)
@@ -575,8 +583,9 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
 const functionErrorMarker = "::dagger-function-error::"
 
 // functionErrorValuesSource is the dispatcher's code that reports the error
-// of a module that passesErrorValues: its message and values, as the Go
-// runtime's convertError builds a Dagger Error from them.
+// of a module that passesErrorValues, to an engine that names no file for
+// it: its message and values, as the Go runtime's convertError builds a
+// Dagger Error from them.
 const functionErrorValuesSource = `
 // errorValues is the error the entrypoint raises, as reportedError reports
 // it, or empty outside engine calls.
@@ -649,6 +658,89 @@ func reportedError(err error) string {
 		}
 	}
 	return string(encode(message, []value{}))
+}
+`
+
+// functionErrorPathEnv names the file an engine gives a call's process to
+// write its function's error to (dagger/dagger#15249). An engine that sets
+// it fails the call with the error written there, values and all; one that
+// doesn't reads the marker lines the dispatcher prints instead.
+const functionErrorPathEnv = "DAGGER_FUNCTION_ERROR_PATH"
+
+// functionErrorFileSource is the dispatcher's code that gives the engine the
+// function's error in the file it names in functionErrorPathEnv. Every
+// dispatcher has it: it tells such an engine apart at run time.
+const functionErrorFileSource = `
+// functionErrorPathEnv names the file the engine gives a call's process to
+// write its function's error to. An engine that doesn't set it reads the
+// marker line fatalf prints instead.
+const functionErrorPathEnv = "` + functionErrorPathEnv + `"
+
+// functionErrorFileLimit is the largest function error file the engine reads.
+const functionErrorFileLimit = 1 << 20
+
+// errorOrigin matches an origin an error's message names, the span the
+// engine reads it comes from.
+var errorOrigin = regexp.MustCompile(\x60\s*\[traceparent:[0-9a-f]{32}-[0-9a-f]{16}\]\x60)
+
+// writeFunctionError gives the engine err, the function's error, in the file
+// it names in functionErrorPathEnv, and reports whether it did; an engine
+// that names none reads the marker line fatalf prints. The file holds
+// {"message": ..., "values": {...}}: the error's message in full, with any
+// origin it names, so the engine finds the call that failed, and the
+// extensions of the GraphQL error it wraps, as they are, such as a failed
+// exec's exit code and output. The engine fails the call with that error,
+// values and all, and shows it, so nothing is printed. Only a report over
+// what the engine reads is shortened.
+func writeFunctionError(err error) bool {
+	path := os.Getenv(functionErrorPathEnv)
+	if path == "" {
+		return false
+	}
+	// A list of GraphQL errors ends each with a newline.
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		message = fmt.Sprintf("%T", err)
+	}
+	values := map[string]any{}
+	if gqlErr := findSingleGQLError(err); gqlErr != nil {
+		for name, value := range gqlErr.Extensions {
+			values[name] = value
+		}
+	}
+	report := functionErrorReport(message, values)
+	if len(report) > functionErrorFileLimit {
+		// Long strings keep their end, where output usually says what
+		// failed, and the message its start and the origins it names; then
+		// the values go.
+		const limit = 64 << 10
+		if len(message) > limit {
+			message = strings.ToValidUTF8(message[:limit], "") + "..." + strings.Join(errorOrigin.FindAllString(message[limit:], -1), "")
+		}
+		for name, value := range values {
+			values[name] = shortenedValue(value, limit)
+		}
+		report = functionErrorReport(message, values)
+		if len(report) > functionErrorFileLimit {
+			report = functionErrorReport(message, map[string]any{})
+		}
+	}
+	return os.WriteFile(path, report, 0o644) == nil
+}
+
+func functionErrorReport(message string, values map[string]any) []byte {
+	type report struct {
+		Message string         \x60json:"message"\x60
+		Values  map[string]any \x60json:"values"\x60
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(report{message, values}) != nil {
+		b.Reset()
+		_ = enc.Encode(report{message, map[string]any{}})
+	}
+	return b.Bytes()
 }
 
 // shortenedValue is v with each string longer than limit, at any depth,
@@ -1067,11 +1159,13 @@ func (mod *v2Module) renderDispatchSource(moduleName, packageImport string, pack
 	}
 	table.WriteString("}\n")
 
-	// A module that passesErrorValues reports, last, the function's error
-	// with its values, which its entrypoint raises as a Dagger Error.
-	var errorImports, reportError, printErrorValues, errorValuesSource string
+	// Every dispatcher gives an engine that names a file for the function's
+	// error that error there. For an older engine, a module that
+	// passesErrorValues reports, last, the function's error with its values,
+	// which its entrypoint raises as a Dagger Error.
+	var reportError, printErrorValues, errorValuesSource string
+	errorFileSource := strings.ReplaceAll(functionErrorFileSource, "\\x60", "`")
 	if mod.passesErrorValues() {
-		errorImports = "\t\"github.com/vektah/gqlparser/v2/gqlerror\"\n"
 		reportError = `if err != nil && os.Args[1] == "engine-call" { errorValues = reportedError(err) }`
 		printErrorValues = fmt.Sprintf(`if errorValues != "" { fmt.Fprintf(os.Stderr, "%%s%%s\n", %q, errorValues) }`, functionErrorValuesMarker)
 		errorValuesSource = strings.ReplaceAll(functionErrorValuesSource, "\\x60", "`")
@@ -1081,19 +1175,22 @@ func (mod *v2Module) renderDispatchSource(moduleName, packageImport string, pack
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	telemetry "github.com/dagger/otel-go"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
-%s
+
 	module %q
 )
 
@@ -1138,14 +1235,16 @@ func main() {
 	case "call": err = developerCall(ctx, os.Args[2:], os.Stdout)
 	default: err = fmt.Errorf("unknown mode %%q", os.Args[1])
 	}
-	%s
-	// fatalf exits without running deferred calls, so spans are flushed first.
+	// os.Exit and fatalf skip deferred calls, so spans are flushed first.
 	telemetry.Close()
+	if err != nil && os.Args[1] == "engine-call" && writeFunctionError(err) { os.Exit(2) }
+	%s
 	if err != nil { fatalf("%%v", err) }
 }
 
-// fatalf reports the error last on stderr, as one marker line: a failed exec
-// gives the entrypoint only its last 100 KiB of stderr. JSON can encode a
+// fatalf reports the error last on stderr, as one marker line, for an engine
+// that names no file for it (writeFunctionError): a failed exec gives the
+// entrypoint only its last 100 KiB of stderr. JSON can encode a
 // byte in six, so 16 KiB of text keeps the line within that.
 func fatalf(format string, args ...any) {
 	message := fmt.Sprintf(format, args...)
@@ -1158,6 +1257,7 @@ func fatalf(format string, args ...any) {
 	%s
 	os.Exit(2)
 }
+%s
 %s
 
 func engineCall(ctx context.Context, input io.Reader, output io.Writer) error {
@@ -1258,7 +1358,7 @@ func findFunction(name string) (functionSpec, error) {
 	if len(found) > 1 { return functionSpec{}, fmt.Errorf("function %%q is ambiguous; use engine-call with receiverType", name) }
 	return found[0], nil
 }
-`, errorImports, packageImport, table.String(), reportError, functionErrorMarker, printErrorValues, errorValuesSource)
+`, packageImport, table.String(), reportError, functionErrorMarker, printErrorValues, errorFileSource, errorValuesSource)
 	if len(packageNames) > 0 && packageNames[0] == "main" {
 		source = strings.Replace(source, "\tmodule "+strconv.Quote(packageImport)+"\n", "", 1)
 		source = strings.Replace(source, "module.DaggerDispatch(", "DaggerDispatch(", 1)

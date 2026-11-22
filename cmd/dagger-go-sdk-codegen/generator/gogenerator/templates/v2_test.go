@@ -2,6 +2,7 @@ package templates
 
 import (
 	"encoding/json"
+	"errors"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -387,6 +388,94 @@ func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string]
 	require.True(t, utf8.ValidString(text))
 	require.True(t, strings.HasSuffix(text, "..."))
 	require.True(t, strings.HasPrefix("abc"+strings.Repeat("\u00e9\x01<", 20000), strings.TrimSuffix(text, "...")))
+}
+
+// An engine that names a file for the function's error (functionErrorPathEnv)
+// gets it there, whatever the module targets: the message in full, origin
+// and all, and the GraphQL error's extensions as they are. Nothing else is
+// printed, the function's own output aside. Without a file it can write, the
+// dispatcher reports the error on stderr, as for an older engine.
+func TestDispatchCommandWritesTheErrorFile(t *testing.T) {
+	for _, target := range []string{"", errorValuesFloor} {
+		for _, packageName := range []string{"main", "hello"} {
+			t.Run(packageName+target, func(t *testing.T) {
+				binary := buildModuleDispatchCommand(t, &v2Module{targetVersion: target}, packageName, `
+import("context";"errors";"fmt";"os";"strings";"github.com/vektah/gqlparser/v2/gqlerror")
+func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string][]byte) (any, error) {
+ fmt.Fprintln(os.Stderr, "a user log line")
+ failed := &gqlerror.Error{Message: "exit code: 1 [traceparent:0123456789abcdef0123456789abcdef-0123456789abcdef]", Extensions: map[string]any{"stderr": "<boom>", "_type": "EXEC_ERROR", "exitCode": 1, "cmd": []any{"false"}}}
+ switch fnName {
+ case "plain": return nil, errors.New("plain failure")
+ case "several": return nil, gqlerror.List{failed, failed}
+ case "huge": return nil, fmt.Errorf("wrapped %s: %w", strings.Repeat("m", 2<<20), &gqlerror.Error{Message: "exit code: 2 [traceparent:0123456789abcdef0123456789abcdef-0123456789abcdef]", Extensions: map[string]any{"exitCode": 2, "stderr": strings.Repeat("x\u00e9\x01", 1<<20) + "the end"}})
+ }
+ return nil, fmt.Errorf("run the tests: %w", gqlerror.List{failed})
+}
+`, nil)
+				reported := func(fnName, path string) (string, string) {
+					var stderr strings.Builder
+					call := exec.CommandContext(t.Context(), binary, "engine-call", filepath.Join(t.TempDir(), "result.json"))
+					call.Env = append(os.Environ(), functionErrorPathEnv+"="+path)
+					call.Stdin = strings.NewReader(`{"receiverType":"Hello","fnName":"` + fnName + `","fnArgs":{}}`)
+					call.Stderr = &stderr
+					var exitErr *exec.ExitError
+					require.ErrorAs(t, call.Run(), &exitErr)
+					require.Equal(t, 2, exitErr.ExitCode())
+					report, err := os.ReadFile(path)
+					if errors.Is(err, os.ErrNotExist) {
+						return stderr.String(), ""
+					}
+					require.NoError(t, err)
+					return stderr.String(), string(report)
+				}
+				path := filepath.Join(t.TempDir(), "error.json")
+
+				stderr, report := reported("exec", path)
+				require.Equal(t, "a user log line\n", stderr)
+				require.JSONEq(t, `{"message":"run the tests: input: exit code: 1 [traceparent:0123456789abcdef0123456789abcdef-0123456789abcdef]","values":{"_type":"EXEC_ERROR","cmd":["false"],"exitCode":1,"stderr":"<boom>"}}`, report)
+				require.NotContains(t, report, `\u003c`)
+
+				stderr, report = reported("plain", path)
+				require.Equal(t, "a user log line\n", stderr)
+				require.JSONEq(t, `{"message":"plain failure","values":{}}`, report)
+
+				_, report = reported("several", path)
+				require.Contains(t, report, `"values":{}`)
+
+				stderr, report = reported("huge", path)
+				require.Equal(t, "a user log line\n", stderr)
+				require.LessOrEqual(t, len(report), 1<<20)
+				var huge struct {
+					Message string
+					Values  map[string]any
+				}
+				require.NoError(t, json.Unmarshal([]byte(report), &huge))
+				require.True(t, strings.HasPrefix(huge.Message, "wrapped mmm"), huge.Message[:20])
+				require.True(t, strings.HasSuffix(huge.Message, "... [traceparent:0123456789abcdef0123456789abcdef-0123456789abcdef]"), huge.Message[len(huge.Message)-80:])
+				require.Equal(t, float64(2), huge.Values["exitCode"])
+				require.True(t, strings.HasSuffix(huge.Values["stderr"].(string), "the end"))
+				require.True(t, utf8.ValidString(huge.Values["stderr"].(string)))
+
+				// A file the dispatcher can't write is no report.
+				stderr, report = reported("plain", filepath.Join(t.TempDir(), "missing", "error.json"))
+				require.Empty(t, report)
+				require.Contains(t, stderr, functionErrorMarker+`"plain failure"`)
+			})
+		}
+	}
+}
+
+// Only an older engine's error reaches the entrypoint's marker parsing: an
+// engine that names a file for the function's error marks the module
+// process's exec error, and the entrypoint raises it as it is.
+func TestEntrypointRaisesTheModuleProcessErrorAsItIs(t *testing.T) {
+	for _, target := range []string{"", identifierCasingFloor, errorValuesFloor} {
+		source, err := (&v2Module{targetVersion: target}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
+		require.NoError(t, err)
+		text := string(source)
+		guard := "    let process = ((JSON.decode(err.extensions) :: {{moduleProcess: Boolean}}).moduleProcess ?? false) rescue false\n    if (process) {\n      raise err\n    }\n"
+		require.Contains(t, text, "  let raiseFunctionError(err: GraphQLError!): String! {\n"+guard+"    let marker = ")
+	}
 }
 
 // entrypointFixture covers each part of the entrypoint that varies with the
