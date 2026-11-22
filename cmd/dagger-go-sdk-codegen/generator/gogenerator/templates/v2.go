@@ -68,10 +68,12 @@ const identifierCasingFloor = "v1.0.0-beta.26"
 // (dagger/dagger#15161; not yet released).
 const errorValuesFloor = "v1.0.0-beta.28"
 
-// passesErrorValues reports whether a function's error reaches its caller
-// as a Dagger Error with the values of the engine's error, such as a failed
-// exec's exit code and output, rather than as its message alone: whether the
-// module targets errorValuesFloor or later.
+// passesErrorValues reports whether, on an engine that names no file for the
+// function's error (functionErrorPathEnv), a function's error reaches its
+// caller as a Dagger Error with the values of the engine's error, such as a
+// failed exec's exit code and output, rather than as its message alone:
+// whether the module targets errorValuesFloor or later. An engine that names
+// the file gets the values from every dispatcher.
 func (mod *v2Module) passesErrorValues() bool {
 	return mod.targetVersion != "" && semver.Compare(mod.targetVersion, errorValuesFloor) >= 0
 }
@@ -539,16 +541,16 @@ func (mod *v2Module) renderEntrypointSource(moduleName, moduleSubpath, goImage s
     (result :: JSON!)
   }
 
-  # An engine that gives the dispatcher a file for the function's error marks
-  # its exec's error as the module process's, and fails the call with the
-  # error the file holds, values and all, or the exec's own if it holds none:
-  # the exec's error is raised as it is. For an older engine, the exec error
-  # carries the end of the dispatcher's stderr, where its last marker line
-  # holds the function's error; without one, the exec failed before the
-  # function returned, and its error is raised again.
+  # An engine that gives the dispatcher a file for the function's error puts
+  # the error the dispatcher wrote there in its exec's error, and fails the
+  # call with it, values and all: the exec's error is raised as it is.
+  # Otherwise, as with an older engine or a file the dispatcher couldn't
+  # write, the exec error carries the end of the dispatcher's stderr, where
+  # its last marker line holds the function's error; without one, the exec
+  # failed before the function returned, and its error is raised again.
   let raiseFunctionError(err: GraphQLError!): String! {
-    let process = ((JSON.decode(err.extensions) :: {{moduleProcess: Boolean}}).moduleProcess ?? false) rescue false
-    if (process) {
+    let reported = ((JSON.decode(err.extensions) :: {{functionError: {{message: String, id: String}}}}).functionError != null) rescue false
+    if (reported) {
       raise err
     }
     let marker = "` + functionErrorMarker + `"

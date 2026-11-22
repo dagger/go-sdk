@@ -498,10 +498,11 @@ type EntrypointChecks {
   """
   A function's error reaches its caller with its text, not as the
   dispatcher's exit code: the dispatcher of a module with a Dang entrypoint
-  ends its stderr with the error of the module it calls, on the marker line
-  the entrypoint raises. The relay module is called through the engine, as
-  its caller calls it: its client names the module it calls by its path
-  from the relay.
+  writes the error of the module it calls to the file the engine names in
+  DAGGER_FUNCTION_ERROR_PATH, or, on an engine that names none, ends its
+  stderr with it, on the marker line the entrypoint raises. The relay
+  module is called through the engine, as its caller calls it: its client
+  names the module it calls by its path from the relay.
   """
   errorTextCheck(ws: Workspace!): Void @check {
     let relayPath = outputRoot + "/error-relay"

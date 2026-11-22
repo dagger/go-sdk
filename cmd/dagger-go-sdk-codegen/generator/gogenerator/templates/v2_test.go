@@ -465,15 +465,17 @@ func DaggerDispatch(_ context.Context, _ []byte, _, fnName string, _ map[string]
 	}
 }
 
-// Only an older engine's error reaches the entrypoint's marker parsing: an
-// engine that names a file for the function's error marks the module
-// process's exec error, and the entrypoint raises it as it is.
+// An exec error that carries the error the dispatcher wrote to the engine's
+// file (its functionError extension) is raised as it is, so the engine fails
+// the call with that error; any other, such as an older engine's, or one
+// whose dispatcher couldn't write the file and printed the markers instead,
+// reaches the entrypoint's marker parsing.
 func TestEntrypointRaisesTheModuleProcessErrorAsItIs(t *testing.T) {
 	for _, target := range []string{"", identifierCasingFloor, errorValuesFloor} {
 		source, err := (&v2Module{targetVersion: target}).renderEntrypointSource("hello", ".", "golang:1.26-alpine")
 		require.NoError(t, err)
 		text := string(source)
-		guard := "    let process = ((JSON.decode(err.extensions) :: {{moduleProcess: Boolean}}).moduleProcess ?? false) rescue false\n    if (process) {\n      raise err\n    }\n"
+		guard := "    let reported = ((JSON.decode(err.extensions) :: {{functionError: {{message: String, id: String}}}}).functionError != null) rescue false\n    if (reported) {\n      raise err\n    }\n"
 		require.Contains(t, text, "  let raiseFunctionError(err: GraphQLError!): String! {\n"+guard+"    let marker = ")
 	}
 }
