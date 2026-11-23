@@ -191,10 +191,17 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		},
 	}
 	client := &clientgen.GoGenerator{Config: genCfg}
-	// Author source can reference any core alias before its self-call schema
-	// has been discovered. The bootstrap supplies the complete legacy surface.
+	// Unified bindings are rendered against the module's sources, which must
+	// list cleanly first: an embedded bootstrap supplies the complete core
+	// surface author code may reference, and its tidy the go.sum. Embedded
+	// bindings are that bootstrap.
+	//
+	// The module's own client is a client like any other (dagger module
+	// client add .), generated from the schema the engine serves for it, so
+	// these bindings hold no self-calls.
 	client.Config.UnifiedClient = false
-	if _, err := generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, false); err != nil {
+	removed, err := generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, !cfg.UnifiedClient)
+	if err != nil {
 		return fmt.Errorf("bootstrap module client: %w", err)
 	}
 	if err := writeBootstrap(root, packageName, packageImport, cfg.GlobalClient); err != nil {
@@ -204,22 +211,8 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		return withWarnings(err, untidied.Warnings)
 	}
 
-	pkg, fset, err := loadPackage(ctx, root, false)
-	if err != nil {
-		return fmt.Errorf("load module package: %w", err)
-	}
-	emitter := templates.NewModuleIntrospectionEmitter(ctx, resp.Schema, cfg.SchemaVersion, genCfg, pkg, fset)
-	moduleJSON, err := emitter.ModuleIntrospectionJSON(cfg.ModuleName)
-	if err != nil {
-		return fmt.Errorf("analyze module types: %w", err)
-	}
-	merged, err := mergeSchema(resp, moduleJSON, cfg.ModuleName)
-	if err != nil {
-		return fmt.Errorf("merge self-call schema: %w", err)
-	}
-	generator.SetSchemaParents(merged.Schema)
-	client.Config.UnifiedClient = cfg.UnifiedClient
 	if cfg.UnifiedClient {
+		client.Config.UnifiedClient = true
 		// Unified bindings forward to the library's core.Query, so they offer
 		// only the fields it has.
 		methods, err := library.QueryMethods(ctx, goModPath, cfg.DaggerVersion)
@@ -227,10 +220,10 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 			return fmt.Errorf("read the core API of %s %s: %w", library.Path, cfg.DaggerVersion, err)
 		}
 		client.Config.ModuleConfig.CoreQueryMethods = methods
-	}
-	removed, err := generateClient(ctx, client, merged.Schema, cfg.SchemaVersion, packageImport, root, true)
-	if err != nil {
-		return fmt.Errorf("generate module client: %w", err)
+		removed, err = generateClient(ctx, client, resp.Schema, cfg.SchemaVersion, packageImport, root, true)
+		if err != nil {
+			return fmt.Errorf("generate module client: %w", err)
+		}
 	}
 	// The bootstrap has no runtime SDK import, so its tidy may remove the
 	// requirement. Restore the caller's pin before unified bindings import core.
@@ -268,15 +261,15 @@ func generate(ctx context.Context, cfg GenerateConfig) error {
 		sources.Include = slices.Sorted(maps.Keys(patterns))
 	}
 
-	pkg, fset, err = loadPackage(ctx, root, false)
+	pkg, fset, err := loadPackage(ctx, root, false)
 	if err != nil {
-		return fmt.Errorf("reload module package: %w", err)
+		return fmt.Errorf("load module package: %w", err)
 	}
 	if err := stdlibImportErrors(pkg); err != nil {
-		return fmt.Errorf("reload module package: %w", err)
+		return fmt.Errorf("load module package: %w", err)
 	}
 	artifacts, err := templates.GenerateV2Artifacts(
-		ctx, merged.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, sourceSubpath(cfg), cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.GoCacheVolumes, cfg.TargetVersion, sources,
+		ctx, resp.Schema, cfg.SchemaVersion, genCfg, pkg, fset, packageImport, moduleSubpath, sourceSubpath(cfg), cfg.GoImage, cfg.RuntimeImage, cfg.DaggerGo, cfg.GoCacheVolumes, cfg.TargetVersion, sources,
 	)
 	if err != nil {
 		return fmt.Errorf("generate manifest-v2 artifacts: %w", err)
