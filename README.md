@@ -98,7 +98,10 @@ module at their own version.
 in v1.0.0-beta.27, makes the engine read the `Dagger` version of this file
 and serve the module at that release.
 On those engines, an entrypoint without a Dagger version gets
-v1.0.0-beta.25, so a module that targets any other release needs the file.
+v1.0.0-beta.25, and the identifier-casing cut is in v1.0.0-beta.26.
+Every target of this SDK is at or after the cut, so the generated file must
+already be present when codegen asks the engine for the module's names.
+Generation writes it before querying that source and publishes the same file.
 Run `dagger generate` to add the file to a module whose entrypoint an older
 SDK generated.
 

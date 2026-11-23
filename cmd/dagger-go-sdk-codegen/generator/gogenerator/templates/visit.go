@@ -62,6 +62,7 @@ func (funcs goTemplateFuncs) visitTypes(
 		moduleName:        funcs.cfg.ModuleConfig.ModuleName,
 		legacyGoSDKCompat: funcs.legacyGoSDKCompat(),
 		codeDir:           funcs.codeDir,
+		namer:             funcs.moduleNamer(),
 
 		methods: make(map[string][]method),
 	}

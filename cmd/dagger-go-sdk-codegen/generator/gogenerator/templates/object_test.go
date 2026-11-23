@@ -321,7 +321,7 @@ func renderIDHandleObject(t *testing.T, schemaVersion string) string {
 	generator.SetSchema(schema)
 	t.Cleanup(func() { generator.SetSchema(nil) })
 
-	funcs := GoTemplateFuncs(schema, nil, schemaVersion, generator.Config{})
+	funcs := GoTemplateFuncs(schema, nil, schemaVersion, generator.Config{Names: styled})
 	path := filepath.Join("src", "_types", "object.go.tmpl")
 	tmpl, err := template.New("object.go.tmpl").Funcs(funcs).ParseFiles(path)
 	require.NoError(t, err)

@@ -13,6 +13,7 @@ import (
 	"golang.org/x/tools/go/packages"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
+	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/identifiers"
 )
 
 // loadDependencyAliasModule loads a module whose global client aliases the
@@ -63,7 +64,8 @@ func TestDependencyTypeInModuleAPIIsRefused(t *testing.T) {
 	pkg, fset := loadDependencyAliasModule(t, "package main\n\nimport module \"example.com/m/internal/dagger\"\n\n"+
 		"type M struct{}\n\nfunc (m *M) Describe(app *module.App) string { return \"\" }\n\nfunc main() {}\n")
 	funcs := goTemplateFuncs{
-		cfg:        generator.Config{ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "m"}},
+		cfg:        generator.Config{ModuleConfig: &generator.ModuleGeneratorConfig{ModuleName: "m", Naming: identifiers.ModuleNames{Main: "M"}}},
+		namer:      goNamer{names: styled},
 		modulePkg:  pkg,
 		moduleFset: fset,
 	}

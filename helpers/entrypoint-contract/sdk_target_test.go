@@ -87,12 +87,6 @@ func TestSdkTargetRelease(t *testing.T) {
 		// The release in flight can be pinned before the default moves to it.
 		{"v1.0.0-beta.28", "v1.0.0-beta.28"},
 		{"v1.0.0-beta.26", "v1.0.0-beta.26"},
-		{"v1.0.0-beta.25", "v1.0.0-beta.25"},
-		{"v1.0.0-beta.24", "v1.0.0-beta.24"},
-		{"v1.0.0-beta.23", "v1.0.0-beta.23"},
-		{"v1.0.0-beta.21", "v1.0.0-beta.21"},
-		{"v1.0.0-beta.20", "v1.0.0-beta.20"},
-		{"1.0.0-beta.18", "v1.0.0-beta.18"},
 	} {
 		require.NoError(t, resolveSdkTarget(t, c.setting, c.want), "%+v", c)
 	}
@@ -132,13 +126,15 @@ func TestSdkNextRelease(t *testing.T) {
 
 // A wrong expectation fails, so the assertions above run.
 func TestSdkTargetReleaseAsserts(t *testing.T) {
-	err := resolveSdkTarget(t, "", "v1.0.0-beta.20")
-	require.ErrorContains(t, err, "resolved v1.0.0-beta.20")
+	err := resolveSdkTarget(t, "", "v1.0.0-beta.21")
+	require.ErrorContains(t, err, "resolved v1.0.0-beta.21")
 }
 
 func TestSdkTargetReleaseRefusals(t *testing.T) {
-	const fix = "Set targetVersion between v1.0.0-beta.18 and v1.0.0-beta.28 in the scope's settings in dagger.toml, or remove it"
-	const below = `module "probe" pins targetVersion v1.0.0-beta.17, which this release of the Go SDK cannot generate for: it is below v1.0.0-beta.18, the oldest engine the generated entrypoint loads on. ` + fix
+	const fix = "Set targetVersion between v1.0.0-beta.26 and v1.0.0-beta.28 in the scope's settings in dagger.toml, or remove it"
+	below := func(v string) string {
+		return `module "probe" pins targetVersion ` + v + `, which this release of the Go SDK cannot generate for: it is below v1.0.0-beta.26, the first release whose Go library spells its identifiers as the engine names them, which the generated code follows. ` + fix
+	}
 	above := func(v string) string {
 		return `module "probe" pins targetVersion ` + v + ", which this release of the Go SDK cannot generate for: it targets v1.0.0-beta.28 at most. " + fix + ", or install the SDK release built for " + v
 	}
@@ -146,14 +142,15 @@ func TestSdkTargetReleaseRefusals(t *testing.T) {
 		return `module "probe" pins targetVersion "` + v + `", which is not a Dagger release such as v1.0.0-beta.27. ` + fix
 	}
 	for _, c := range []struct{ setting, want string }{
-		{"v1.0.0-beta.17", below},
-		{"1.0.0-beta.17+abc", below},
+		{"v1.0.0-beta.25", below("v1.0.0-beta.25")},
+		{"1.0.0-beta.25+abc", below("v1.0.0-beta.25")},
+		{"v1.0.0-beta.18", below("v1.0.0-beta.18")},
 		{"v1.0.0-beta.29", above("v1.0.0-beta.29")},
 		{"99.0.0", above("v99.0.0")},
 		{"v1.0.0", above("v1.0.0")},
 		{"latest", malformed("latest")},
 		{"v1.0.0-beta..1", malformed("v1.0.0-beta..1")},
-		{"v1.0.0-beta.21+???", malformed("v1.0.0-beta.21+???")},
+		{"v1.0.0-beta.26+???", malformed("v1.0.0-beta.26+???")},
 	} {
 		require.ErrorContains(t, resolveSdkTarget(t, c.setting, ""), c.want, "%+v", c)
 	}

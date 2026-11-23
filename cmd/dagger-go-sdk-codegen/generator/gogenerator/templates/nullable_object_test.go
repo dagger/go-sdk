@@ -58,7 +58,8 @@ func TestNullableObjectFieldFunction(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			funcs := goTemplateFuncs{
-				CommonFunctions: generator.NewCommonFunctions(test.schemaVersion, &FormatTypeFunc{}),
+				CommonFunctions: generator.NewCommonFunctions(test.schemaVersion, &FormatTypeFunc{namer: goNamer{names: styled}}),
+				namer:           goNamer{names: styled},
 				schemaVersion:   test.schemaVersion,
 			}
 
