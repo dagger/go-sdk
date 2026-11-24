@@ -22,6 +22,7 @@ import (
 
 	"github.com/iancoleman/strcase"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 
 	"github.com/dagger/go-sdk/cmd/dagger-go-sdk-codegen/generator"
@@ -598,9 +599,11 @@ func restoreRequirements(path string, required map[string]string) error {
 // tidy discovers direct OTel imports: resolving those imports independently at
 // latest can select a log API that the SDK in otel-go no longer compiles with.
 // This runtime dependency is independent of the module's schema version.
-// otel-go v1.47.0 requires OpenTelemetry v1.47.0, whose sdk/resource is on
-// semconv v1.43.0, the version the generated code imports: an older
-// OpenTelemetry lacks that package, and tidy would fetch the latest for it.
+//
+// The generated code builds its resource with semconv v1.43.0, the version
+// sdk/resource uses from OpenTelemetry v1.47.0, which otel-go v1.47.0
+// requires: the schema URL matches resource.Default's. OpenTelemetry before
+// v1.46.0 lacks that package.
 func pinGeneratedTelemetry(path string) error {
 	const modulePath = "github.com/dagger/otel-go"
 	const version = "v1.47.0"
@@ -613,43 +616,94 @@ func pinGeneratedTelemetry(path string) error {
 	if err != nil {
 		return err
 	}
-	chosen := func(module, minimum string) bool {
-		for _, replacement := range mod.Replace {
-			if replacement.Old.Path == module {
-				return true
-			}
+	// A replaced otel-go is the user's, and so is the OpenTelemetry it needs.
+	for _, replacement := range mod.Replace {
+		if replacement.Old.Path == modulePath {
+			return nil
 		}
-		for _, requirement := range mod.Require {
-			if requirement.Mod.Path == module && semver.Compare(requirement.Mod.Version, minimum) >= 0 {
-				return true
-			}
-		}
-		return false
 	}
-	if chosen(modulePath, version) {
-		return nil
-	}
-	if err := mod.AddRequire(modulePath, version); err != nil {
+	changed, err := dropStaleOTelLogReplaces(mod)
+	if err != nil {
 		return err
 	}
-	// otel-go's gRPC exporters import googleapis packages that the pre-split
-	// google.golang.org/genproto module also contains, and an old dependency
-	// can bring that module. Go looks for a package in the go.mod requirements
-	// before the whole graph, so requiring the split modules, as otel-go does,
-	// keeps those imports unambiguous.
-	for _, split := range []string{"google.golang.org/genproto/googleapis/api", "google.golang.org/genproto/googleapis/rpc"} {
-		if chosen(split, genprotoVersion) {
-			continue
-		}
-		if err := mod.AddRequire(split, genprotoVersion); err != nil {
+	if !requires(mod, modulePath, version) {
+		if err := mod.AddRequire(modulePath, version); err != nil {
 			return err
 		}
+		changed = true
+		// go mod tidy loads otel-go's tests too, whose OTLP collector
+		// packages import googleapis packages that the pre-split
+		// google.golang.org/genproto module also contains, and an old
+		// dependency can bring that module. Go looks for a package in the
+		// go.mod requirements before the whole graph, so requiring the split
+		// modules, as otel-go does, keeps those imports unambiguous.
+		for _, split := range []string{"google.golang.org/genproto/googleapis/api", "google.golang.org/genproto/googleapis/rpc"} {
+			if requires(mod, split, genprotoVersion) {
+				continue
+			}
+			if err := mod.AddRequire(split, genprotoVersion); err != nil {
+				return err
+			}
+		}
 	}
+	if !changed {
+		return nil
+	}
+	mod.Cleanup()
 	body, err := mod.Format()
 	if err != nil {
 		return err
 	}
 	return writeFile(path, body)
+}
+
+// requires reports whether mod replaces path, or requires it at minimum or
+// later.
+func requires(mod *modfile.File, path, minimum string) bool {
+	for _, replacement := range mod.Replace {
+		if replacement.Old.Path == path {
+			return true
+		}
+	}
+	for _, requirement := range mod.Require {
+		if requirement.Mod.Path == path && semver.Compare(requirement.Mod.Version, minimum) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// staleOTelLogModules are the OpenTelemetry log modules that the Go runtime
+// of released engines pinned to v0.16.0 in every module's go.mod, with
+// replace directives of the module by its own v0 release.
+var staleOTelLogModules = []string{
+	"go.opentelemetry.io/otel/log",
+	"go.opentelemetry.io/otel/sdk/log",
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc",
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp",
+}
+
+// dropStaleOTelLogReplaces removes the v0 pins of staleOTelLogModules. Since
+// OpenTelemetry v1.47.0, which otel-go v1.47.0 requires, otel/internal/global
+// imports otel/log, so a pinned v0 otel/log is an import cycle. A replacement
+// by a local path or another module is the user's, and stays.
+func dropStaleOTelLogReplaces(mod *modfile.File) (bool, error) {
+	var stale []module.Version
+	for _, replacement := range mod.Replace {
+		if !slices.Contains(staleOTelLogModules, replacement.Old.Path) || replacement.New.Path != replacement.Old.Path {
+			continue
+		}
+		if semver.Major(replacement.New.Version) != "v0" {
+			continue
+		}
+		stale = append(stale, replacement.Old)
+	}
+	for _, old := range stale {
+		if err := mod.DropReplace(old.Path, old.Version); err != nil {
+			return false, err
+		}
+	}
+	return len(stale) > 0, nil
 }
 
 // generatedMarker matches the header of a file that a generator owns: Go's

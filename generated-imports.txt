@@ -2,7 +2,9 @@
 # generates for a new module imports: its dispatcher, its module client and
 # its bindings, with the defaults of a new module. Engines read this list to
 # pre-warm the builds of these packages, with dagger.io/dagger at
-# defaultTarget (versions.toml).
+# defaultTarget (versions.toml) and github.com/dagger/otel-go at least at the
+# version generation pins (pinGeneratedTelemetry in
+# helpers/module-codegen/gogenerator/generate.go).
 #
 # The e2e check generatedImportsCheck fails when a newly generated module's
 # code imports anything else, or no longer imports one of these.

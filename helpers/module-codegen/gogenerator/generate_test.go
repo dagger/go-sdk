@@ -311,6 +311,46 @@ func TestPinGeneratedTelemetryPreservesUserChoices(t *testing.T) {
 	}
 }
 
+// Only the v0 self-replaces that released engines wrote are dropped; a user's
+// replacement of a log module by a local path or another version stays.
+func TestPinGeneratedTelemetryDropsStaleOTelLogReplaces(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "go.mod")
+	writeTestFile(t, path, `module example.com/app
+
+go 1.26
+
+require github.com/dagger/otel-go v1.47.0
+
+replace go.opentelemetry.io/otel/log => go.opentelemetry.io/otel/log v0.16.0
+
+replace go.opentelemetry.io/otel/sdk/log => ../sdklog
+
+replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp => go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v1.47.0
+
+replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.16.0 => go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.17.0
+`)
+	if err := pinGeneratedTelemetry(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `module example.com/app
+
+go 1.26
+
+require github.com/dagger/otel-go v1.47.0
+
+replace go.opentelemetry.io/otel/sdk/log => ../sdklog
+
+replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp => go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v1.47.0
+`
+	if string(data) != want {
+		t.Errorf("go.mod =\n%s\nwant\n%s", data, want)
+	}
+}
+
 // A dependency that requires the pre-split genproto module, as old protobuf
 // releases do, must not make the bootstrap's otel-go imports ambiguous.
 func TestPinGeneratedTelemetryTidiesBesidePreSplitGenproto(t *testing.T) {
