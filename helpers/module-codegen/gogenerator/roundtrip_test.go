@@ -26,7 +26,7 @@ func TestGenerateFreshEmbeddedModuleWithoutLocalSDK(t *testing.T) {
 	require.NoError(t, Generate(t.Context(), cfg))
 	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
-	require.Contains(t, string(mod), "github.com/dagger/otel-go v1.43.0")
+	require.Contains(t, string(mod), "github.com/dagger/otel-go v1.47.0")
 	cmd := exec.CommandContext(t.Context(), "go", "run", "-buildvcs=false", "./cmd/hello-dispatch", "engine-call")
 	cmd.Dir = root
 	cmd.Stdin = strings.NewReader(`{"receiverType":"Hello","receiverValue":{},"fnName":"Echo","fnArgs":{"value":"fresh published dependencies"}}`)

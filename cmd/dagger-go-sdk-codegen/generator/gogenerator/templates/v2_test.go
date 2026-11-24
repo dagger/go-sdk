@@ -343,7 +343,7 @@ func buildDispatchCommand(t *testing.T, packageName, fixture string) string {
 func buildModuleDispatchCommand(t *testing.T, mod *v2Module, packageName, fixture string, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.43.0\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hello\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.47.0\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "module.go"), []byte("package "+packageName+"\n"+fixture), 0644))
 	for name, contents := range files {
 		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0755))

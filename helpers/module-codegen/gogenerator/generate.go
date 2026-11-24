@@ -598,10 +598,13 @@ func restoreRequirements(path string, required map[string]string) error {
 // tidy discovers direct OTel imports: resolving those imports independently at
 // latest can select a log API that the SDK in otel-go no longer compiles with.
 // This runtime dependency is independent of the module's schema version.
+// otel-go v1.47.0 requires OpenTelemetry v1.47.0, whose sdk/resource is on
+// semconv v1.43.0, the version the generated code imports: an older
+// OpenTelemetry lacks that package, and tidy would fetch the latest for it.
 func pinGeneratedTelemetry(path string) error {
 	const modulePath = "github.com/dagger/otel-go"
-	const version = "v1.43.0"
-	const genprotoVersion = "v0.0.0-20260226221140-a57be14db171"
+	const version = "v1.47.0"
+	const genprotoVersion = "v0.0.0-20260928230214-8a89bd6388cc"
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err

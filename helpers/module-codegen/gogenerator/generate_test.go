@@ -292,7 +292,7 @@ replace example.com/unused => ./runtime
 func TestPinGeneratedTelemetryPreservesUserChoices(t *testing.T) {
 	for name, goMod := range map[string]string{
 		"replace": "module example.com/app\n\ngo 1.26\n\nreplace github.com/dagger/otel-go => ../telemetry\n",
-		"newer":   "module example.com/app\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.43.1-0.20260917165636-2bca4f5622cf\n",
+		"newer":   "module example.com/app\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.47.1-0.20261201000000-0123456789ab\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "go.mod")
