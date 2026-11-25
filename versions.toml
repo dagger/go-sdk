@@ -1,9 +1,8 @@
 defaultTarget = "v1.0.0-beta.27"
 sourcesFloor = "v1.0.0-beta.26"
-# The dagger/go that generated entrypoint modules build with (daggerGo): the
-# commit on dagger/go's main that brought the per-package build, until a
-# dagger/go release carries it.
-daggerGo = "github.com/dagger/go@79a92beb4df0898400ef7f7a632009035290383b"
+# The dagger/go that generated entrypoint modules build with (daggerGo): its
+# release v0.5.0, the first with gobuild on OpenTelemetry v1.47.0.
+daggerGo = "github.com/dagger/go@262b66dc9683ed6c2bcd55a8f5b85eff62b1c152"
 # The first Dagger release whose manifests list an entrypoint's dependencies.
 # v1.0.0-beta.25 does not.
 daggerGoFloor = "v1.0.0-beta.26"
