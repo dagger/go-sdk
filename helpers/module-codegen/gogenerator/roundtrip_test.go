@@ -26,7 +26,7 @@ func TestGenerateFreshEmbeddedModuleWithoutLocalSDK(t *testing.T) {
 	require.NoError(t, Generate(t.Context(), cfg))
 	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
-	require.Contains(t, string(mod), "github.com/dagger/otel-go v1.47.0")
+	require.Contains(t, string(mod), "github.com/dagger/otel-go v1.47.1-0.20261124213443-e79f0e10530f")
 	cmd := exec.CommandContext(t.Context(), "go", "run", "-buildvcs=false", "./cmd/hello-dispatch", "engine-call")
 	cmd.Dir = root
 	cmd.Stdin = strings.NewReader(`{"receiverType":"Hello","receiverValue":{},"fnName":"Echo","fnArgs":{"value":"fresh published dependencies"}}`)
@@ -36,8 +36,8 @@ func TestGenerateFreshEmbeddedModuleWithoutLocalSDK(t *testing.T) {
 }
 
 // Released engines' Go runtime pinned OpenTelemetry's log modules to v0.16.0
-// in every module's go.mod. With otel-go v1.47.0's OpenTelemetry, that pin is
-// an import cycle, so generation drops it.
+// in every module's go.mod. With the OpenTelemetry v1.47.0 that the pinned
+// otel-go requires, that pin is an import cycle, so generation drops it.
 func TestGenerateDropsStaleOTelLogReplaces(t *testing.T) {
 	root := t.TempDir()
 	source := "package hello\n\ntype Hello struct{}\nfunc (h *Hello) Echo(value string) string { return value }\n"

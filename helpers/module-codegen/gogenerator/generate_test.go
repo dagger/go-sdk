@@ -319,7 +319,7 @@ func TestPinGeneratedTelemetryDropsStaleOTelLogReplaces(t *testing.T) {
 
 go 1.26
 
-require github.com/dagger/otel-go v1.47.0
+require github.com/dagger/otel-go v1.47.1-0.20261124213443-e79f0e10530f
 
 replace go.opentelemetry.io/otel/log => go.opentelemetry.io/otel/log v0.16.0
 
@@ -340,7 +340,7 @@ replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.16.0 => g
 
 go 1.26
 
-require github.com/dagger/otel-go v1.47.0
+require github.com/dagger/otel-go v1.47.1-0.20261124213443-e79f0e10530f
 
 replace go.opentelemetry.io/otel/sdk/log => ../sdklog
 

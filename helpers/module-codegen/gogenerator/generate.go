@@ -601,12 +601,14 @@ func restoreRequirements(path string, required map[string]string) error {
 // This runtime dependency is independent of the module's schema version.
 //
 // The generated code builds its resource with semconv v1.43.0, the version
-// sdk/resource uses from OpenTelemetry v1.47.0, which otel-go v1.47.0
-// requires: the schema URL matches resource.Default's. OpenTelemetry before
-// v1.46.0 lacks that package.
+// sdk/resource uses from OpenTelemetry v1.47.0, which this otel-go requires:
+// the schema URL matches resource.Default's. OpenTelemetry before v1.46.0
+// lacks that package. The pin is otel-go's main after v1.47.0, not the
+// v1.47.0 tag: the tag's fallback resource still uses semconv v1.39.0, whose
+// schema URL conflicts with resource.Default's.
 func pinGeneratedTelemetry(path string) error {
 	const modulePath = "github.com/dagger/otel-go"
-	const version = "v1.47.0"
+	const version = "v1.47.1-0.20261124213443-e79f0e10530f"
 	const genprotoVersion = "v0.0.0-20260928230214-8a89bd6388cc"
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -684,9 +686,10 @@ var staleOTelLogModules = []string{
 }
 
 // dropStaleOTelLogReplaces removes the v0 pins of staleOTelLogModules. Since
-// OpenTelemetry v1.47.0, which otel-go v1.47.0 requires, otel/internal/global
-// imports otel/log, so a pinned v0 otel/log is an import cycle. A replacement
-// by a local path or another module is the user's, and stays.
+// OpenTelemetry v1.47.0, which pinGeneratedTelemetry's otel-go requires,
+// otel/internal/global imports otel/log, so a pinned v0 otel/log is an import
+// cycle. A replacement by a local path or another module is the user's, and
+// stays.
 func dropStaleOTelLogReplaces(mod *modfile.File) (bool, error) {
 	var stale []module.Version
 	for _, replacement := range mod.Replace {
