@@ -109,6 +109,8 @@ the module's schema names (`ModuleSource.naming`) and its Go identifiers
 Each go-sdk release targets one Dagger release, v1.0.0-beta.27 today.
 A module with the Dang entrypoint and unified clients pins
 `dagger.io/dagger` in `go.mod` to exactly that release.
+The library of v1.0.0-beta.29 and later needs Go 1.27, so generation for
+such a target runs on Go 1.27 and raises an older `go` directive to 1.27.
 Its generated entrypoint declares the release to the engine, in the
 `DAGGER_CLIENT_VERSION` variable of the process that runs the module; a
 generated standalone client with a target announces it when it starts a

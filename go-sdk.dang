@@ -466,7 +466,13 @@ type GoSdk {
         targetRelease("scope " + JSON.encode(goScope), versions)
       } else { "" }
       let inputs = generationInputs(scoped, [".dagger-generated.json", "internal/dagger/clients/*/.dagger-generated.json"])
-      let base = clientCodegenBase(scoped.file("go.mod")).withDirectory(
+      # Without a pin, each embedded client pins the library of its own engine
+      # version; the newest of them decides the Go version, as a target's
+      # release does.
+      let libraryRelease = if (pinned != "") { pinned } else {
+        clients.reduce("") { newest, client => if (newest == "" or releasePrecedes(newest, client.engineVersion)) { client.engineVersion } else { newest } }
+      }
+      let base = clientCodegenBase(scoped.file("go.mod"), libraryRelease).withDirectory(
         "/out",
         inputs,
       ).withNewFile("/removed-clients.txt", "")
@@ -858,7 +864,7 @@ type GoSdk {
     let prefix = if (moduleRoot == ".") { "" } else { moduleRoot + "/" }
     let workspaceRoot = ws.withWorkdir(goRoot)
     let goVersion = if (exists(workspaceRoot, "go.mod")) {
-      requiredGoVersion(workspaceRoot.file("go.mod"))
+      requiredGoVersion(workspaceRoot.file("go.mod"), target)
     } else { defaultGoVersion }
     # The images the entrypoint names come from versions.toml, so generated
     # code depends on this SDK and the module alone, never on when or where
@@ -1255,6 +1261,14 @@ type GoSdk {
   let defaultGoVersion: String! = "1.27"
 
   """
+  The first Dagger release whose Go library needs defaultGoVersion. A module
+  that targets it or a later release generates on at least
+  defaultGoVersion, so go mod tidy raises an older go directive instead of
+  refusing the library.
+  """
+  let defaultGoVersionFloor: String! = "v1.0.0-beta.29"
+
+  """
   Build the standalone client generator. It runs nested in the session, to
   format identifiers through the engine for schemas at or past
   v1.0.0-beta.26.
@@ -1270,15 +1284,16 @@ type GoSdk {
       .withExec(["go", "build", "-o", "/usr/local/bin/dagger-go-sdk-codegen", "."])
   }
 
-  """Use the newer of the consumer Go directives and the generator's minimum."""
-  let requiredGoVersion(goMod: File!): String! {
+  """Use the newer of the consumer Go directives and the minimum the targeted release needs."""
+  let requiredGoVersion(goMod: File!, libraryRelease: String!): String! {
+    let minimum = if (libraryRelease != "" and releasePrecedes(libraryRelease, defaultGoVersionFloor) == false) { defaultGoVersion } else { minimumGoVersion }
     codegenBuilder.withFile("/consumer.go.mod", goMod)
-      .withExec(["dagger-go-sdk-codegen", "go-version", "--go-mod", "/consumer.go.mod", "--minimum", minimumGoVersion])
+      .withExec(["dagger-go-sdk-codegen", "go-version", "--go-mod", "/consumer.go.mod", "--minimum", minimum])
       .stdout.trimSpace
   }
 
-  let clientCodegenBase(goMod: File!): Container! {
-    let goVersion = requiredGoVersion(goMod)
+  let clientCodegenBase(goMod: File!, libraryRelease: String!): Container! {
+    let goVersion = requiredGoVersion(goMod, libraryRelease)
     container.from("golang:" + goVersion + "-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))

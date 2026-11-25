@@ -316,7 +316,7 @@ type E2e {
       ],
     )
     let out = container
-      .from("golang:1.26-alpine")
+      .from("golang:1.27-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
