@@ -950,7 +950,7 @@ type GoSdk {
     # The entrypoint's dependencies, which manifest version 2 lists without a
     # runtime; sdk-helpers writes dependencies only with one.
     let tables = deps.map { dep =>
-      "\n[[dependencies]]\n  name = " + JSON.encode(dep.moduleOriginalName) + "\n  source = " + JSON.encode(dependencySource(dep, scopePath)) + "\n"
+      "\n[[dependencies]]\nname = " + JSON.encode(dep.moduleOriginalName) + "\nsource = " + JSON.encode(dependencySource(dep, scopePath)) + "\n"
     }.join("")
     mergeGenerated(includedManifest, directory.withNewFile("dagger-module.toml", includedManifest.file("dagger-module.toml").contents + tables))
   }

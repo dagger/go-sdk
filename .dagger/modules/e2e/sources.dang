@@ -44,7 +44,7 @@ type SourcesChecks {
     }
     assert("the manifest is not the entrypoint manifest with dagger/go") {
       ready.file("dagger-module.toml").contents.hasPrefix(
-        "name = \"include-app\"\ninclude = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n\n[[dependencies]]\n  name = \"go\"\n  source = \"github.com/dagger/go@")
+        "name = \"include-app\"\ninclude = [\"../lib/go.mod\", \"../lib/greet/*.go\", \"../lib/greet/*.h\", \"../lib/greet/*.s\", \"../lib/greet/*.syso\", \"../lib/greet/greeting.txt\", \"!../**/*_test.go\", \"**/*_test.go\"]\n\n[entrypoint]\nkind = \"dang\"\nsource = \"./internal/dagger/entrypoint\"\n\n[[dependencies]]\nname = \"go\"\nsource = \"github.com/dagger/go@")
     }
     assert("generation changed main.go") {
       ready.file("main.go").contents == input.file("main.go").contents

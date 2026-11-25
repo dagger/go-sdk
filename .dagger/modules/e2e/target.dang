@@ -321,7 +321,7 @@ type TargetChecks {
     assert("a new manifest does not declare the SDK's release:\n" + first.file("dagger-module.toml").contents) {
       first.file("dagger-module.toml").contents.contains("engineVersion = \"" + sdkTarget + "\"\n")
     }
-    let declared = "name = \"" + name + "\"\nengineVersion = \"v1.0.0-beta.20\"\n\n[runtime]\n  source = \"go\"\n"
+    let declared = "name = \"" + name + "\"\nengineVersion = \"v1.0.0-beta.20\"\n\n[runtime]\nsource = \"go\"\n"
     let kept = sdk.generateScope(ws: first.withNewFile("dagger-module.toml", declared), isModule: true, name: name, clients: [])
     assert("an existing manifest did not keep its engineVersion:\n" + kept.file("dagger-module.toml").contents) {
       kept.file("dagger-module.toml").contents == declared

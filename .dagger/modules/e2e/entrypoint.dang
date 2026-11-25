@@ -33,7 +33,7 @@ type EntrypointChecks {
   """
   let entrypointManifest(name: String!): String! {
     "name = " + JSON.encode(name) +
-      "\ninclude = []\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+      "\ninclude = []\n\n[entrypoint]\nkind = \"dang\"\nsource = \"./internal/dagger/entrypoint\"\n"
   }
 
   """
@@ -43,7 +43,7 @@ type EntrypointChecks {
   """
   let daggerGoManifest(ws: Workspace!, name: String!): String! {
     let versions = Dagger.json.withContents(JSON.encode(TOML.decode(ws.file("/versions.toml").contents)) :: Dagger.JSON!)
-    entrypointManifest(name) + "\n[[dependencies]]\n  name = \"go\"\n  source = " + JSON.encode(versions.field(["daggerGo"]).asString) + "\n"
+    entrypointManifest(name) + "\n[[dependencies]]\nname = \"go\"\nsource = " + JSON.encode(versions.field(["daggerGo"]).asString) + "\n"
   }
 
   """
