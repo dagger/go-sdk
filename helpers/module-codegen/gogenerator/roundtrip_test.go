@@ -26,13 +26,36 @@ func TestGenerateFreshEmbeddedModuleWithoutLocalSDK(t *testing.T) {
 	require.NoError(t, Generate(t.Context(), cfg))
 	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	require.NoError(t, err)
-	require.Contains(t, string(mod), "github.com/dagger/otel-go v1.43.0")
+	require.Contains(t, string(mod), "github.com/dagger/otel-go v1.47.1-0.20261124213443-e79f0e10530f")
 	cmd := exec.CommandContext(t.Context(), "go", "run", "-buildvcs=false", "./cmd/hello-dispatch", "engine-call")
 	cmd.Dir = root
 	cmd.Stdin = strings.NewReader(`{"receiverType":"Hello","receiverValue":{},"fnName":"Echo","fnArgs":{"value":"fresh published dependencies"}}`)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	require.JSONEq(t, `"fresh published dependencies"`, strings.TrimSpace(string(out)))
+}
+
+// Released engines' Go runtime pinned OpenTelemetry's log modules to v0.16.0
+// in every module's go.mod. With the OpenTelemetry v1.47.0 that the pinned
+// otel-go requires, that pin is an import cycle, so generation drops it.
+func TestGenerateDropsStaleOTelLogReplaces(t *testing.T) {
+	root := t.TempDir()
+	source := "package hello\n\ntype Hello struct{}\nfunc (h *Hello) Echo(value string) string { return value }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0644))
+	goMod := "module dagger/hello\n\ngo 1.26\n\nreplace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc => go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.16.0\n\nreplace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp => go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.16.0\n\nreplace go.opentelemetry.io/otel/log => go.opentelemetry.io/otel/log v0.16.0\n\nreplace go.opentelemetry.io/otel/sdk/log => go.opentelemetry.io/otel/sdk/log v0.16.0\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0644))
+	schema := moduleContextSchema(t)
+	cfg := GenerateConfig{ModuleRoot: root, ModuleName: "hello", SchemaPath: schema, SchemaVersion: "v1.0.0-beta.16", DaggerVersion: "v1.0.0-beta.14", GoImage: "golang:1.26-alpine"}
+	require.NoError(t, Generate(t.Context(), cfg))
+	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	require.NoError(t, err)
+	require.NotContains(t, string(mod), "v0.16.0")
+	cmd := exec.CommandContext(t.Context(), "go", "run", "-buildvcs=false", "./cmd/hello-dispatch", "engine-call")
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader(`{"receiverType":"Hello","receiverValue":{},"fnName":"Echo","fnArgs":{"value":"no stale pins"}}`)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.JSONEq(t, `"no stale pins"`, strings.TrimSpace(string(out)))
 }
 
 func TestGenerateFreshUnifiedModuleWithoutLocalSDK(t *testing.T) {

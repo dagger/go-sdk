@@ -292,7 +292,7 @@ replace example.com/unused => ./runtime
 func TestPinGeneratedTelemetryPreservesUserChoices(t *testing.T) {
 	for name, goMod := range map[string]string{
 		"replace": "module example.com/app\n\ngo 1.26\n\nreplace github.com/dagger/otel-go => ../telemetry\n",
-		"newer":   "module example.com/app\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.43.1-0.20260917165636-2bca4f5622cf\n",
+		"newer":   "module example.com/app\n\ngo 1.26\n\nrequire github.com/dagger/otel-go v1.47.1-0.20261201000000-0123456789ab\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "go.mod")
@@ -308,6 +308,46 @@ func TestPinGeneratedTelemetryPreservesUserChoices(t *testing.T) {
 				t.Errorf("user-selected telemetry changed:\n%s", data)
 			}
 		})
+	}
+}
+
+// Only the v0 self-replaces that released engines wrote are dropped; a user's
+// replacement of a log module by a local path or another version stays.
+func TestPinGeneratedTelemetryDropsStaleOTelLogReplaces(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "go.mod")
+	writeTestFile(t, path, `module example.com/app
+
+go 1.26
+
+require github.com/dagger/otel-go v1.47.1-0.20261124213443-e79f0e10530f
+
+replace go.opentelemetry.io/otel/log => go.opentelemetry.io/otel/log v0.16.0
+
+replace go.opentelemetry.io/otel/sdk/log => ../sdklog
+
+replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp => go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v1.47.0
+
+replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.16.0 => go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.17.0
+`)
+	if err := pinGeneratedTelemetry(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `module example.com/app
+
+go 1.26
+
+require github.com/dagger/otel-go v1.47.1-0.20261124213443-e79f0e10530f
+
+replace go.opentelemetry.io/otel/sdk/log => ../sdklog
+
+replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp => go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v1.47.0
+`
+	if string(data) != want {
+		t.Errorf("go.mod =\n%s\nwant\n%s", data, want)
 	}
 }
 

@@ -2,7 +2,11 @@
 # generates for a new module imports: its dispatcher, its module client and
 # its bindings, with the defaults of a new module. Engines read this list to
 # pre-warm the builds of these packages, with dagger.io/dagger at
-# defaultTarget (versions.toml).
+# defaultTarget (versions.toml). A generated module also requires
+# github.com/dagger/otel-go at least at the version that
+# pinGeneratedTelemetry (helpers/module-codegen/gogenerator/generate.go)
+# names, so the pre-warmed builds match only when the engine's seed resolves
+# that otel-go too.
 #
 # The e2e check generatedImportsCheck fails when a newly generated module's
 # code imports anything else, or no longer imports one of these.
@@ -14,5 +18,5 @@ github.com/dagger/querybuilder
 github.com/vektah/gqlparser/v2/gqlerror
 go.opentelemetry.io/otel
 go.opentelemetry.io/otel/sdk/resource
-go.opentelemetry.io/otel/semconv/v1.40.0
+go.opentelemetry.io/otel/semconv/v1.43.0
 go.opentelemetry.io/otel/trace
