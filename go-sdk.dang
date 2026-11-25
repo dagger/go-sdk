@@ -5,7 +5,7 @@ type GoSdk {
   """
   The Dagger release the module's generated code targets, such as
   v1.0.0-beta.26; the v prefix and build metadata are optional. Empty means
-  the release this Go SDK is built for, v1.0.0-beta.27. A module with a
+  the release this Go SDK is built for, v1.0.0-beta.30. A module with a
   Dang entrypoint and unified clients pins dagger.io/dagger to exactly the
   targeted release. An engine update leaves that core library and the
   module's own bindings unchanged. Dependency clients read the running
@@ -19,7 +19,7 @@ type GoSdk {
   development exception that generation reports. The setting pins a
   release from v1.0.0-beta.26, the first whose Go library spells its
   identifiers as the engine names them, up to the release after the SDK's,
-  the release in flight (v1.0.0-beta.28 today); outside that range,
+  the release in flight (v1.0.0-beta.31 today); outside that range,
   generation refuses it. A Dang entrypoint with embedded bindings targets
   the same release: its bindings come from that release's schema, and its
   entrypoint declares it. The Go runtime refuses this setting: a new

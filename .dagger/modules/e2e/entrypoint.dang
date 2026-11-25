@@ -11,7 +11,7 @@ type EntrypointChecks {
   let dangConfigPath: String! = "internal/dagger/entrypoint/dang.toml"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.27"
+  let sdkTarget: String! = "v1.0.0-beta.30"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
@@ -416,7 +416,7 @@ type EntrypointChecks {
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/probe", ws.directory("/" + fixtureRoot + "/probe"))
       .withDirectory("/workspace", ws.directory("/", include: include.map { dir => dir + "/**" }))
-      .withNewFile("/probe/go.mod", "module example.com/probe\n\ngo 1.27\n\nrequire dagger.io/dagger v1.0.0-beta.27\n")
+      .withNewFile("/probe/go.mod", "module example.com/probe\n\ngo 1.27\n\nrequire dagger.io/dagger v1.0.0-beta.30\n")
       .withWorkdir("/probe")
       .withExec(["go", "mod", "tidy"])
       .withEnvVariable("MODULE_PATH", path)
