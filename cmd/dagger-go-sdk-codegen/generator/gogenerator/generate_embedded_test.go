@@ -37,6 +37,7 @@ func TestGenerateEmbeddedClientUsesModuleBootstrap(t *testing.T) {
 	require.Contains(t, source, "func Connect() *Client")
 	require.NotContains(t, source, "func Connect(ctx context.Context")
 	require.Contains(t, source, "unavailableGraphQLClient")
+	require.Contains(t, source, "MaxIdleConnsPerHost: 100,")
 
 	_, err = fs.Stat(state.Overlay, "go.mod")
 	require.ErrorIs(t, err, fs.ErrNotExist)
