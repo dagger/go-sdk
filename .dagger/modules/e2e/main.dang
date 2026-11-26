@@ -37,7 +37,7 @@ type E2e {
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.27"
+  let sdkTarget: String! = "v1.0.0-beta.30"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
@@ -316,7 +316,7 @@ type E2e {
       ],
     )
     let out = container
-      .from("golang:1.26-alpine")
+      .from("golang:1.27-alpine")
       .withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))

@@ -31,7 +31,7 @@ type UnifiedChecks {
   }
 
   let probe(ws: Workspace!, greeting: String!, repo: Service): String! {
-    let base = container.from("golang:1.26-alpine").withoutEntrypoint
+    let base = container.from("golang:1.27-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/workspace", ws.directory("/"))
@@ -83,7 +83,7 @@ type UnifiedChecks {
       ws: input, isModule: false, name: "unified-standalone",
       clients: [ws.moduleSource("/" + fixtures + "/client/dep")],
     )
-    let called = container.from("golang:1.26-alpine").withoutEntrypoint
+    let called = container.from("golang:1.27-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/src", generated.directory("."))

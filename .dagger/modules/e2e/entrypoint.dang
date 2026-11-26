@@ -11,7 +11,7 @@ type EntrypointChecks {
   let dangConfigPath: String! = "internal/dagger/entrypoint/dang.toml"
 
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
-  let sdkTarget: String! = "v1.0.0-beta.27"
+  let sdkTarget: String! = "v1.0.0-beta.30"
 
   let exists(ws: Workspace!, path: String!): Boolean! {
     ws.directory(".", include: [path]).exists(path)
@@ -33,7 +33,7 @@ type EntrypointChecks {
   """
   let entrypointManifest(name: String!): String! {
     "name = " + JSON.encode(name) +
-      "\ninclude = []\n\n[entrypoint]\n  kind = \"dang\"\n  source = \"./internal/dagger/entrypoint\"\n"
+      "\ninclude = []\n\n[entrypoint]\nkind = \"dang\"\nsource = \"./internal/dagger/entrypoint\"\n"
   }
 
   """
@@ -43,7 +43,7 @@ type EntrypointChecks {
   """
   let daggerGoManifest(ws: Workspace!, name: String!): String! {
     let versions = Dagger.json.withContents(JSON.encode(TOML.decode(ws.file("/versions.toml").contents)) :: Dagger.JSON!)
-    entrypointManifest(name) + "\n[[dependencies]]\n  name = \"go\"\n  source = " + JSON.encode(versions.field(["daggerGo"]).asString) + "\n"
+    entrypointManifest(name) + "\n[[dependencies]]\nname = \"go\"\nsource = " + JSON.encode(versions.field(["daggerGo"]).asString) + "\n"
   }
 
   """
@@ -416,7 +416,7 @@ type EntrypointChecks {
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/probe", ws.directory("/" + fixtureRoot + "/probe"))
       .withDirectory("/workspace", ws.directory("/", include: include.map { dir => dir + "/**" }))
-      .withNewFile("/probe/go.mod", "module example.com/probe\n\ngo 1.27\n\nrequire dagger.io/dagger v1.0.0-beta.27\n")
+      .withNewFile("/probe/go.mod", "module example.com/probe\n\ngo 1.27\n\nrequire dagger.io/dagger v1.0.0-beta.30\n")
       .withWorkdir("/probe")
       .withExec(["go", "mod", "tidy"])
       .withEnvVariable("MODULE_PATH", path)
@@ -709,7 +709,7 @@ type EntrypointChecks {
     assert("regeneration changed the starter's compiler or files") {
       repeated.changes(generated).isEmpty
     }
-    let built = container.from("golang:1.26-alpine").withoutEntrypoint
+    let built = container.from("golang:1.27-alpine").withoutEntrypoint
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/workspace", generated.directory(".")).withWorkdir("/workspace")
@@ -727,7 +727,7 @@ type EntrypointChecks {
     let name = "compiler-version"
     let scopePath = outputRoot + "/" + name
     let source = "package compiler_version\n\nimport \"runtime\"\n\ntype CompilerVersion struct{}\nfunc (m *CompilerVersion) Version() string { return runtime.Version() }\n"
-    let directives = ["go 1.26.8\n", "go 1.26.7\ntoolchain go1.26.8\n"]
+    let directives = ["go 1.27.1\n", "go 1.27.0\ntoolchain go1.27.1\n"]
     directives.each { directive =>
       let input = ws.withWorkdir(scopePath)
         .withNewFile("go.mod", "module example.com/compiler-version\n\n" + directive)
@@ -745,9 +745,9 @@ type EntrypointChecks {
       }
       let entrypoint = generated.file("internal/dagger/entrypoint/main.dang").contents
       assert("the emitted dispatch compiler lost the selected patch version") {
-        entrypoint.contains(".from(\"golang:1.26.8-alpine\")")
+        entrypoint.contains(".from(\"golang:1.27.1-alpine\")")
       }
-      let dispatcher = container.from("golang:1.26.8-alpine").withoutEntrypoint
+      let dispatcher = container.from("golang:1.27.1-alpine").withoutEntrypoint
         .withEnvVariable("CGO_ENABLED", "0")
         .withEnvVariable("GOTOOLCHAIN", "local")
         .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
@@ -765,7 +765,7 @@ type EntrypointChecks {
         experimentalPrivilegedNesting: true,
       ).stdout.trimSpace
       assert("the generated dispatcher ran on " + version) {
-        version == "\"go1.26.8\""
+        version == "\"go1.27.1\""
       }
     }
     null
