@@ -36,6 +36,10 @@ type E2e {
   let outputRoot: String! = ".dagger/modules/e2e/out"
   let clientTargetPath: String! = fixtureRoot + "/client/dep"
   let secondClientTargetPath: String! = fixtureRoot + "/client/app"
+  # dagger/dagger v1.0.0-beta.29, whose cmd/introspect and cmd/codegen
+  # generate-library write the reference schema and core bindings for
+  # coreParityCheck.
+  let coreParityRef: String! = "84ab48ad7507da275a9b71f2e221fdf85edd62ca"
   """The release this Go SDK is built for: defaultTarget in go-sdk.dang."""
   let sdkTarget: String! = "v1.0.0-beta.30"
 
@@ -485,6 +489,84 @@ type E2e {
       }
     }
     null
+  }
+
+  """
+  dagger-go-sdk-codegen core writes the same core and dag bindings as
+  dagger/dagger's cmd/codegen generate-library, for the beta.14 schema fixture
+  and for the schema of coreParityRef's release. For that release, its core,
+  dag and codecs bindings are also those that dagger/dagger commits, apart
+  from one decoder for each naming API type, which codecs.gen.go must have.
+  """
+  coreParityCheck(ws: Workspace!): Void @check {
+    let golang = container
+      .from("golang:1.27-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+    let generator = golang
+      .withDirectory("/src", ws.directory("/cmd/dagger-go-sdk-codegen"))
+      .withWorkdir("/src")
+      .withExec(["go", "build", "-o", "/out/dagger-go-sdk-codegen", "."])
+      .file("/out/dagger-go-sdk-codegen")
+    let release = git("https://github.com/dagger/dagger").commit(coreParityRef).tree
+    let reference = golang
+      .withDirectory("/dagger", release)
+      .withWorkdir("/dagger")
+      .withExec(["go", "build", "-o", "/usr/local/bin/codegen", "./cmd/codegen"])
+      .withExec(["go", "build", "-o", "/usr/local/bin/introspect", "./cmd/introspect"])
+      .withExec(["introspect", "introspect"], redirectStdout: "/release.json")
+      .withFile("/usr/local/bin/dagger-go-sdk-codegen", generator)
+      # Neither generator may pass by leaving files it did not write.
+      .withExec(["rm", "sdk/go/core/core.gen.go", "sdk/go/dag/dag.gen.go"])
+      .withExec(["mkdir", "-p", "/go-sdk/core", "/go-sdk/dag"])
+      .withExec(["cp", "sdk/go/go.mod", "/go-sdk/go.mod"])
+    let beta14 = ws.file("/cmd/dagger-go-sdk-codegen/generator/gogenerator/testdata/core/schema.json")
+    coreBindings(reference, beta14).sync
+    let generated = coreBindings(reference, reference.file("/release.json"))
+    let codecs = generated.file("core/codecs.gen.go").contents
+    # dagger/dagger commits codecs.gen.go from this generator by hand, and its
+    # v1.0.0-beta.29 copy predates the naming API. This generator must write
+    # each naming decoder once; the release's copy may lack it.
+    namingDecoders.each { name =>
+      assert("codecs.gen.go has no canonical " + name + " decoder") { codecs.contains(decoder(name)) }
+    }
+    generated
+      .withDirectory("/release", release.directory("sdk/go"))
+      .withNewFile("/release-codecs.go", withoutNamingDecoders(release.file("sdk/go/core/codecs.gen.go").contents))
+      .withNewFile("/codecs.gen.go", withoutNamingDecoders(codecs))
+      .withExec(["diff", "-u", "/release/core/core.gen.go", "core/core.gen.go"])
+      .withExec(["diff", "-u", "/release/dag/dag.gen.go", "dag/dag.gen.go"])
+      .withExec(["diff", "-u", "/release-codecs.go", "/codecs.gen.go"])
+      .sync
+    null
+  }
+
+  let namingDecoders: [String!]! = ["Identifier", "IdentifierWord", "ModuleNaming", "Naming", "NamingTerm"]
+
+  """codecs without one copy of each naming decoder."""
+  let withoutNamingDecoders(codecs: String!): String! {
+    namingDecoders.reduce(codecs) { text, name => text.replace(decoder(name), "", count: 1) }
+  }
+
+  """Generate the core bindings of schema with both generators and compare them."""
+  let coreBindings(reference: Container!, schema: File!): Container! {
+    reference
+      .withFile("/schema.json", schema)
+      .withExec(["codegen", "generate-library", "--output", "./sdk/go", "--introspection-json-path", "/schema.json"])
+      .withWorkdir("/go-sdk")
+      # dagger-go-sdk-codegen names identifiers through the session's
+      # Query.naming at the schema's version; generate-library compiles
+      # those rules in.
+      .withExec(["dagger-go-sdk-codegen", "core", "--output", "./core", "--dag-output", "./dag", "--introspection-json-path", "/schema.json"],
+        experimentalPrivilegedNesting: true)
+      .withExec(["diff", "-u", "/dagger/sdk/go/core/core.gen.go", "core/core.gen.go"])
+      .withExec(["diff", "-u", "/dagger/sdk/go/dag/dag.gen.go", "dag/dag.gen.go"])
+  }
+
+  """The codec that decodes an ID into a core object of type name."""
+  let decoder(name: String!): String! {
+    "func (r *" + name + ") UnmarshalJSON(data []byte) error {\n\tvar id string\n\tif err := json.Unmarshal(data, &id); err != nil {\n\t\treturn err\n\t}\n\t*r = " + name + "{query: selectNode(initRoot().QueryBuilder(), id, \"" + name + "\")}\n\treturn nil\n}\n\n"
   }
 
   """

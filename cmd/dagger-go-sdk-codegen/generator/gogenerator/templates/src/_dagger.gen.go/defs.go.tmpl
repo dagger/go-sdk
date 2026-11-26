@@ -242,6 +242,10 @@ func getClientParams() (graphql.Client, *querybuilder.Selection) {
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 			return net.Dial("tcp", host)
 		},
+		// Every request goes to this one host. Keep as many idle connections
+		// for it as Go's default transport keeps in all, not its default of
+		// 2 per host, so concurrent requests reuse them instead of dialing.
+		MaxIdleConnsPerHost: 100,
 	}
 	httpClient := &http.Client{
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -350,6 +354,24 @@ func Load[T Loadable[T]](ctx context.Context, root *{{if IsModuleCode}}Client{{e
 
 	return zero.WithGraphQLQuery(selectNode(root.query, id, expectedType)), nil
 }
+{{- if IsCoreLibrary }}
+
+// LoadedNode is the constraint for objects Loaded can build: every generated
+// object client type with an ID.
+type LoadedNode[T any] interface {
+	Loadable[T]
+	withLoadedID(*querybuilder.Selection, ID) T
+}
+
+// Loaded returns the object whose ID is id, as Ref does, knowing that ID:
+// passing it as an argument passes id as it is, without asking the engine for
+// it again. id is one the engine returned, such as each ID a list field
+// returns: a handle to a result the engine already evaluated.
+func Loaded[T LoadedNode[T]](root *Query, id ID) T {
+	var zero T
+	return zero.withLoadedID(selectNode(root.query, id, zero.XXX_GraphQLType()), id)
+}
+{{- end }}
 {{ else }}
 // Ref returns a lazy reference to a node by its ID without making a
 // network call. The returned value can be used to chain further queries.
