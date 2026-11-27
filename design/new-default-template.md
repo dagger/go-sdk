@@ -29,11 +29,15 @@ still gives a blank start.
 
 ## The template
 
+By default, `dagger module init go` creates a module with unified clients and
+without the global `dag` client. For such a module, the template renders this
+file:
+
 ```go
-package main
+package {{ .ModulePackage }}
 
 import (
-	"{{ .ModuleImport }}/internal/dagger"
+	"dagger.io/dagger/core"
 )
 
 type {{ .ModuleType }} struct {
@@ -41,35 +45,46 @@ type {{ .ModuleType }} struct {
 	BaseImageAddress string
 
 	// +private
-	Source *dagger.Directory
+	Source *core.Directory
 }
 
 func New(
-	ws *dagger.Workspace,
+	ws *core.Workspace,
 	// +default="alpine:3.21"
 	baseImageAddress string,
 ) *{{ .ModuleType }} {
 	return &{{ .ModuleType }}{
 		BaseImageAddress: baseImageAddress,
-		Source: ws.Directory("/", dagger.WorkspaceDirectoryOpts{
+		Source: ws.Directory("/", core.WorkspaceDirectoryOpts{
 			Exclude: []string{"**/.git", "**/.dagger", "**/vendor"},
 		}),
 	}
 }
 
 // A container with the source mounted, ready to build on.
-func (m *{{ .ModuleType }}) Container() *dagger.Container {
-	return dag.Container().
+func (m *{{ .ModuleType }}) Container() *core.Container {
+	return core.NewContainer().
 		From(m.BaseImageAddress).
 		WithDirectory("/src", m.Source).
 		WithWorkdir("/src")
 }
 ```
 
+With `globalClient = true`, `Container()` calls `dag.Container()`.
+The generated `dagger.Container` is a type alias of `core.Container`, so the
+template still spells the return type `*core.Container`.
+
+With `unifiedClients = false`, the module has no `dagger.io/dagger/core`
+package.
+The template then imports `{{ .ModuleImport }}/internal/dagger` and spells
+every type `dagger.*`.
+`Container()` calls `dag.Container()` with the global client and
+`dagger.Connect().Container()` without it.
+
 ## What each function does
 
 - **`New`** takes the `Workspace` (as `ws`) and the base image to build on. It
-  loads the workspace root with `ws.Directory("/", dagger.WorkspaceDirectoryOpts{Exclude: ...})`,
+  loads the workspace root with `ws.Directory("/", core.WorkspaceDirectoryOpts{Exclude: ...})`,
   leaving out directories that shouldn't go into the build. The parameter is
   named `ws`, not `workspace`, because a `workspace` constructor arg generates a
   `--workspace` flag that collides with the top-level `--workspace` flag and

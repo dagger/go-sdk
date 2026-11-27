@@ -715,8 +715,8 @@ type EntrypointChecks {
     let generated = goSdk(dangEntrypoint: true).generateScope(
       ws: input, isModule: true, name: "entrypoint-starter", clients: [],
     )
-    assert("the starter does not import its own module client") {
-      generated.file("main.go").contents.contains("\"example.com/entrypoint-starter/internal/dagger\"")
+    assert("the starter does not import the core types") {
+      generated.file("main.go").contents.contains("\"dagger.io/dagger/core\"")
     }
     assert("the parent go.mod changed") {
       generated.withWorkdir(goScopePath).file("go.mod").contents == input.withWorkdir(goScopePath).file("go.mod").contents

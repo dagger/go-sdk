@@ -98,7 +98,7 @@ func TestRunDefaultClientCallFollowsLayout(t *testing.T) {
 		{[]string{"--importable-package", "--unified-clients=false", "--global-client=false"}, "return dagger.Connect().Container().", false},
 		{[]string{"--importable-package", "--global-client"}, "return dag.Container().", false},
 		{[]string{"--importable-package", "--unified-clients"}, "return core.NewContainer().", true},
-		{[]string{"--importable-package", "--unified-clients", "--global-client"}, "return dag.Container().", false},
+		{[]string{"--importable-package", "--unified-clients", "--global-client"}, "return dag.Container().", true},
 	} {
 		out := t.TempDir()
 		args := append(append([]string{}, tc.flags...), "hello-world", filepath.Join("..", "..", "templates", "default"), out)
