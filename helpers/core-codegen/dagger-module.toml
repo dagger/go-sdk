@@ -1,0 +1,9 @@
+name = "core-codegen"
+engineVersion = "v1.0.0-0"
+
+[runtime]
+source = "dang"
+
+[[dependencies]]
+name = "go"
+source = "github.com/dagger/go@v0.5.0"

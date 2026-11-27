@@ -570,6 +570,37 @@ type E2e {
   }
 
   """
+  The core-codegen module writes the core and dag bindings that
+  dagger/dagger commits at coreParityRef, from that release's schema.
+  """
+  coreCodegenModuleCheck: Void @check {
+    let golang = container
+      .from("golang:1.27-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+    let release = git("https://github.com/dagger/dagger").commit(coreParityRef).tree
+    let schema = golang
+      .withDirectory("/dagger", release)
+      .withWorkdir("/dagger")
+      .withExec(["go", "build", "-o", "/usr/local/bin/introspect", "./cmd/introspect"])
+      .withExec(["introspect", "introspect"], redirectStdout: "/release.json")
+      .file("/release.json")
+    # The module may not pass by leaving the committed files in place.
+    let sdk = release.directory("sdk/go")
+      .withoutFile("core/core.gen.go")
+      .withoutFile("dag/dag.gen.go")
+    let generated = coreCodegen.core(golang.withDirectory("/sdk", sdk).withWorkdir("/sdk"), schema)
+    golang
+      .withMountedDirectory("/release", release.directory("sdk/go"))
+      .withMountedDirectory("/generated", generated)
+      .withExec(["diff", "-u", "/release/core/core.gen.go", "/generated/core/core.gen.go"])
+      .withExec(["diff", "-u", "/release/dag/dag.gen.go", "/generated/dag/dag.gen.go"])
+      .sync
+    null
+  }
+
+  """
   The unit tests of every helper pass. The entrypoint contract check embeds
   Dang, whose parser needs cgo. The module generator's tests generate new
   modules, which declare Go 1.27.

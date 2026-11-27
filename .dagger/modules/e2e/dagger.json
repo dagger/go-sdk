@@ -8,6 +8,10 @@
     {
       "name": "go-sdk",
       "source": "../../.."
+    },
+    {
+      "name": "core-codegen",
+      "source": "../../../helpers/core-codegen"
     }
   ]
 }
