@@ -1,0 +1,48 @@
+"""
+Build dagger-go-sdk-codegen and generate the core bindings of dagger.io/dagger
+with it.
+"""
+type CoreCodegen {
+  """The generator's source, read from the repository root."""
+  pub source: Directory! @defaultPath(path: "/") @ignorePatterns(patterns: [
+    "*",
+    "!cmd/dagger-go-sdk-codegen",
+  ])
+
+  """
+  dagger-go-sdk-codegen for the engine's platform. dagger/go's Go container
+  has no C toolchain, so the binary is static and runs in any Linux
+  container.
+  """
+  pub binary: File! {
+    let ws = source.asWorkspace
+    go(version: "1.27", test: ["!**"])
+      .module(ws: ws, path: "cmd/dagger-go-sdk-codegen")
+      .packages(ws: ws)
+      .get(key: "cmd/dagger-go-sdk-codegen")
+      .binary(ws: ws)
+  }
+
+  """
+  Generate the core bindings of dagger.io/dagger from introspectionJson:
+  core/core.gen.go, core/codecs.gen.go and dag/dag.gen.go. Return the
+  container's working directory with them.
+
+  The working directory must be the dagger.io/dagger module directory. The
+  container must have a go command: the generator locates the module with it.
+  The generator names identifiers through the naming API of the engine that
+  runs this function, at the schema's version.
+  """
+  pub core(container: Container!, introspectionJson: File!): Directory! {
+    container
+      .withMountedFile("/usr/local/bin/dagger-go-sdk-codegen", binary)
+      .withMountedFile("/schema.json", introspectionJson)
+      .withExec([
+        "dagger-go-sdk-codegen", "core",
+        "--output", "./core",
+        "--dag-output", "./dag",
+        "--introspection-json-path", "/schema.json",
+      ], experimentalPrivilegedNesting: true)
+      .directory(".")
+  }
+}
