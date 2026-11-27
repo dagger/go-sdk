@@ -538,8 +538,10 @@ func addAuthorCoreAliases(ctx context.Context, cfg generator.Config, coreNames, 
 			if err != nil {
 				return err
 			}
-			if path == cfg.PackageImport {
-				name := "dagger"
+			// Module codecs spell a core type through internal/dagger, also
+			// when the author names it through dagger.io/dagger/core.
+			if path == cfg.PackageImport || path == "dagger.io/dagger/core" {
+				name := filepath.Base(path)
 				if spec.Name != nil {
 					name = spec.Name.Name
 				}
