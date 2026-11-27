@@ -1,10 +1,11 @@
 package {{ .ModulePackage }}
-
+{{ $pkg := "dagger" }}{{ if .UnifiedClients }}{{ $pkg = "core" }}{{ end }}
 import (
-{{- if and .UnifiedClients (not .GlobalClient) }}
+{{- if .UnifiedClients }}
 	"dagger.io/dagger/core"
-{{ end }}
+{{- else }}
 	"{{ .ModuleImport }}/internal/dagger"
+{{- end }}
 )
 
 type {{ .ModuleType }} struct {
@@ -12,24 +13,24 @@ type {{ .ModuleType }} struct {
 	BaseImageAddress string
 
 	// +private
-	Source *dagger.Directory
+	Source *{{ $pkg }}.Directory
 }
 
 func New(
-	ws *dagger.Workspace,
+	ws *{{ $pkg }}.Workspace,
 	// +default="alpine:3.21"
 	baseImageAddress string,
 ) *{{ .ModuleType }} {
 	return &{{ .ModuleType }}{
 		BaseImageAddress: baseImageAddress,
-		Source: ws.Directory("/", dagger.WorkspaceDirectoryOpts{
+		Source: ws.Directory("/", {{ $pkg }}.WorkspaceDirectoryOpts{
 			Exclude: []string{"**/.git", "**/.dagger", "**/vendor"},
 		}),
 	}
 }
 
 // A container with the source mounted, ready to build on.
-func (m *{{ .ModuleType }}) Container() *dagger.Container {
+func (m *{{ .ModuleType }}) Container() *{{ $pkg }}.Container {
 {{- if .GlobalClient }}
 	return dag.Container().
 {{- else if .UnifiedClients }}
